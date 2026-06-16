@@ -1,435 +1,356 @@
 # Implementation Plan
 
 ## Source Documents
-- Path: `/Users/alexmetelli/source/agentreceipt/docs/PRD.md`
-  - Role: Primary PRD
-  - Summary: Defines AgentReceipt’s MVP scope (Codex-first, local-only, sidecar evidence capture, receipt signing, review/verify/export), supported/unsupported workflows, commands, storage layout, and core safety/non-scoring philosophy.
-- Path: `/Users/alexmetelli/source/agentreceipt/docs/TECH_SPEC.md`
-  - Role: Technical design and architecture
-  - Summary: Mandates Go/Cobra/ed25519 stack, session model, event hash chain, storage layout, command behavior, risk/confidence model, deterministic artifact generation, and strict quality gates for release.
-- Path: `/Users/alexmetelli/source/agentreceipt/docs/CODEX_TRACE_REPORT_SPEC.md`
-  - Role: Codex ingestion and evidence schema support
-  - Summary: Specifies Codex session/import parsing schema expectations, risk signal formats, timeline/tool-call/command/error schemas, evidence confidence model, and reproducibility artifacts required for report publishing.
+- Path: Inline user decision from 2026-06-17 conversation
+  - Role: Primary implementation decision
+  - Summary: Use `github.com/rs/zerolog` as the production-grade structured logger for `start --watch`, model watch output as structured events, render human-readable colored console output with `zerolog.ConsoleWriter`, add `--color auto|always|never`, and defer a broader CLI logging replacement until the watch path is proven.
 
 ## Goals
-- Deliver a production-grade Go CLI `agentreceipt` with `start`/`stop` sidecar session capture, receipt generation, verification, and review/export surfaces.
-- Provide explicit, local evidence for Codex-assisted changes using Git + filesystem as high-confidence sources and Codex log import as best-effort enrichment.
-- Support reviewer-facing outputs (`review`, `verify`, `export`) with clear confidence labels, risk signals, and missing-evidence gaps.
-- Support PR workflow outputs through `review --pr`, `export --pr`, and `pr comment` via GitHub CLI.
-- Include a Codex provider research path (`inspect codex --last`) so log availability and parser confidence can be validated before full capture work.
-- Maintain no-wrapper execution: agent tools run normally; AgentReceipt observes sideband.
-- Ensure deterministic, reproducible, auditable artifacts under `.agentreceipt/sessions/<session_id>/`.
+- Replace the current ad hoc `fmt.Fprintf` watch rendering with a zerolog-backed watch logger/formatter.
+- Preserve compact human-readable `start --watch` output while routing each rendered line through a structured `WatchEvent` shape.
+- Add color-mode control with `--color auto|always|never`, defaulting to `auto`.
+- Keep the implementation scoped to Codex watch output first, leaving room for a later `--log-format console|json` flag without redesigning the renderer.
+- Maintain the existing `start --watch` behavior: repo-aware Codex log selection, provider-event import, concise command/edit/token/warning output, and truncation of long subjects.
 
 ## Non-Goals
-- Claude hook-first workflow and Claude primary integration (deferred).
-- Wrapped/managed execution (`agentreceipt run -- codex`) and agent orchestration.
-- Agent scoring engines, trust profiles, or recommendation logic.
-- Hosted/cloud SaaS mode, prompt uploads, or external telemetry pipeline.
-- Hosted GitHub App checks; only local/CLI-generated PR comments are in scope.
-- Full OS-level tracing (eBPF/dtrace), network MITM, or dependency on MCP proxies.
+- Do not replace every CLI `fmt.Fprint/Fprintf/Fprintln` call with zerolog.
+- Do not add `--log-format console|json` in this first pass; design for it, but keep the user-facing flag surface limited to `--color`.
+- Do not change Codex JSONL parsing semantics, event-log persistence, receipt signing, review rendering, or export formats except where tests need fixture updates for watch output.
+- Do not add new hosted logging, telemetry upload, or external log sink behavior.
 
 ## Assumptions and Open Questions
-- Assumption: Codex remains the MVP primary provider; Claude support can be treated as roadmap-only until Codex path is stable.
-- Assumption: Default signing key remains single local key (`~/.agentreceipt/keys/default.ed25519`) for MVP unless project policy requires key-per-project later.
-- Assumption: CI and developer machines can install/use `staticcheck`, `golangci-lint`, and `gosec`; if unavailable, plan falls back to explicit installation pre-step.
-- Open question: retention policy for `.agentreceipt/sessions` in MVP (manual cleanup vs time-based). Conservative choice: manual cleanup with explicit docs, matching Tech Spec.
-- Open question: whether sidecar session runs in foreground with terminal-bound lifecycle or via explicit start/stop process management; conservative choice: start/stop process with a persisted session PID/state for reliability.
-- Open question: exact command allowlist for test/lint/typecheck detection per language ecosystem; conservative choice: start with documented defaults and allow policy overrides.
-- Open question: required minimum coverage threshold enforcement scope (`./...` or project packages only); conservative choice: keep 80% target for all packages, initially.
-- Open question: whether `agentreceipt pr comment` should require an existing checked-out branch with a current PR or accept an explicit PR number; conservative choice: support current-branch PR first and add explicit PR targeting later.
+- Assumption: `--color` should be a global persistent flag so future commands can reuse the policy, but only `start --watch` must consume it in this plan.
+- Assumption: `auto` means use colors only when stdout is a terminal; tests should force deterministic `never`/`always` modes rather than depending on terminal detection.
+- Assumption: watch output remains line-oriented and human-readable by default, matching the target shape `codex  ok      run make verify (exit 0)` without JSON unless a future `--log-format` flag is added.
+- Assumption: zerolog fields should carry structured values even when the console writer hides most of them; this keeps the future JSON path cheap.
+- Open question: exact terminal detection dependency. Conservative choice: use Go standard library plus a small terminal helper only if needed, and avoid adding a second logging/UI package.
+- Open question: whether warning label text should be `warn` everywhere. Conservative choice: normalize existing watch warnings from `warning` to `warn` because the decision's target output uses `warn`.
 
 ## Quality Gates
-- Setup status: No existing toolchain config detected in repository root; quality gates must be added before implementation work.
-- Baseline command: `go test ./...` (after initial Go scaffold is created; expected to pass on clean baseline).
-- Format command: `test -z "$(gofmt -s -l .)"`.
-- Lint command: `golangci-lint run ./... && staticcheck ./... && go vet ./... && gosec ./...`.
-- Test command: `go test ./... && go test -race ./...`.
-- Additional gates: `go test ./... -run Test -count=1 -coverprofile=coverage.out && go tool cover -func=coverage.out | awk '/total:/ { if ($3+0 < 80.0) exit 1 }'`.
-- Build command: `go build ./...`.
+- Setup status: Existing gates are configured in `Makefile`, `.golangci.yml`, and `.github/workflows/ci.yml`; no separate quality-gates setup step is required.
+- Tool bootstrap command: `make tools` if `.tools/bin/golangci-lint`, `.tools/bin/staticcheck`, or `.tools/bin/gosec` are missing.
+- Baseline command: `make verify`
+- Format command: `make fmt-check`
+- Lint command: `make lint`
+- Test command: `make test && make test-race`
+- Additional gates: `make security && make coverage && make build && make smoke`
+- Full gate command: `make verify`
+- Dependency hygiene command for dependency-changing steps: `go mod tidy`
 
 ## Progress Tracking
 - File: `PROGRESS.md`
-- Requirement: Create `PROGRESS.md` before any quality-gate setup or implementation work begins.
-- Update rule: After each step is completed, update `PROGRESS.md` with completed step, validation results, commit ref (if available), current status, and next step.
+- Requirement: Create `PROGRESS.md` before any quality-gate setup or implementation work begins. If it already exists, update it for this zerolog watch formatter plan before implementation begins.
+- Update rule: After each step is completed, update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+
+## Changelog Tracking
+- File: `CHANGELOG.md`
+- Standard: Keep a Changelog 1.0.0, <https://keepachangelog.com/en/1.0.0/>
+- Requirement: Create `CHANGELOG.md` before any quality-gate setup or implementation work begins. If it already exists, keep its existing history and add entries for this plan under `## [Unreleased]`.
+- Initial content: Include `# Changelog`, the standard preamble, and an `## [Unreleased]` section.
+- Update rule: After each step is completed and validated, update `CHANGELOG.md` with human-readable notable changes under the appropriate `Unreleased` change-type headings before creating that step's commit.
 
 ## Incremental Steps
 
-### Step 0: Progress Tracking Setup
-Goal: Create a durable progress log the user can consult while the plan is being executed.
+### Step 0: Progress and Changelog Tracking Setup
+Goal: Create or refresh durable progress and changelog files for the zerolog watch formatter work before implementation starts.
 
-Depends on: none
+Depends on:
+- None
 
 Changes:
-- Create `PROGRESS.md` with:
-  - plan title and source documents
-  - ordered step checklist
-  - current status marker
-  - short update log table (`date`, `step`, `status`, `validation`, `commit`, `notes`)
-  - explicit rule that `PROGRESS.md` must be updated after every completed step
+- Update `PROGRESS.md` in the project root for this plan.
+- Add the plan title/source, an ordered step checklist, current status, and an update log entry for starting the zerolog watch formatter plan.
+- Preserve completed history from the prior MVP plan if useful, but make the current status point at this plan's next step.
+- Confirm `CHANGELOG.md` exists in the project root and follows Keep a Changelog 1.0.0 structure.
+- Add or preserve `# Changelog`, the standard preamble, and `## [Unreleased]`.
+- Document that both files must be updated after each completed and validated step, before that step's commit.
+
+Acceptance Criteria:
+- `PROGRESS.md` identifies this zerolog watch formatter plan and includes every step in this plan.
+- `CHANGELOG.md` remains valid Keep a Changelog content with `## [Unreleased]` at the top.
 
 Validation:
-- Confirm `PROGRESS.md` exists.
-- Confirm it contains the step checklist and update format.
+- Confirm `PROGRESS.md` exists and contains this plan's checklist.
+- Confirm `CHANGELOG.md` exists and follows the required Keep a Changelog 1.0.0 structure.
+- Run `make fmt-check`.
+- Run `make test`.
 
 Progress:
-- Mark Step 0 complete in `PROGRESS.md`, record validation and next step.
+- Mark Step 0 complete in `PROGRESS.md`, record validation results, set current status to Step 1, and identify Step 1 as next.
+
+Changelog:
+- Add an `Added` entry under `## [Unreleased]` for establishing progress tracking for the zerolog watch formatter work.
 
 Commit:
-- `docs: add progress tracking scaffold`
+- `docs: track zerolog watch formatter plan progress`
 
-### Step 1: Quality Gates Setup
-Goal: Make format/lint/test/build checks explicit and runnable before feature work.
+### Step 1: Add Zerolog Dependency
+Goal: Introduce zerolog as the structured logging dependency without changing runtime behavior yet.
 
 Depends on:
 - Step 0
 
 Changes:
-- Add `go.mod` and baseline module config for Go CLI project.
-- Add `Makefile` with the following targets:
-  - `fmt`, `fmt-check`, `lint`, `test`, `test-race`, `build`, `verify`, `security`, `coverage`.
-- Add lint/security configs:
-  - `.golangci.yml`
-  - optional `gosec`/`staticcheck` config files if needed
-- Add CI workflow `.github/workflows/ci.yml` (Linux + macOS matrix) including required checks and CLI smoke tests.
-- Add `scripts/` helper targets for reproducible fixtures and smoke checks as needed.
+- Update `go.mod` and `go.sum` by adding `github.com/rs/zerolog`.
+- Run `go mod tidy` so module metadata is minimal and reproducible.
+- Do not wire zerolog into command output in this step.
+
+Acceptance Criteria:
+- The module graph includes zerolog.
+- Existing CLI behavior and tests remain unchanged.
 
 Validation:
-- Run setup gates exactly as in `## Quality Gates`:
-  - `test -z "$(gofmt -s -l .)"`
-  - `golangci-lint run ./...`
-  - `staticcheck ./...`
-  - `go vet ./...`
-  - `go test ./...`
-  - `go test -race ./...`
-  - `gosec ./...`
-  - `go test ./... -run Test -count=1 -coverprofile=coverage.out`
-  - `go tool cover -func=coverage.out | awk '/total:/ { if ($3+0 < 80.0) exit 1 }'`
-  - `go build ./...`
+- Run `go mod tidy`.
+- Run `make fmt-check`.
+- Run `make lint`.
+- Run `make test`.
+- Run `make test-race`.
+- Run `make security`.
+- Run `make coverage`.
+- Run `make build`.
+- Run `make smoke`.
+- Run `make verify`.
 
 Progress:
-- Mark Step 1 complete in `PROGRESS.md` with gate outcomes and next step.
+- Update `PROGRESS.md` with completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Update `CHANGELOG.md` under `## [Unreleased]` with a human-readable dependency/setup entry after validation and before committing.
 
 Commit:
-- `ci: add go quality gate pipeline and local make targets`
+- `build: add zerolog dependency`
 
-### Step 2: Bootstrap CLI Entry + Command Skeleton
-Goal: Create a runnable Cobra CLI with all top-level commands discovered in PRD/Tech Spec as stubs.
+### Step 2: Define Structured Watch Events
+Goal: Create an internal event shape that represents every watch line before it is rendered.
 
 Depends on:
-- Step 0
 - Step 1
 
 Changes:
-- Add `main.go` and `cmd/root.go` command registration.
-- Implement command set with stub handlers and consistent UX:
-  - `init`, `install codex`, `install claude`, `start`, `status`, `live`, `stop`, `review`, `verify`, `export`, `import codex-jsonl`, `inspect codex`, `mark`, `pr comment`.
-- Add command doc/help text matching PRD terms and expected defaults.
-- Add `cmd/version` behavior and exit codes for scriptability.
-- Create initial command-focused tests for root help and command discovery.
+- Add a focused type near the current renderer, likely in `cmd/watch_render.go` unless tests show it belongs in a small new file:
+  - `Provider string`
+  - `Family codex.LogFamily`
+  - `Category codex.LogCategory`
+  - `Status string`
+  - `Message string`
+  - `Tokens int`
+  - `ExitCode *int`
+  - optional fields needed for future JSON output, such as `SourcePath`, `Reason`, `Tool`, or `Command`
+- Refactor the existing renderer flow so `codex.ParseResult` is converted into `WatchEvent` values before any terminal formatting happens.
+- Keep current grouping behavior:
+  - command result follows matching tool call
+  - `apply_patch` renders as `edit apply_patch`
+  - token usage renders only after one or more pending actions
+  - orphan token telemetry stays hidden
+  - malformed JSON warnings produce warning events
+- Add unit tests around event construction rather than only rendered strings.
 
 Acceptance Criteria:
-- Running `agentreceipt` shows available commands and global flags without panic.
-- `--help` output includes all primary commands.
-- Deferred commands (`install claude`) explain their roadmap status without configuring runtime hooks.
+- Existing watch output behavior can be derived from `WatchEvent` values.
+- Tests cover command success/failure, apply_patch edit, batch token usage, orphan token suppression, and malformed JSON warning events.
+- No visible output format change is required yet.
 
 Validation:
-- Run all quality gates from section above.
+- Run `make fmt-check`.
+- Run `make lint`.
+- Run `make test`.
+- Run `make test-race`.
+- Run `make security`.
+- Run `make coverage`.
+- Run `make build`.
+- Run `make smoke`.
+- Run `make verify`.
 
 Progress:
-- Update `PROGRESS.md` with validation results and next step.
+- Update `PROGRESS.md` with completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Update `CHANGELOG.md` under `## [Unreleased]` with a notable implementation entry after validation and before committing.
 
 Commit:
-- `feat: scaffold cobra CLI and command surface`
+- `feat: model codex watch output as structured events`
 
-### Step 3: Define Config, Session, and Storage Contracts
-Goal: Encode canonical schemas and directories used by every command and artifact.
+### Step 3: Render Watch Events With Zerolog ConsoleWriter
+Goal: Replace the ad hoc watch formatter with a `zerolog.ConsoleWriter` renderer while preserving compact human-readable output.
 
 Depends on:
 - Step 2
 
 Changes:
-- Add `internal/config`:
-  - `.agentreceipt.yml` schema parsing and write helpers.
-  - policy defaults from Tech Spec (sensitive paths, review checks, test command list).
-- Add `internal/model` with event, receipt, manifest, review, and review-report types.
-- Add `internal/storage` helpers for `.agentreceipt/sessions/<session_id>/` layout, manifest, and artifact naming.
-- Include `.agentreceipt/policy.yml`, `provider/codex/traces/`, reserved `provider/claude/`, `blobs/`, `diffs/`, and `signatures/` path constants.
-- Add schema/version constants and forward-compatible deserialization behavior.
-- Include config validation with actionable errors.
+- Introduce a watch logger/formatter constructor, likely in `cmd/watch_render.go`, that accepts:
+  - `io.Writer`
+  - color mode or color-enabled boolean
+  - any deterministic test options needed for output
+- Use `zerolog.ConsoleWriter` with custom `FormatLevel`, `FormatMessage`, and `FormatPartValueByName` or equivalent supported hooks.
+- Emit structured fields for at least:
+  - `provider`
+  - `family`
+  - `category`
+  - `status`
+  - `message`
+  - `tokens`
+  - `exit_code`
+- Format output toward the target shape:
+  - `codex  watch   rollout-new.jsonl (cwd match)`
+  - `codex  ok      run make verify (exit 0)`
+  - `codex  tokens  213927 after run make verify`
+  - `codex  edit    apply_patch`
+  - `codex  fail    run go test ./... (exit 1)`
+  - `codex  warn    malformed_json: bad record`
+- Normalize existing watch warning output so inspection warnings and tail failures use the same structured renderer path as parser warnings.
+- Keep truncation behavior for long commands/messages.
+- Update existing watch renderer tests to assert deterministic no-color output.
 
 Acceptance Criteria:
-- Config can be serialized/deserialized and merged with defaults.
-- Receipt/session models support JSON + deterministic marshaling.
+- `start --watch` still prints concise one-line events.
+- The watch path uses zerolog for rendered watch lines instead of direct watch-specific `fmt.Fprintf` calls.
+- Tests prove command results, token summaries, edit events, watch-file announcements, and warnings render correctly.
 
 Validation:
-- Run all quality gates from section above.
+- Run `make fmt-check`.
+- Run `make lint`.
+- Run `make test`.
+- Run `make test-race`.
+- Run `make security`.
+- Run `make coverage`.
+- Run `make build`.
+- Run `make smoke`.
+- Run `make verify`.
 
 Progress:
-- Update `PROGRESS.md` with model/schema completion, validation results, and next step.
+- Update `PROGRESS.md` with completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Update `CHANGELOG.md` under `## [Unreleased]` with a notable formatter change after validation and before committing.
 
 Commit:
-- `feat: add config and event/receipt schema model`
+- `feat: render codex watch events with zerolog`
 
-### Step 4: Implement Event Log and Hash Chain
-Goal: Persist append-only events and compute verifiable chain/hash metadata.
+### Step 4: Add Color Mode Flag and Color Policy
+Goal: Add `--color auto|always|never` and apply it to the zerolog watch console renderer.
 
 Depends on:
 - Step 3
 
 Changes:
-- Add event normalizer and canonical JSON serialization.
-- Implement hash-chain functions:
-  - genesis seed
-  - `event_hash = sha256(prev_hash || event_json)`
-  - chain hash extraction at finalize.
-- Add immutable `events.jsonl` writer and atomic append semantics.
-- Add tests for deterministic hash ordering and chain continuity.
+- Add a persistent root flag in `cmd/root.go`:
+  - `--color auto|always|never`
+  - default `auto`
+- Add validation for unsupported color values with an actionable error.
+- Add a small color policy helper that resolves color mode to enabled/disabled for a specific output writer.
+- In `auto`, enable colors only for terminal output.
+- In `always`, force colors even in redirected output.
+- In `never`, suppress ANSI color sequences.
+- Apply color categories from the decision:
+  - context/watch: cyan
+  - conversation: white/bold
+  - tool/run: blue
+  - tool/edit: magenta
+  - telemetry/tokens: yellow
+  - success/ok: green
+  - failure/fail: red
+  - warning: yellow/bold
+  - unknown: dim gray
+- Add tests for flag registration, validation, and deterministic color output in `always`/`never` modes.
 
 Acceptance Criteria:
-- Events are written in strict sequence with immutable previous hash linkage.
-- Replaying saved events reproduces identical event hashes.
+- `agentreceipt --color never start --watch ...` emits no ANSI sequences.
+- `agentreceipt --color always start --watch ...` emits ANSI color sequences for rendered watch events.
+- Invalid values fail before watch starts.
+- Existing non-watch commands are not materially changed beyond accepting the persistent flag.
 
 Validation:
-- Run all quality gates from section above.
+- Run `make fmt-check`.
+- Run `make lint`.
+- Run `make test`.
+- Run `make test-race`.
+- Run `make security`.
+- Run `make coverage`.
+- Run `make build`.
+- Run `make smoke`.
+- Run `make verify`.
 
 Progress:
-- Update `PROGRESS.md` with continuity checks and next step.
+- Update `PROGRESS.md` with completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Update `CHANGELOG.md` under `## [Unreleased]` with a notable CLI flag entry after validation and before committing.
 
 Commit:
-- `feat: add event log with deterministic hash chaining`
+- `feat: add color mode for watch output`
 
-### Step 5: Git Monitor and Snapshot Capture
-Goal: Add high-confidence git source with start/end state and periodic snapshots.
+### Step 5: Update Docs and Smoke Coverage for Watch Formatting
+Goal: Document the watch logger behavior and ensure the end-to-end smoke path covers the new flag surface.
 
 Depends on:
 - Step 4
 
 Changes:
-- Add `internal/capture/gitmonitor` for:
-  - session start: toplevel, branch, HEAD, status, staged/unstaged diff snapshots
-  - snapshot logic and debounced updates
-  - final snapshot/diff hash generation
-  - diff patch persistence under `diffs/`
-- Add integration tests with temp git repo fixture to ensure capture resilience.
+- Update `README.md` watch usage examples to include `--color auto|always|never`.
+- Briefly document that watch output is human-readable by default and backed by structured events for future machine-readable rendering.
+- Update `scripts/smoke.sh` if practical to exercise `start --watch --color never` in a deterministic way without making smoke tests flaky.
+- If smoke coverage cannot reliably run watch mode because of timing or fixture constraints, document that limitation in `PROGRESS.md` and keep unit/integration coverage in `cmd/root_test.go`.
 
 Acceptance Criteria:
-- Start emits start-state event set.
-- Stop persists final diff and final hash.
-- Final diff mismatch detection is detectable when external changes occur after session end.
+- README users can discover `--color`.
+- Smoke or command tests cover the new flag path.
+- Documentation does not promise `--log-format` until it exists.
 
 Validation:
-- Run all quality gates from section above.
+- Run `make fmt-check`.
+- Run `make lint`.
+- Run `make test`.
+- Run `make test-race`.
+- Run `make security`.
+- Run `make coverage`.
+- Run `make build`.
+- Run `make smoke`.
+- Run `make verify`.
 
 Progress:
-- Update `PROGRESS.md` with git capture validation and next step.
+- Update `PROGRESS.md` with completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Update `CHANGELOG.md` under `## [Unreleased]` with a documentation or test coverage entry after validation and before committing.
 
 Commit:
-- `feat: add git monitor snapshots and diff artifacts`
+- `docs: document structured watch logging color modes`
 
-### Step 6: Filesystem Watcher and Change Classification
-Goal: Record create/modify/delete events and classify risky paths in near-real time.
+### Step 6: Final Review and Compatibility Pass
+Goal: Verify the zerolog watch implementation is complete, scoped, and compatible with the existing receipt workflow.
 
 Depends on:
 - Step 5
 
 Changes:
-- Add `internal/capture/fswatcher` using `fsnotify` with debounce and burst coalescing.
-- Emit events for write/delete/create/rename where supported.
-- Track changed file list, dependency file changes, and sensitive path matches from policy.
-- Persist watcher events into chain via normalizer.
+- Review the final diff for accidental broad logging rewrites outside the watch path.
+- Confirm `go.mod` and `go.sum` contain only necessary dependency changes.
+- Confirm watch warnings, watch-file announcements, command results, edit events, and token summaries all flow through the structured renderer.
+- Confirm no tests rely on incidental ANSI behavior under `auto`.
+- Confirm `PROGRESS.md` and `CHANGELOG.md` are current.
 
 Acceptance Criteria:
-- Changing tracked files creates canonical fs events and reflects in session changed-files summary.
-- Sensitive/dependency flags are attached when paths match policy.
+- The feature is limited to the agreed first step: watch logger/formatter for `start --watch`.
+- Future `--log-format console|json` can be added by reusing `WatchEvent` values without redesigning parsing.
+- Full quality gates pass.
 
 Validation:
-- Run all quality gates from section above.
+- Run `go mod tidy`.
+- Run `make fmt-check`.
+- Run `make lint`.
+- Run `make test`.
+- Run `make test-race`.
+- Run `make security`.
+- Run `make coverage`.
+- Run `make build`.
+- Run `make smoke`.
+- Run `make verify`.
 
 Progress:
-- Update `PROGRESS.md` with watcher and classifier outcomes and next step.
+- Update `PROGRESS.md` with completion notes, validation results, final commit reference if available, current status as complete, and next step as "Plan complete".
+
+Changelog:
+- Update `CHANGELOG.md` under `## [Unreleased]` with any final notable cleanup after validation and before committing.
 
 Commit:
-- `feat: implement filesystem watcher and sensitivity classification`
-
-### Step 7: Sidecar Lifecycle Orchestration
-Goal: Wire `start`, `status`, `live`, `stop` commands to controlled session process/state.
-
-Depends on:
-- Step 6
-
-Changes:
-- Add session state manager and PID/state persistence under `.agentreceipt/sessions/<session_id>/`.
-- `start`: initialize session, spawn capture goroutines, write manifest.
-- `status`: show active state, event counts, risk summary, capture source status.
-- `live`: stream canonicalized recent events.
-- `stop`: stop watchers cleanly, finalize manifests, call receipt builder.
-- Ensure idempotent and safe cleanup behavior.
-
-Acceptance Criteria:
-- `start` creates an active session and `status` reflects it.
-- `stop` finalizes artifacts and leaves a valid session final state.
-- No hard failure when zero Codex events are present.
-
-Validation:
-- Run all quality gates from section above.
-
-Progress:
-- Update `PROGRESS.md` with lifecycle behavior validation and next step.
-
-Commit:
-- `feat: implement session lifecycle sidecar orchestration`
-
-### Step 8: Codex Log Ingestion and Best-Effort Provider Events
-Goal: Add tolerant Codex importer with explicit confidence and warning handling.
-
-Depends on:
-- Step 7
-
-Changes:
-- Add `internal/provider/codex` parser for candidate paths and `codex-run` style JSONL imports.
-- Add `inspect codex --last` research harness for log discovery, parser confidence, candidate session metadata, tool/command extraction coverage, and parse warnings.
-- Implement defensive parsing:
-  - stream parse line-by-line
-  - unknown event passthrough into `provider.event`
-  - parse warnings instead of hard failures
-  - output size cap and command/result redaction
-- Add timeline/tool-call/command/error/risk signal extraction into canonical events.
-- Write provider trace outputs under `.agentreceipt/sessions/<session_id>/provider/codex/traces/` when tied to an active/finalized session.
-- Treat `logs_2.sqlite` and `history.jsonl` as supplemental low-confidence correlation inputs only.
-- Add `import codex-jsonl` command path and optional auto-watch in session lifecycle.
-
-Acceptance Criteria:
-- Malformed JSONL records never crash import.
-- Missing/incomplete fields generate warning events with lowered confidence.
-- Commands/outputs are captured with structured metadata when available.
-- Missing Codex logs create an explicit gap and never block receipt finalization.
-
-Validation:
-- Run all quality gates from section above.
-
-Progress:
-- Update `PROGRESS.md` with parsing coverage and confidence behavior, then note next step.
-
-Commit:
-- `feat: add robust Codex JSONL importer and provider event normalization`
-
-### Step 9: Risk Engine, Confidence Model, and Evidence Reporting
-Goal: Compute and expose risk, missing-evidence, and confidence outputs used in review.
-
-Depends on:
-- Step 8
-
-Changes:
-- Add deterministic rule engine for:
-  - sensitive paths, auth/payment/security/infra paths
-  - dependency changes
-  - detected test/lint/typecheck commands
-  - command-risk regexes from spec
-- Implement capture confidence per source (`high/medium/low`) and explicit downgrade markers.
-- Add review data assembly with explicit warnings, reviewer focus points, and "gaps" section.
-- Add review modes required by PRD: `--last`, `--session <id>`, `--security`, `--diff`, `--json`, `--md`, and `--pr`.
-
-Acceptance Criteria:
-- Review output contains risk level, reasons, command detection results, and capture confidence table.
-- No hard-fail behavior on low-confidence evidence; warnings are explicit.
-
-Validation:
-- Run all quality gates from section above.
-
-Progress:
-- Update `PROGRESS.md` with risk model and report section verification, then next step.
-
-Commit:
-- `feat: add risk assessment and confidence-aware review data`
-
-### Step 10: Receipt Build, Sign, Verify, and Export Surfaces
-Goal: Make final artifacts complete, signed, and verifiable.
-
-Depends on:
-- Step 9
-
-Changes:
-- Add signature module using Ed25519 key management (`~/.agentreceipt/keys/default.ed25519|default.pub`).
-- Implement `agentreceipt stop` finalization writes:
-  - `receipt.json`, `receipt.md`, `review.md`, `manifest.json`, `signatures/receipt.sig`, final patch
-- Implement `verify` checks:
-  - event chain, manifest, final diff hash, signature validity
-- Implement `review --json|--md|--pr` and `export --json|--md|--pr`.
-- Implement mismatch handling between final diff and recorded event chain as non-fatal warning by default.
-
-Acceptance Criteria:
-- Generated receipts verify valid after finalization.
-- Mismatch and missing-provider-evidence paths are reported with downgraded confidence, not hard-fail.
-- `review --pr` output is PR-consumable and includes explicit focus/warnings.
-
-Validation:
-- Run all quality gates from section above.
-
-Progress:
-- Update `PROGRESS.md` with artifact/signature verification status and next step.
-
-Commit:
-- `feat: implement receipt signing, verify, and export/review output formats`
-
-### Step 11: Manual Marker Command and Policy Controls
-Goal: Add explicit human context hooks and operational controls.
-
-Depends on:
-- Step 10
-
-Changes:
-- Add `mark` command to add signed context events.
-- Add optional output redaction and retention policy behavior consistent with PRD/privacy constraints.
-- Add `install claude` command scaffold as roadmap-compatible placeholder (documented deferred), without enabling non-MVP runtime behavior.
-- Add `pr comment` command that shells out to `gh pr comment --body-file <generated markdown>` after generating local PR Markdown.
-- Expose `.agentreceipt.yml` update behavior and validation.
-
-Acceptance Criteria:
-- `mark` writes signed context into session events.
-- No hidden network/file upload behaviors are introduced.
-- `install claude` remains non-MVP/no-op with clear user messaging.
-- `pr comment` fails clearly when `gh` is unavailable, no PR is detected, or GitHub CLI exits non-zero.
-
-Validation:
-- Run all quality gates from section above.
-
-Progress:
-- Update `PROGRESS.md` with control feature completion and next step.
-
-Commit:
-- `feat: add manual marker and deferred provider install controls`
-
-### Step 12: Fixtures, Integration Tests, and CI Hardening
-Goal: Lock critical behavior with test evidence and release-ready CI.
-
-Depends on:
-- Step 11
-
-Changes:
-- Add fixture-driven tests for:
-  - start/stop lifecycle
-  - fs watcher event capture
-  - codex import malformed/partial logs
-  - zero-provider-events warning path
-  - inspect codex missing-log and parse-warning paths
-  - PR Markdown generation without raw prompts/tool outputs
-- Add end-to-end smoke harness for:
-  - init/start/stop
-  - verify on generated receipt
-  - signature generation validation
-  - review/export PR Markdown generation
-- Finalize docs (`README`, install/usage examples, command flags).
-- Ensure no tracked session artifacts in repository after tests and CI.
-
-Acceptance Criteria:
-- CI matrix Linux+macOS executes all required quality gates and passes locally reproducibly.
-- Smoke tests cover explicit MVP success/failure paths in docs.
-
-Validation:
-- Run all quality gates from section above after test additions.
-
-Progress:
-- Update `PROGRESS.md` with test/CI status and final step note.
-
-Commit:
-- `test: add MVP fixtures and tighten CI verification checks`
+- `chore: finalize zerolog watch formatter rollout`

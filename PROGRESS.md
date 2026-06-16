@@ -1,51 +1,53 @@
 # AgentReceipt Implementation Progress
 
-## Source Documents
+## Active Plan
 
-- `docs/PRD.md` - primary product requirements for the Codex-first local receipt MVP.
-- `docs/TECH_SPEC.md` - technical architecture, command behavior, data model, and quality requirements.
-- `docs/CODEX_TRACE_REPORT_SPEC.md` - Codex trace extraction and evidence-reporting schema.
+- Title: Zerolog Watch Formatter Rollout
+- Source: Inline user decision from 2026-06-17 conversation
+- Summary: Use `github.com/rs/zerolog` for `start --watch` output, model watch lines as structured events, render compact human-readable console output, add `--color auto|always|never`, and keep the first pass scoped to Codex watch output.
 
 ## Progress Rule
 
-Update this file after every completed implementation step with the completed step, validation results, commit reference if available, current status, and next step.
+Update this file after every completed implementation step with the completed step, validation results, commit reference if available, current status, and next step. Update `CHANGELOG.md` after each completed and validated step, before creating that step's commit.
 
 ## Current Status
 
-- Current step: Step 12 complete
-- Next step: Plan complete
-- Last updated: 2026-06-16
+- Current step: Step 0 complete
+- Next step: Step 1: Add Zerolog Dependency
+- Last updated: 2026-06-17
 
 ## Step Checklist
 
-- [x] Step 0: Progress Tracking Setup
-- [x] Step 1: Quality Gates Setup
-- [x] Step 2: Bootstrap CLI Entry + Command Skeleton
-- [x] Step 3: Define Config, Session, and Storage Contracts
-- [x] Step 4: Implement Event Log and Hash Chain
-- [x] Step 5: Git Monitor and Snapshot Capture
-- [x] Step 6: Filesystem Watcher and Change Classification
-- [x] Step 7: Sidecar Lifecycle Orchestration
-- [x] Step 8: Codex Log Ingestion and Best-Effort Provider Events
-- [x] Step 9: Risk Engine, Confidence Model, and Evidence Reporting
-- [x] Step 10: Receipt Build, Sign, Verify, and Export Surfaces
-- [x] Step 11: Manual Marker Command and Policy Controls
-- [x] Step 12: Fixtures, Integration Tests, and CI Hardening
+- [x] Step 0: Progress and Changelog Tracking Setup
+- [ ] Step 1: Add Zerolog Dependency
+- [ ] Step 2: Define Structured Watch Events
+- [ ] Step 3: Render Watch Events With Zerolog ConsoleWriter
+- [ ] Step 4: Add Color Mode Flag and Color Policy
+- [ ] Step 5: Update Docs and Smoke Coverage for Watch Formatting
+- [ ] Step 6: Final Review and Compatibility Pass
 
 ## Update Log
 
 | Date | Step | Status | Validation | Commit | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 2026-06-16 | Step 0: Progress Tracking Setup | Complete | Confirmed `PROGRESS.md` exists and contains the checklist and update log format. | `9c94206` | Added durable progress tracking before quality-gate setup. |
-| 2026-06-16 | Step 1: Quality Gates Setup | Complete | Passed `test -z "$(gofmt -s -l .)"`, `golangci-lint run ./...`, `staticcheck ./...`, `go vet ./...`, `go test ./...`, `go test -race ./...`, `gosec ./...`, coverage threshold, `go build ./...`, and `make verify`. | `59f5e40` | Added Go module, Makefile gates, lint config, CI matrix, smoke script, and a minimal tested package. |
-| 2026-06-16 | Step 2: Bootstrap CLI Entry + Command Skeleton | Complete | Passed full quality gates and smoke checks after adding Cobra commands and tests. | `e7e155d` | Added root CLI entrypoint, all MVP top-level/nested command stubs, review/export flags, version output, and deferred Claude messaging. |
-| 2026-06-16 | Step 3: Define Config, Session, and Storage Contracts | Complete | Passed full quality gates and `make verify` after adding config/model/storage tests. | `26146b7` | Added `.agentreceipt.yml` defaults and validation, receipt/session/review models, deterministic JSON marshaling, forward-compatible receipt decoding, and canonical session layout helpers. |
-| 2026-06-16 | Step 4: Implement Event Log and Hash Chain | Complete | Passed full quality gates and `make verify` after adding eventlog tests for deterministic hashes, append/replay, and broken-chain detection. | `e465e3d` | Added event normalization, genesis hash, `event_hash = sha256(prev_hash || event_json)`, append-only JSONL writer, reader, and replay verifier. |
-| 2026-06-16 | Step 5: Git Monitor and Snapshot Capture | Complete | Passed full quality gates and `make verify` after temp git repo integration tests. | `9672439` | Added git toplevel/branch/HEAD/status capture, staged/unstaged/final diff hashing, `diffs/000001.patch`, `diffs/final.patch`, git snapshot events, and post-final diff mismatch detection. |
-| 2026-06-16 | Step 6: Filesystem Watcher and Change Classification | Complete | Passed full quality gates and `make verify` after fsnotify watcher and classifier tests. | `93616b1` | Added recursive fsnotify watcher setup, debounce/coalescing, canonical `fs.change` events, changed-file summary tracking, sensitive path flags, and dependency file flags. |
-| 2026-06-16 | Step 7: Sidecar Lifecycle Orchestration | Complete | Passed full quality gates and `make verify` after session lifecycle package and command tests. | `b2c7cb0` | Wired `start`, `status`, `live`, and `stop` to persisted session state, active-session tracking, start/final git snapshots, event replay, finalized manifests, idempotent cleanup, and non-fatal zero-Codex warning behavior. |
-| 2026-06-16 | Step 8: Codex Log Ingestion and Best-Effort Provider Events | Complete | Passed full quality gates and `make verify` after Codex parser, command, trace-output, and active import tests. | `1ed9366` | Added defensive line-by-line Codex JSONL parsing, malformed-record warnings, unknown event passthrough, command/result extraction, redaction/truncation, risk signals, trace files under `provider/codex/traces/`, `inspect codex`, and active-session `import codex-jsonl`. |
-| 2026-06-16 | Step 9: Risk Engine, Confidence Model, and Evidence Reporting | Complete | Passed full quality gates and `make verify` after review report, risk/confidence, command-detection, and CLI output-mode tests. | `bdd9df0` | Added deterministic review assembly with risk levels/reasons, capture confidence, evidence gaps, reviewer focus prompts, warning propagation, and `review --last/--session/--security/--diff/--json/--md/--pr` output support. |
-| 2026-06-16 | Step 10: Receipt Build, Sign, Verify, and Export Surfaces | Complete | Passed full quality gates and `make verify` after signed receipt, verification, export, tamper-detection, and key-management tests. | `9d231d3` | Added Ed25519 default key creation/loading, signed `receipt.json`, `receipt.md`, `review.md`, detached `signatures/receipt.sig`, `verify` integrity checks, final diff mismatch reporting, and `export --json/--md/--pr`. |
-| 2026-06-16 | Step 11: Manual Marker Command and Policy Controls | Complete | Passed full quality gates and `make verify` after init, signed marker, deferred Claude install, and guarded `gh pr comment` tests. | `c86783a` | Added real `init` config/policy/key setup, signed `manual.marker` events, active-session marker checks, fixed deferred Claude behavior, and `pr comment` safeguards for missing `gh`, missing PRs, and GitHub CLI failures. |
-| 2026-06-16 | Step 12: Fixtures, Integration Tests, and CI Hardening | Complete | Passed full quality gates and `make verify` after expanding smoke coverage across init/start/import/mark/stop/verify/review/export and missing Codex-log inspection. | `dcf1401` | Hardened the smoke harness for the MVP success path, verified generated signatures/artifacts in temp repos, refreshed README source-build and command examples, and confirmed CI already runs `make verify` on Linux and macOS. |
+| 2026-06-17 | Step 0: Progress and Changelog Tracking Setup | Complete | Passed `make fmt-check` and `make test`. Confirmed this file identifies the zerolog watch formatter plan and includes the full checklist; confirmed `CHANGELOG.md` has a Keep a Changelog `## [Unreleased]` section. | Pending | Refreshed progress tracking for the zerolog watch formatter plan and documented the per-step changelog/update rule. |
+
+## Prior MVP Plan History
+
+The original Codex-first MVP implementation plan completed on 2026-06-16. Its final recorded state was Step 12 complete and Plan complete, with the following commits:
+
+| Step | Commit | Notes |
+| --- | --- | --- |
+| Step 0: Progress Tracking Setup | `9c94206` | Added durable progress tracking before quality-gate setup. |
+| Step 1: Quality Gates Setup | `59f5e40` | Added Go module, Makefile gates, lint config, CI matrix, smoke script, and a minimal tested package. |
+| Step 2: Bootstrap CLI Entry + Command Skeleton | `e7e155d` | Added root CLI entrypoint, all MVP top-level/nested command stubs, review/export flags, version output, and deferred Claude messaging. |
+| Step 3: Define Config, Session, and Storage Contracts | `26146b7` | Added config/model/storage contracts and tests. |
+| Step 4: Implement Event Log and Hash Chain | `e465e3d` | Added deterministic event log hash chaining and replay verification. |
+| Step 5: Git Monitor and Snapshot Capture | `9672439` | Added git snapshot and diff artifact capture. |
+| Step 6: Filesystem Watcher and Change Classification | `93616b1` | Added fsnotify capture and path classification. |
+| Step 7: Sidecar Lifecycle Orchestration | `b2c7cb0` | Wired start/status/live/stop to persisted session state and finalization. |
+| Step 8: Codex Log Ingestion and Best-Effort Provider Events | `1ed9366` | Added defensive Codex JSONL parsing, import, inspect, and trace output. |
+| Step 9: Risk Engine, Confidence Model, and Evidence Reporting | `bdd9df0` | Added risk, confidence, gaps, reviewer focus, and review output modes. |
+| Step 10: Receipt Build, Sign, Verify, and Export Surfaces | `9d231d3` | Added receipt signing, verification, and export surfaces. |
+| Step 11: Manual Marker Command and Policy Controls | `c86783a` | Added init, signed manual markers, deferred Claude install, and guarded PR comments. |
+| Step 12: Fixtures, Integration Tests, and CI Hardening | `dcf1401` | Hardened smoke coverage and README usage for the MVP path. |
