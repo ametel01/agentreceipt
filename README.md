@@ -13,7 +13,7 @@ curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh
 Pin a specific release:
 
 ```bash
-curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.1.0
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.2.0
 ```
 
 ```bash
@@ -21,6 +21,14 @@ agentreceipt start --watch
 ```
 
 While it watches, AgentReceipt records observable local evidence from your workspace. When the session is done, it turns that evidence into a verifiable receipt and reviewer-focused summary for PRs.
+
+## Current limitations
+
+- **Live provider capture is Codex-only.** `start --watch`, `inspect codex`, and `import codex-jsonl` work with Codex logs today. `agentreceipt install claude` is present for roadmap readiness, but it only reports that Claude hook integration is deferred.
+- **Codex log parsing is best effort.** Interactive Codex logs are treated as local evidence, not a stable provider API. Missing, incomplete, malformed, or format-changed logs reduce provider confidence but do not stop receipt generation.
+- **AgentReceipt observes; it does not gate.** It does not launch, wrap, sandbox, approve, deny, or proxy agent actions. This is intentional for the sidecar model, but permission enforcement is outside the current release.
+- **Risk classification is heuristic.** Command risk badges use built-in rules for high/medium/low signals. They help reviewers focus attention, but they are not a policy engine and do not replace review.
+- **Team enforcement is not wired yet.** GitHub App support, CI policy gates, configurable risk policy, and broader team workflow controls are planned follow-ups.
 
 ## Why this exists
 
@@ -344,3 +352,7 @@ Use it as a deterministic review step:
 4. Verify before merge if required by your team.
 
 This is not a "model score." It is a **receipts-first** check: evidence, integrity, and review context.
+
+## License
+
+AgentReceipt is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

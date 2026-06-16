@@ -13,6 +13,7 @@ and this project follows semantic versioning.
 
 - Added high/medium/low command-risk classification for Codex tool calls, with live `start --watch` risk badges that preserve command outcome status and add a detail line for high-risk commands.
 - Added `start --watch` resume behavior so rerunning it after Ctrl-C attaches to the active session instead of failing with a concurrent-session error.
+- Added prominent README limitations and Apache-2.0 licensing for the release.
 
 ### Fixed
 
