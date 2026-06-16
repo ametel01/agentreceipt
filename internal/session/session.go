@@ -190,6 +190,7 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 	if err != nil {
 		return State{}, false, err
 	}
+	codexPresent := codexEventsPresent(events)
 	prevHash, err := eventlog.Replay(events)
 	if err != nil {
 		return State{}, false, err
@@ -216,10 +217,6 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 			return State{}, false, err
 		}
 	}
-	warning := model.Warning{
-		Code:    "codex_events_missing",
-		Message: "No Codex provider events were observed; provider evidence remains unavailable for this session.",
-	}
 	finalize := model.Event{
 		EventID:   fmt.Sprintf("evt_finalize_%d", m.now().UnixNano()),
 		SessionID: state.SessionID,
@@ -229,8 +226,7 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 		CWD:       state.RepoRoot,
 		Payload: map[string]any{
 			"final_diff_hash":      finalSnapshot.PatchHash,
-			"codex_events_present": false,
-			"warning":              warning,
+			"codex_events_present": codexPresent,
 		},
 	}
 	appended, err = writer.Append(finalize)
@@ -245,12 +241,20 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 	state.FinalDiffHash = finalSnapshot.PatchHash
 	state.CaptureSources.Git = "finalized"
 	state.CaptureSources.Filesystem = "stopped"
-	state.CaptureSources.CodexLogs = "missing"
-	state.RiskSummary = RiskSummary{
-		Level:   model.RiskLow,
-		Reasons: []string{"No Codex provider events were observed."},
+	state.CaptureSources.CodexLogs = "imported"
+	state.RiskSummary = RiskSummary{Level: model.RiskInfo}
+	if !codexPresent {
+		warning := model.Warning{
+			Code:    "codex_events_missing",
+			Message: "No Codex provider events were observed; provider evidence remains unavailable for this session.",
+		}
+		state.CaptureSources.CodexLogs = "missing"
+		state.RiskSummary = RiskSummary{
+			Level:   model.RiskLow,
+			Reasons: []string{"No Codex provider events were observed."},
+		}
+		state.Warnings = appendWarning(state.Warnings, warning)
 	}
-	state.Warnings = appendWarning(state.Warnings, warning)
 	manifest := model.NewManifest(state.SessionID, state.StartedAt, storage.ManifestArtifacts(layout))
 	manifest.State = model.SessionStateFinalized
 	manifest.UpdatedAt = now
@@ -263,6 +267,69 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 		return State{}, false, err
 	}
 	if err := clearActiveSession(state.RepoRoot); err != nil {
+		return State{}, false, err
+	}
+
+	return state, true, nil
+}
+
+func (m Manager) AppendProviderEvents(ctx context.Context, providerEvents []model.Event, warnings []model.Warning) (State, bool, error) {
+	state, ok, err := m.Status(ctx)
+	if err != nil {
+		return State{}, false, err
+	}
+	if !ok {
+		return State{}, false, nil
+	}
+	layout, err := storage.NewLayout(state.RepoRoot, state.SessionID)
+	if err != nil {
+		return State{}, false, err
+	}
+	events, err := eventlog.ReadFile(layout.EventsJSONL)
+	if err != nil {
+		return State{}, false, err
+	}
+	prevHash, err := eventlog.Replay(events)
+	if err != nil {
+		return State{}, false, err
+	}
+	writer, err := eventlog.NewWriter(layout.EventsJSONL, prevHash, int64(len(events)+1))
+	if err != nil {
+		return State{}, false, err
+	}
+	defer func() {
+		_ = writer.Close()
+	}()
+	var appended model.Event
+	for _, providerEvent := range providerEvents {
+		providerEvent.SessionID = state.SessionID
+		if providerEvent.CWD == "" {
+			providerEvent.CWD = state.RepoRoot
+		}
+		appended, err = writer.Append(providerEvent)
+		if err != nil {
+			return State{}, false, err
+		}
+	}
+	now := m.now()
+	state.UpdatedAt = now
+	if appended.EventHash != "" {
+		state.EventCount = appended.Seq
+		state.ChainHash = appended.EventHash
+	}
+	state.CaptureSources.CodexLogs = "imported"
+	for _, warning := range warnings {
+		state.Warnings = appendWarning(state.Warnings, warning)
+	}
+	manifest := model.NewManifest(state.SessionID, state.StartedAt, storage.ManifestArtifacts(layout))
+	manifest.State = state.State
+	manifest.UpdatedAt = now
+	manifest.EventCount = state.EventCount
+	manifest.Warnings = state.Warnings
+	if err := writeManifest(layout, manifest); err != nil {
+		return State{}, false, err
+	}
+	if err := writeState(layout, state); err != nil {
 		return State{}, false, err
 	}
 
@@ -436,6 +503,16 @@ func appendWarning(warnings []model.Warning, warning model.Warning) []model.Warn
 	}
 
 	return append(warnings, warning)
+}
+
+func codexEventsPresent(events []model.Event) bool {
+	for _, event := range events {
+		if event.Provider == "codex" || event.Source == "codex_session_log" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func repoPathOrCWD(path string) string {

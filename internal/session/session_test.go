@@ -90,6 +90,47 @@ func TestStartStatusLiveStopLifecycle(t *testing.T) {
 	}
 }
 
+func TestAppendProviderEventsPreventsMissingCodexWarning(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	providerEvent := model.Event{
+		EventID:   "evt_codex_test",
+		SessionID: state.SessionID,
+		Timestamp: fixedNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.command",
+		Provider:  "codex",
+		CWD:       repo,
+		Payload:   map[string]any{"command": "go test ./..."},
+	}
+	state, ok, err := manager.AppendProviderEvents(context.Background(), []model.Event{providerEvent}, nil)
+	if err != nil {
+		t.Fatalf("AppendProviderEvents() error = %v", err)
+	}
+	if !ok || state.CaptureSources.CodexLogs != "imported" {
+		t.Fatalf("unexpected appended state ok=%v state=%+v", ok, state)
+	}
+	finalized, stopped, err := manager.Stop(context.Background())
+	if err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if !stopped {
+		t.Fatal("Stop() stopped=false")
+	}
+	if finalized.CaptureSources.CodexLogs != "imported" {
+		t.Fatalf("CodexLogs = %q, want imported", finalized.CaptureSources.CodexLogs)
+	}
+	for _, warning := range finalized.Warnings {
+		if warning.Code == "codex_events_missing" {
+			t.Fatalf("unexpected missing Codex warning: %+v", finalized.Warnings)
+		}
+	}
+}
+
 func TestStopWithoutActiveSessionIsIdempotent(t *testing.T) {
 	repo := newSessionGitRepo(t)
 	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}

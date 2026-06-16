@@ -6,7 +6,10 @@ import (
 	"strings"
 
 	"github.com/ametel01/agentreceipt/internal/config"
+	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/provider/codex"
 	"github.com/ametel01/agentreceipt/internal/session"
+	"github.com/ametel01/agentreceipt/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -256,7 +259,38 @@ func newCodexJSONLCommand() *cobra.Command {
 		Short: "Import a Codex JSONL trace",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "import codex-jsonl will parse %s; %s.\n", args[0], scaffoldMessage)
+			manager, err := managerFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			state, active, err := manager.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			sessionID := "ar_ses_preview"
+			cwd := ""
+			if active {
+				sessionID = state.SessionID
+				cwd = state.RepoRoot
+			}
+			result, err := codex.ParseFile(args[0], codex.ParseOptions{SessionID: sessionID, CWD: cwd})
+			if err != nil {
+				return err
+			}
+			if active {
+				layout, err := storage.NewLayout(state.RepoRoot, state.SessionID)
+				if err != nil {
+					return err
+				}
+				if err := codex.WriteTraces(layout, result); err != nil {
+					return err
+				}
+				if _, _, err := manager.AppendProviderEvents(cmd.Context(), result.Events, codexWarnings(result.Warnings)); err != nil {
+					return err
+				}
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Imported Codex JSONL: events=%d commands=%d warnings=%d active_session=%t\n", result.EventCount, result.CommandCount, result.WarningCount, active)
+
 			return err
 		},
 	}
@@ -273,8 +307,43 @@ func newInspectCommand() *cobra.Command {
 }
 
 func newInspectCodexCommand() *cobra.Command {
-	inspectCodex := newScaffoldCommand("codex", "Inspect local Codex evidence availability", "inspect codex will report log discovery, parser confidence, candidate sessions, and parse warnings.")
+	inspectCodex := &cobra.Command{
+		Use:   "codex",
+		Short: "Inspect local Codex evidence availability",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			home, err := cmd.Flags().GetString("home")
+			if err != nil {
+				return err
+			}
+			last, err := cmd.Flags().GetBool("last")
+			if err != nil {
+				return err
+			}
+			result := codex.Inspect(home)
+			candidates := result.Candidates
+			if last && len(candidates) > 1 {
+				candidates = candidates[:1]
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Codex home: %s\nCandidates: %d\nWarnings: %d\n", result.CodexHome, len(candidates), len(result.Warnings))
+			if err != nil {
+				return err
+			}
+			for _, candidate := range candidates {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", candidate.Path); err != nil {
+					return err
+				}
+			}
+			for _, warning := range result.Warnings {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "warning[%s]: %s\n", warning.Code, warning.Message); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
 	inspectCodex.Flags().Bool("last", false, "Inspect the most recent Codex session candidate")
+	inspectCodex.Flags().String("home", "", "Codex home directory; defaults to CODEX_HOME or ~/.codex")
 
 	return inspectCodex
 }
@@ -343,4 +412,16 @@ func managerFromCommand(cmd *cobra.Command) (session.Manager, error) {
 	}
 
 	return session.Manager{RepoPath: repoPath, Config: cfg}, nil
+}
+
+func codexWarnings(warnings []codex.ParseWarning) []model.Warning {
+	converted := make([]model.Warning, 0, len(warnings))
+	for _, warning := range warnings {
+		converted = append(converted, model.Warning{
+			Code:    "codex_" + warning.Code,
+			Message: warning.Message,
+		})
+	}
+
+	return converted
 }

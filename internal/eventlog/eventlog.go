@@ -49,6 +49,8 @@ func Normalize(event model.Event) (model.Event, error) {
 	}
 	if event.Payload == nil {
 		event.Payload = map[string]any{}
+	} else {
+		event.Payload = normalizePayload(event.Payload)
 	}
 	if event.Provider == "" {
 		event.Provider = "unknown"
@@ -60,6 +62,19 @@ func Normalize(event model.Event) (model.Event, error) {
 	}
 
 	return event, nil
+}
+
+func normalizePayload(payload map[string]any) map[string]any {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return payload
+	}
+	var normalized map[string]any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return payload
+	}
+
+	return normalized
 }
 
 func LinkEvent(prevHash string, event model.Event) (model.Event, error) {

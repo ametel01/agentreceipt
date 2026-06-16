@@ -120,7 +120,6 @@ func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
 		{"review", "--last"},
 		{"verify"},
 		{"export", "--md"},
-		{"inspect", "codex", "--last"},
 		{"pr", "comment"},
 	} {
 		stdout, _, err := executeCommand(t, args...)
@@ -183,12 +182,81 @@ func TestImportCodexJSONLCommand(t *testing.T) {
 	if _, _, err := executeCommand(t, "import", "codex-jsonl"); err == nil {
 		t.Fatal("import codex-jsonl without a path returned nil error")
 	}
-	stdout, _, err := executeCommand(t, "import", "codex-jsonl", "trace.jsonl")
+	tracePath := filepath.Join(t.TempDir(), "trace.jsonl")
+	if err := os.WriteFile(tracePath, []byte(`{"type":"response_item","timestamp":"2026-06-16T00:00:00Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":"{\"cmd\":\"go test ./...\"}"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	stdout, _, err := executeCommand(t, "import", "codex-jsonl", tracePath)
 	if err != nil {
 		t.Fatalf("import codex-jsonl returned error: %v", err)
 	}
-	if !strings.Contains(stdout, "trace.jsonl") {
-		t.Fatalf("import output missing path: %q", stdout)
+	if !strings.Contains(stdout, "events=1") || !strings.Contains(stdout, "active_session=false") {
+		t.Fatalf("import output = %q", stdout)
+	}
+}
+
+func TestImportCodexJSONLActiveSession(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	if _, _, err := executeCommand(t, "--repo", repo, "start"); err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	tracePath := filepath.Join(t.TempDir(), "trace.jsonl")
+	trace := strings.Join([]string{
+		`{"type":"response_item","timestamp":"2026-06-16T00:00:00Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":"{\"cmd\":\"go test ./...\"}"}}`,
+		`{malformed`,
+	}, "\n")
+	if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	stdout, _, err := executeCommand(t, "--repo", repo, "import", "codex-jsonl", tracePath)
+	if err != nil {
+		t.Fatalf("active import returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "active_session=true") || !strings.Contains(stdout, "warnings=1") {
+		t.Fatalf("active import output = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "status")
+	if err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "- codex_logs: imported") {
+		t.Fatalf("status did not show imported Codex logs: %q", stdout)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+}
+
+func TestInspectCodexCommand(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", "2026", "06", "16")
+	if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := filepath.Join(sessionDir, "rollout-test.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+	stdout, _, err := executeCommand(t, "inspect", "codex", "--home", home, "--last")
+	if err != nil {
+		t.Fatalf("inspect codex returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "Candidates: 1") || !strings.Contains(stdout, sessionPath) {
+		t.Fatalf("inspect output = %q", stdout)
+	}
+}
+
+func TestInspectCodexCommandReportsMissingLogs(t *testing.T) {
+	t.Parallel()
+
+	stdout, _, err := executeCommand(t, "inspect", "codex", "--home", t.TempDir())
+	if err != nil {
+		t.Fatalf("inspect codex returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "Candidates: 0") || !strings.Contains(stdout, "warning[codex_logs_missing]") {
+		t.Fatalf("missing inspect output = %q", stdout)
 	}
 }
 
