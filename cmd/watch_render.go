@@ -53,6 +53,8 @@ func newCodexWatchRenderer(out io.Writer) *codexWatchRenderer {
 
 func newCodexWatchRendererWithColor(out io.Writer, color bool) *codexWatchRenderer {
 	return &codexWatchRenderer{
+		// zerolog is intentionally limited to streaming watch events. Review,
+		// receipt, verify, and Markdown output are report renderers, not logs.
 		logger: zerolog.New(newWatchConsoleWriter(out, color)).Level(zerolog.InfoLevel),
 		color:  color,
 		calls:  map[string]codex.ToolCall{},

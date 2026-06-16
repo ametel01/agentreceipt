@@ -68,6 +68,8 @@ agentreceipt start --watch
 
 Watch and review output are human-readable by default. Watch output is backed by structured watch events so later machine-readable rendering can reuse the same event shape. Color is controlled with `--color auto|always|never`; `auto` enables color only for terminal output.
 
+AgentReceipt keeps streaming logs and report rendering separate. `start --watch` uses `zerolog` for structured one-line runtime events. Review, receipt, verify, Markdown, PR, and short Cobra command responses use explicit renderers so their layout stays deterministic and reviewer-focused.
+
 Useful watch options:
 
 ```bash

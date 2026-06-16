@@ -30,11 +30,14 @@ Rationale:
 - Build and run as a production CLI from the first release, not a prototype.
 - All failures are explicit and typed; no silent fallbacks in core verification paths.
 - No command is considered done without:
-  - structured logging with session IDs
+  - structured logging for streaming runtime events, with session IDs where available
+  - explicit renderers for reports, receipts, verification summaries, Markdown, PR output, and short command responses
   - non-leaky temporary file handling
   - deterministic file naming and atomic writes
   - input validation at trust boundaries (`path`, `command`, `provider payload`, `session ID`)
 - Every artifact must be reproducible from source with a clean Git checkout.
+
+Structured logging is a runtime stream concern, not the default rendering mechanism for every command. `start --watch` uses `zerolog` because it emits event-like lines with stable fields. Review and receipt surfaces should stay hand-rendered from typed models so their terminal, JSON, Markdown, and PR forms remain predictable and easy to test.
 
 ## 3) Scope boundaries (MVP)
 
