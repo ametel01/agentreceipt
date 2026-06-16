@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 GO ?= go
+BINARY ?= agentreceipt
 TOOLS_BIN ?= $(CURDIR)/.tools/bin
 GOLANGCI_LINT ?= $(TOOLS_BIN)/golangci-lint
 STATICCHECK ?= $(TOOLS_BIN)/staticcheck
@@ -20,7 +21,7 @@ help:
 	@printf '  %-12s %s\n' 'test-race' 'Run go test -race ./...'
 	@printf '  %-12s %s\n' 'security' 'Run gosec ./...'
 	@printf '  %-12s %s\n' 'coverage' 'Run tests with coverage and enforce the 80% threshold.'
-	@printf '  %-12s %s\n' 'build' 'Build all Go packages.'
+	@printf '  %-12s %s\n' 'build' 'Build all Go packages and refresh ./agentreceipt.'
 	@printf '  %-12s %s\n' 'smoke' 'Run the CLI smoke harness.'
 	@printf '  %-12s %s\n' 'verify' 'Run format, lint, tests, race, security, coverage, build, and smoke.'
 	@printf '  %-12s %s\n' 'tools' 'Install local lint/security tools into .tools/bin.'
@@ -45,7 +46,12 @@ test-race:
 	$(GO) test -race ./...
 
 build:
+	rm -f "$(BINARY)"
 	$(GO) build ./...
+	tmp="$$(mktemp "$(CURDIR)/$(BINARY).XXXXXX")"; \
+		trap 'rm -f "$$tmp"' EXIT; \
+		$(GO) build -o "$$tmp" .; \
+		mv "$$tmp" "$(BINARY)"
 
 verify: fmt-check lint test test-race security coverage build smoke
 
@@ -66,4 +72,4 @@ tools:
 	GOBIN="$(TOOLS_BIN)" $(GO) install github.com/securego/gosec/v2/cmd/gosec@latest
 
 clean:
-	rm -rf .tools coverage.out dist agentreceipt
+	rm -rf .tools coverage.out dist "$(BINARY)"
