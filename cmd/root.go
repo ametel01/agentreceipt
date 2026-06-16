@@ -236,6 +236,8 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 	watchStarted := time.Now()
 	watched := map[string]watchedCodexFile{}
 	reportedWarnings := map[string]bool{}
+	renderer := newCodexWatchRenderer(cmd.OutOrStdout())
+	initialPoll := true
 	poll := func() error {
 		result := codex.Inspect(options.CodexHome)
 		for _, warning := range result.Warnings {
@@ -248,6 +250,7 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 				return err
 			}
 		}
+		selectedInitialCandidate := false
 		for _, candidate := range result.Candidates {
 			matches, reason := codexCandidateMatches(candidate, state.RepoRoot, watchStarted)
 			if !matches {
@@ -255,12 +258,22 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 			}
 			tracked, ok := watched[candidate.Path]
 			if !ok {
+				if !options.IncludeExisting {
+					if initialPoll {
+						if selectedInitialCandidate {
+							continue
+						}
+						selectedInitialCandidate = true
+					} else if !candidate.ModTime.After(watchStarted) {
+						continue
+					}
+				}
 				tracked = watchedCodexFile{}
 				if !options.IncludeExisting && candidate.ModTime.Before(watchStarted.Add(-2*time.Second)) {
 					tracked.offset = candidate.Size
 				}
 				watched[candidate.Path] = tracked
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] selected %s (%s)\n", candidate.Path, reason); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] watching %s (%s)\n", filepath.Base(candidate.Path), reason); err != nil {
 					return err
 				}
 			}
@@ -285,10 +298,11 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 			if _, _, err := manager.AppendProviderEvents(operationCtx, tail.Events, codexWarnings(tail.Warnings)); err != nil {
 				return err
 			}
-			if err := printCodexLiveResult(cmd, tail.ParseResult); err != nil {
+			if err := renderer.Print(tail.ParseResult); err != nil {
 				return err
 			}
 		}
+		initialPoll = false
 
 		return nil
 	}
@@ -339,40 +353,7 @@ func samePath(left string, right string) bool {
 }
 
 func printCodexLiveResult(cmd *cobra.Command, result codex.ParseResult) error {
-	for _, toolCall := range result.ToolCalls {
-		if toolCall.Command != "" {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] tool %s cmd=%q\n", emptyDefault(toolCall.Tool, "unknown"), truncate(toolCall.Command, 240)); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] tool %s\n", emptyDefault(toolCall.Tool, "unknown")); err != nil {
-			return err
-		}
-	}
-	for _, command := range result.Commands {
-		if command.Status == "unknown" && command.Command != "" {
-			continue
-		}
-		exit := ""
-		if command.ExitCode != nil {
-			exit = fmt.Sprintf(" exit=%d", *command.ExitCode)
-		}
-		callID := command.CallID
-		if callID == "" {
-			callID = "unknown"
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] result %s status=%s%s\n", callID, command.Status, exit); err != nil {
-			return err
-		}
-	}
-	for _, warning := range result.Warnings {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] warning %s: %s\n", warning.Code, warning.Message); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return newCodexWatchRenderer(cmd.OutOrStdout()).Print(result)
 }
 
 func emptyDefault(value string, fallback string) string {

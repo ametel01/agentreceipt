@@ -187,38 +187,73 @@ func TestCodexCandidateMatchesRepoAndNewLogs(t *testing.T) {
 	}
 }
 
+func TestStartWatchDefaultsToNewestMatchingCodexLog(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	repo := newCommandGitRepo(t)
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", "2026", "06", "17")
+	if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	olderPath := filepath.Join(sessionDir, "rollout-old.jsonl")
+	newerPath := filepath.Join(sessionDir, "rollout-new.jsonl")
+	for _, path := range []string{olderPath, newerPath} {
+		trace := `{"type":"session_meta","timestamp":"2026-06-17T00:00:00Z","payload":{"type":"session_meta","cwd":"` + repo + `"}}` + "\n"
+		if err := os.WriteFile(path, []byte(trace), 0o600); err != nil {
+			t.Fatalf("write trace %s: %v", path, err)
+		}
+	}
+	now := time.Now()
+	if err := os.Chtimes(olderPath, now.Add(-2*time.Hour), now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("chtime older trace: %v", err)
+	}
+	if err := os.Chtimes(newerPath, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatalf("chtime newer trace: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "--repo", repo, "start", "--watch", "--codex-home", home, "--watch-interval", "1ms", "--watch-duration", "5ms")
+	if err != nil {
+		t.Fatalf("start --watch returned error: %v\n%s", err, stdout)
+	}
+	if got := strings.Count(stdout, "[codex] watching"); got != 1 {
+		t.Fatalf("watching count = %d, output:\n%s", got, stdout)
+	}
+	if !strings.Contains(stdout, "rollout-new.jsonl") || strings.Contains(stdout, "rollout-old.jsonl") {
+		t.Fatalf("watch did not select only newest log:\n%s", stdout)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+}
+
 func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
 	t.Parallel()
 
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&stdout)
-	exitCode := 7
 	longCommand := strings.Repeat("x", 300)
-	result := codex.ParseResult{
-		ToolCalls: []codex.ToolCall{
-			{Tool: "read_file"},
-			{Tool: "exec_command", Command: longCommand},
-			{Command: "go test ./..."},
-		},
-		Commands: []codex.CommandEvent{
-			{Command: "go test ./...", Status: "unknown"},
-			{CallID: "call_1", Status: "failed", ExitCode: &exitCode},
-			{Status: "success"},
-		},
-		Warnings: []codex.ParseWarning{{Code: "malformed_json", Message: "bad record"}},
-	}
+	result := codex.ParseJSONL(strings.NewReader(strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"` + longCommand + `"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 7\nfailed"}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":25,"output_tokens":10,"reasoning_output_tokens":3,"total_tokens":110}}}}`,
+		`{"type":"response_item","payload":{"type":"function_call","name":"update_plan","call_id":"call_2","arguments":{"plan":[]}}}`,
+		`{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call_3","input":"patch"}}`,
+		`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_3","output":"Exit code: 0\nok"}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":5,"output_tokens":7,"reasoning_output_tokens":0,"total_tokens":57}}}}`,
+		`{malformed`,
+	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test"})
 	if err := printCodexLiveResult(cmd, result); err != nil {
 		t.Fatalf("printCodexLiveResult() error = %v", err)
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"[codex] tool read_file",
-		"[codex] tool exec_command",
-		"[codex] tool unknown cmd=\"go test ./...\"",
-		"[codex] result call_1 status=failed exit=7",
-		"[codex] result unknown status=success",
-		"[codex] warning malformed_json: bad record",
+		"[codex] fail   run",
+		"(exit 7)",
+		"[codex] ok     edit apply_patch",
+		"[codex] tokens 110 after",
+		"[codex] tokens 57 after edit apply_patch",
+		"[codex] warn   malformed_json:",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q:\n%s", want, output)
@@ -226,6 +261,39 @@ func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
 	}
 	if strings.Contains(output, longCommand) {
 		t.Fatalf("long command was not truncated: %q", output)
+	}
+}
+
+func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	result := codex.ParseJSONL(strings.NewReader(strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"git status --short"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_2","arguments":{"cmd":"git diff --stat"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_2","output":"Exit code: 0\nok"}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"cached_input_tokens":75,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":220}}}}`,
+	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test"})
+	if err := newCodexWatchRenderer(&stdout).Print(result); err != nil {
+		t.Fatalf("Print() error = %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "[codex] tokens 220 after 2 actions") {
+		t.Fatalf("batch token output missing:\n%s", output)
+	}
+}
+
+func TestCodexWatchRendererSkipsOrphanTokenTelemetry(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	result := codex.ParseJSONL(strings.NewReader(`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"cached_input_tokens":75,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":220}}}}`), codex.ParseOptions{SessionID: "ar_ses_test"})
+	if err := newCodexWatchRenderer(&stdout).Print(result); err != nil {
+		t.Fatalf("Print() error = %v", err)
+	}
+	if output := stdout.String(); strings.Contains(output, "tokens") {
+		t.Fatalf("orphan token telemetry was printed:\n%s", output)
 	}
 }
 
@@ -484,7 +552,7 @@ func TestStartWatchImportsMatchingCodexLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start --watch returned error: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "Watching Codex logs") || !strings.Contains(stdout, "[codex] tool exec_command") || !strings.Contains(stdout, `cmd="go test ./..."`) {
+	if !strings.Contains(stdout, "Watching Codex logs") || !strings.Contains(stdout, "[codex] watching") || !strings.Contains(stdout, "[codex] ok     run go test ./...") {
 		t.Fatalf("watch output missing live command details: %q", stdout)
 	}
 	stdout, _, err = executeCommand(t, "--repo", repo, "status")

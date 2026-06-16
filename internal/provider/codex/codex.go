@@ -60,6 +60,7 @@ type ParseResult struct {
 	Timeline         []TimelineRecord   `json:"timeline"`
 	ToolCalls        []ToolCall         `json:"tool_calls"`
 	Commands         []CommandEvent     `json:"commands"`
+	TokenUsages      []TokenUsageEvent  `json:"token_usages"`
 	ExecutionErrors  []ExecutionError   `json:"execution_errors"`
 	RiskSignals      []RiskSignal       `json:"risk_signals"`
 	SourceConfidence []ConfidenceRecord `json:"source_confidence"`
@@ -67,29 +68,33 @@ type ParseResult struct {
 }
 
 type TimelineRecord struct {
-	Index   int            `json:"i"`
-	Time    string         `json:"ts,omitempty"`
-	Type    string         `json:"type"`
-	Subtype string         `json:"subtype,omitempty"`
-	TurnID  string         `json:"turn_id,omitempty"`
-	Summary string         `json:"summary"`
-	Raw     map[string]any `json:"raw,omitempty"`
+	Index    int            `json:"i"`
+	Time     string         `json:"ts,omitempty"`
+	Type     string         `json:"type"`
+	Subtype  string         `json:"subtype,omitempty"`
+	Category LogCategory    `json:"category"`
+	Family   LogFamily      `json:"family"`
+	TurnID   string         `json:"turn_id,omitempty"`
+	Summary  string         `json:"summary"`
+	Raw      map[string]any `json:"raw,omitempty"`
 }
 
 type ToolCall struct {
-	SessionID string         `json:"session_id"`
-	Time      string         `json:"ts,omitempty"`
-	TurnID    string         `json:"turn_id,omitempty"`
-	Tool      string         `json:"tool"`
-	ToolType  string         `json:"tool_type"`
-	CallID    string         `json:"call_id,omitempty"`
-	Arguments map[string]any `json:"arguments,omitempty"`
-	Command   string         `json:"command,omitempty"`
-	Source    string         `json:"source"`
+	SessionID  string         `json:"session_id"`
+	LineNumber int            `json:"line_no,omitempty"`
+	Time       string         `json:"ts,omitempty"`
+	TurnID     string         `json:"turn_id,omitempty"`
+	Tool       string         `json:"tool"`
+	ToolType   string         `json:"tool_type"`
+	CallID     string         `json:"call_id,omitempty"`
+	Arguments  map[string]any `json:"arguments,omitempty"`
+	Command    string         `json:"command,omitempty"`
+	Source     string         `json:"source"`
 }
 
 type CommandEvent struct {
 	SessionID       string `json:"session_id"`
+	LineNumber      int    `json:"line_no,omitempty"`
 	CallID          string `json:"call_id,omitempty"`
 	TurnID          string `json:"turn_id,omitempty"`
 	Tool            string `json:"tool,omitempty"`
@@ -111,6 +116,18 @@ type ExecutionError struct {
 	Message    string `json:"message"`
 	Severity   string `json:"severity"`
 	Time       string `json:"ts,omitempty"`
+}
+
+type TokenUsageEvent struct {
+	SessionID             string `json:"session_id"`
+	LineNumber            int    `json:"line_no,omitempty"`
+	TurnID                string `json:"turn_id,omitempty"`
+	InputTokens           int    `json:"input_tokens"`
+	CachedInputTokens     int    `json:"cached_input_tokens"`
+	OutputTokens          int    `json:"output_tokens"`
+	ReasoningOutputTokens int    `json:"reasoning_output_tokens"`
+	TotalTokens           int    `json:"total_tokens"`
+	Source                string `json:"source"`
 }
 
 type RiskSignal struct {
@@ -226,13 +243,16 @@ func (r *ParseResult) consumeRecord(options ParseOptions, raw map[string]any) {
 	turnID := firstString(raw, "turn_id", "turnID")
 	callID := firstString(payload, "call_id", "callID")
 	summary := summarize(recordType, payloadType, payload)
+	category := CategorizeRecord(raw)
 	r.Timeline = append(r.Timeline, TimelineRecord{
-		Index:   r.LineCount,
-		Time:    ts,
-		Type:    recordType,
-		Subtype: payloadType,
-		TurnID:  turnID,
-		Summary: summary,
+		Index:    r.LineCount,
+		Time:     ts,
+		Type:     recordType,
+		Subtype:  payloadType,
+		Category: category.Category,
+		Family:   category.Family,
+		TurnID:   turnID,
+		Summary:  summary,
 	})
 
 	switch payloadType {
@@ -240,6 +260,9 @@ func (r *ParseResult) consumeRecord(options ParseOptions, raw map[string]any) {
 		r.consumeToolCall(options, raw, payload, ts, turnID, callID)
 	case "function_call_output", "custom_tool_call_output":
 		r.consumeCommandOutput(options, payload, ts, turnID, callID)
+	case "token_count":
+		r.consumeTokenCount(options, payload, turnID)
+		r.Events = append(r.Events, providerEvent(options, r.LineCount, ts, recordType, payloadType, raw))
 	default:
 		r.Events = append(r.Events, providerEvent(options, r.LineCount, ts, recordType, payloadType, raw))
 	}
@@ -250,29 +273,31 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 	args := argumentsMap(payload["arguments"])
 	command := firstString(args, "cmd", "command")
 	toolCall := ToolCall{
-		SessionID: options.SessionID,
-		Time:      ts,
-		TurnID:    turnID,
-		Tool:      tool,
-		ToolType:  stringField(payload, "type"),
-		CallID:    callID,
-		Arguments: redactMap(args, options.MaxOutputBytes),
-		Command:   redact(command, options.MaxOutputBytes),
-		Source:    "session_jsonl",
+		SessionID:  options.SessionID,
+		LineNumber: r.LineCount,
+		Time:       ts,
+		TurnID:     turnID,
+		Tool:       tool,
+		ToolType:   stringField(payload, "type"),
+		CallID:     callID,
+		Arguments:  redactMap(args, options.MaxOutputBytes),
+		Command:    redact(command, options.MaxOutputBytes),
+		Source:     "session_jsonl",
 	}
 	r.ToolCalls = append(r.ToolCalls, toolCall)
 	eventType := "provider.event"
 	if command != "" {
 		eventType = "provider.command"
 		r.Commands = append(r.Commands, CommandEvent{
-			SessionID: options.SessionID,
-			CallID:    callID,
-			TurnID:    turnID,
-			Tool:      tool,
-			Time:      ts,
-			Command:   redact(command, options.MaxOutputBytes),
-			Status:    "unknown",
-			Source:    "session_jsonl",
+			SessionID:  options.SessionID,
+			LineNumber: r.LineCount,
+			CallID:     callID,
+			TurnID:     turnID,
+			Tool:       tool,
+			Time:       ts,
+			Command:    redact(command, options.MaxOutputBytes),
+			Status:     "unknown",
+			Source:     "session_jsonl",
 		})
 		r.addRiskSignals(options, command)
 	}
@@ -301,6 +326,7 @@ func (r *ParseResult) consumeCommandOutput(options ParseOptions, payload map[str
 	truncated := len(firstString(payload, "output", "content")) > options.MaxOutputBytes
 	commandEvent := CommandEvent{
 		SessionID:       options.SessionID,
+		LineNumber:      r.LineCount,
 		CallID:          callID,
 		TurnID:          turnID,
 		Tool:            firstString(payload, "name", "tool"),
@@ -335,6 +361,28 @@ func (r *ParseResult) consumeCommandOutput(options ParseOptions, payload map[str
 			"line_no":        r.LineCount,
 			"command_result": commandEvent,
 		},
+	})
+}
+
+func (r *ParseResult) consumeTokenCount(options ParseOptions, payload map[string]any, turnID string) {
+	info := mapField(payload, "info")
+	if info == nil {
+		return
+	}
+	usage := mapField(info, "last_token_usage")
+	if usage == nil {
+		return
+	}
+	r.TokenUsages = append(r.TokenUsages, TokenUsageEvent{
+		SessionID:             options.SessionID,
+		LineNumber:            r.LineCount,
+		TurnID:                turnID,
+		InputTokens:           intField(usage, "input_tokens"),
+		CachedInputTokens:     intField(usage, "cached_input_tokens"),
+		OutputTokens:          intField(usage, "output_tokens"),
+		ReasoningOutputTokens: intField(usage, "reasoning_output_tokens"),
+		TotalTokens:           intField(usage, "total_tokens"),
+		Source:                "session_jsonl",
 	})
 }
 
@@ -489,7 +537,7 @@ func commandStatus(output string) (string, *int, string) {
 	if output == "" {
 		return "unknown", nil, ""
 	}
-	exitPattern := regexp.MustCompile(`Exit code:\s*([0-9]+)`)
+	exitPattern := regexp.MustCompile(`(?:Exit code:|Process exited with code)\s*([0-9]+)`)
 	if match := exitPattern.FindStringSubmatch(output); len(match) == 2 {
 		code, _ := strconv.Atoi(match[1])
 		if code != 0 {
@@ -545,6 +593,20 @@ func stringField(raw map[string]any, key string) string {
 		return strconv.FormatFloat(value, 'f', -1, 64)
 	default:
 		return ""
+	}
+}
+
+func intField(raw map[string]any, key string) int {
+	switch value := raw[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case json.Number:
+		parsed, _ := value.Int64()
+		return int(parsed)
+	default:
+		return 0
 	}
 }
 

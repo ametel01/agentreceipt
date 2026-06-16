@@ -20,6 +20,7 @@ and this project will follow semantic versioning once releases begin.
 - Added session lifecycle orchestration for `start`, `status`, `live`, and `stop` with persisted state, active-session tracking, finalized manifests, event replay, and zero-Codex-evidence warnings.
 - Added robust Codex JSONL parsing, provider trace export, `inspect codex`, active-session `import codex-jsonl`, parser warnings, command extraction, output redaction, and provider risk signals.
 - Added foreground `start --watch` support for live Codex JSONL tailing, repo-aware session matching, real-time tool/command output, and automatic provider-event import into active receipts.
+- Added typed Codex log categories and families for conversation, tool, telemetry, and context records, used them to render compact one-line `start --watch` action completions with only per-action or per-batch token totals, suppressed unpaired token telemetry, and defaulted watch selection to the newest matching Codex log instead of every historical repo log.
 - Added confidence-aware review reports with risk reasons, command detection, capture confidence, evidence gaps, reviewer focus prompts, and JSON/Markdown/PR output modes.
 - Added signed receipt finalization with Ed25519 key management, receipt/review artifact writing, integrity verification, and `export --json|--md|--pr` output.
 - Added repository initialization, signed manual marker events, policy defaults, and guarded GitHub CLI PR comment posting.
