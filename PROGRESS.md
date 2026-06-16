@@ -12,8 +12,8 @@ Update this file after every completed implementation step with the completed st
 
 ## Current Status
 
-- Current step: Step 6 complete
-- Next step: Step 7 - Sidecar Lifecycle Orchestration
+- Current step: Step 7 complete
+- Next step: Step 8 - Codex Log Ingestion and Best-Effort Provider Events
 - Last updated: 2026-06-16
 
 ## Step Checklist
@@ -25,7 +25,7 @@ Update this file after every completed implementation step with the completed st
 - [x] Step 4: Implement Event Log and Hash Chain
 - [x] Step 5: Git Monitor and Snapshot Capture
 - [x] Step 6: Filesystem Watcher and Change Classification
-- [ ] Step 7: Sidecar Lifecycle Orchestration
+- [x] Step 7: Sidecar Lifecycle Orchestration
 - [ ] Step 8: Codex Log Ingestion and Best-Effort Provider Events
 - [ ] Step 9: Risk Engine, Confidence Model, and Evidence Reporting
 - [ ] Step 10: Receipt Build, Sign, Verify, and Export Surfaces
@@ -42,4 +42,5 @@ Update this file after every completed implementation step with the completed st
 | 2026-06-16 | Step 3: Define Config, Session, and Storage Contracts | Complete | Passed full quality gates and `make verify` after adding config/model/storage tests. | `26146b7` | Added `.agentreceipt.yml` defaults and validation, receipt/session/review models, deterministic JSON marshaling, forward-compatible receipt decoding, and canonical session layout helpers. |
 | 2026-06-16 | Step 4: Implement Event Log and Hash Chain | Complete | Passed full quality gates and `make verify` after adding eventlog tests for deterministic hashes, append/replay, and broken-chain detection. | `e465e3d` | Added event normalization, genesis hash, `event_hash = sha256(prev_hash || event_json)`, append-only JSONL writer, reader, and replay verifier. |
 | 2026-06-16 | Step 5: Git Monitor and Snapshot Capture | Complete | Passed full quality gates and `make verify` after temp git repo integration tests. | `9672439` | Added git toplevel/branch/HEAD/status capture, staged/unstaged/final diff hashing, `diffs/000001.patch`, `diffs/final.patch`, git snapshot events, and post-final diff mismatch detection. |
-| 2026-06-16 | Step 6: Filesystem Watcher and Change Classification | Complete | Passed full quality gates and `make verify` after fsnotify watcher and classifier tests. | Pending commit | Added recursive fsnotify watcher setup, debounce/coalescing, canonical `fs.change` events, changed-file summary tracking, sensitive path flags, and dependency file flags. |
+| 2026-06-16 | Step 6: Filesystem Watcher and Change Classification | Complete | Passed full quality gates and `make verify` after fsnotify watcher and classifier tests. | `93616b1` | Added recursive fsnotify watcher setup, debounce/coalescing, canonical `fs.change` events, changed-file summary tracking, sensitive path flags, and dependency file flags. |
+| 2026-06-16 | Step 7: Sidecar Lifecycle Orchestration | Complete | Passed full quality gates and `make verify` after session lifecycle package and command tests. | Pending commit | Wired `start`, `status`, `live`, and `stop` to persisted session state, active-session tracking, start/final git snapshots, event replay, finalized manifests, idempotent cleanup, and non-fatal zero-Codex warning behavior. |

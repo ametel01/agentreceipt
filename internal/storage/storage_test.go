@@ -16,6 +16,9 @@ func TestNewLayoutUsesCanonicalPaths(t *testing.T) {
 	if got, want := layout.EventsJSONL, filepath.Join("/repo", RootDir, SessionsDir, "ar_ses_123", EventsFile); got != want {
 		t.Fatalf("EventsJSONL = %q, want %q", got, want)
 	}
+	if got, want := layout.StateJSON, filepath.Join("/repo", RootDir, SessionsDir, "ar_ses_123", StateFile); got != want {
+		t.Fatalf("StateJSON = %q, want %q", got, want)
+	}
 	if got, want := layout.ProviderCodexTraces, filepath.Join("/repo", RootDir, SessionsDir, "ar_ses_123", ProviderDir, ProviderCodexDir, TracesDir); got != want {
 		t.Fatalf("ProviderCodexTraces = %q, want %q", got, want)
 	}

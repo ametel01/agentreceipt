@@ -17,3 +17,4 @@ and this project will follow semantic versioning once releases begin.
 - Added append-only event log support with deterministic normalization, genesis hash chaining, replay verification, and JSONL persistence tests.
 - Added Git monitor snapshot capture with start/final diff artifacts, patch hashes, git snapshot events, and final-diff mismatch detection.
 - Added filesystem watcher support with debounced fsnotify events, changed-file summaries, sensitive path classification, and dependency file classification.
+- Added session lifecycle orchestration for `start`, `status`, `live`, and `stop` with persisted state, active-session tracking, finalized manifests, event replay, and zero-Codex-evidence warnings.

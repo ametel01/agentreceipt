@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/ametel01/agentreceipt/internal/config"
+	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -100,19 +103,108 @@ func newInstallClaudeCommand() *cobra.Command {
 }
 
 func newStartCommand() *cobra.Command {
-	return newScaffoldCommand("start", "Start a local receipt capture session", "start will create a session, launch local capture sources, and persist a manifest.")
+	return &cobra.Command{
+		Use:   "start",
+		Short: "Start a local receipt capture session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			manager, err := managerFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			state, err := manager.Start(cmd.Context())
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Started AgentReceipt session %s\n", state.SessionID)
+
+			return err
+		},
+	}
 }
 
 func newStatusCommand() *cobra.Command {
-	return newScaffoldCommand("status", "Show active session health and event counts", "status will report active session state, capture source health, and risk summary.")
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show active session health and event counts",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			manager, err := managerFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			state, ok, err := manager.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !ok {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
+				return err
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), session.FormatStatus(state))
+
+			return err
+		},
+	}
 }
 
 func newLiveCommand() *cobra.Command {
-	return newScaffoldCommand("live", "Stream recent canonical session events", "live will stream canonicalized events from the active session.")
+	live := &cobra.Command{
+		Use:   "live",
+		Short: "Stream recent canonical session events",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			manager, err := managerFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			limit, err := cmd.Flags().GetInt("limit")
+			if err != nil {
+				return err
+			}
+			events, err := manager.Live(cmd.Context(), limit)
+			if err != nil {
+				return err
+			}
+			if len(events) == 0 {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
+				return err
+			}
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetEscapeHTML(false)
+			for _, event := range events {
+				if err := encoder.Encode(event); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+	live.Flags().Int("limit", 20, "Maximum number of recent events to print")
+
+	return live
 }
 
 func newStopCommand() *cobra.Command {
-	return newScaffoldCommand("stop", "Finalize the active capture session", "stop will finalize manifests, build receipt artifacts, and sign the receipt.")
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Finalize the active capture session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			manager, err := managerFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			state, ok, err := manager.Stop(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !ok {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Finalized AgentReceipt session %s\n", state.SessionID)
+
+			return err
+		},
+	}
 }
 
 func newReviewCommand() *cobra.Command {
@@ -230,4 +322,25 @@ func newScaffoldCommand(use string, short string, future string) *cobra.Command 
 			return err
 		},
 	}
+}
+
+func managerFromCommand(cmd *cobra.Command) (session.Manager, error) {
+	repoPath, err := cmd.Root().PersistentFlags().GetString("repo")
+	if err != nil {
+		return session.Manager{}, err
+	}
+	configPath, err := cmd.Root().PersistentFlags().GetString("config")
+	if err != nil {
+		return session.Manager{}, err
+	}
+	cfg := config.Default()
+	if configPath != "" {
+		loaded, err := config.Load(configPath)
+		if err != nil {
+			return session.Manager{}, err
+		}
+		cfg = loaded
+	}
+
+	return session.Manager{RepoPath: repoPath, Config: cfg}, nil
 }

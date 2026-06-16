@@ -52,19 +52,28 @@ func New(ctx context.Context, repoPath string, sessionID string, layout storage.
 	if repoPath == "" {
 		return nil, errors.New("repo path is required")
 	}
-	root, err := gitToplevel(ctx, repoPath)
+	repoRoot, err := DiscoverRoot(ctx, repoPath)
 	if err != nil {
 		return nil, err
-	}
-	repoRoot := strings.TrimSpace(root)
-	if repoRoot == "" {
-		return nil, errors.New("git toplevel is empty")
 	}
 	if layout.Session == "" {
 		return nil, errors.New("storage layout is required")
 	}
 
 	return &Monitor{sessionID: sessionID, repoRoot: repoRoot, layout: layout}, nil
+}
+
+func DiscoverRoot(ctx context.Context, repoPath string) (string, error) {
+	root, err := gitToplevel(ctx, repoPath)
+	if err != nil {
+		return "", err
+	}
+	repoRoot := strings.TrimSpace(root)
+	if repoRoot == "" {
+		return "", errors.New("git toplevel is empty")
+	}
+
+	return repoRoot, nil
 }
 
 func (m *Monitor) CaptureStart(ctx context.Context) (Snapshot, []model.Event, error) {

@@ -19,6 +19,8 @@ const (
 	ReceiptMarkdownFile  = "receipt.md"
 	ReviewMarkdownFile   = "review.md"
 	ManifestFile         = "manifest.json"
+	StateFile            = "state.json"
+	ActiveSessionFile    = "active_session"
 	DiffsDir             = "diffs"
 	FinalPatchFile       = "final.patch"
 	ProviderDir          = "provider"
@@ -44,6 +46,7 @@ type Layout struct {
 	ReceiptMarkdown      string
 	ReviewMarkdown       string
 	ManifestJSON         string
+	StateJSON            string
 	Diffs                string
 	FinalPatch           string
 	Provider             string
@@ -81,6 +84,7 @@ func NewLayout(repoRoot string, sessionID string) (Layout, error) {
 		ReceiptMarkdown:      filepath.Join(session, ReceiptMarkdownFile),
 		ReviewMarkdown:       filepath.Join(session, ReviewMarkdownFile),
 		ManifestJSON:         filepath.Join(session, ManifestFile),
+		StateJSON:            filepath.Join(session, StateFile),
 		Diffs:                filepath.Join(session, DiffsDir),
 		FinalPatch:           filepath.Join(session, DiffsDir, FinalPatchFile),
 		Provider:             provider,
