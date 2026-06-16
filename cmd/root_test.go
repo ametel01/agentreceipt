@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/eventlog"
+	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/storage"
@@ -368,6 +369,26 @@ func TestCodexWatchRendererDisplaysRiskBadgesWithoutReplacingOutcome(t *testing.
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestCodexWatchRendererUsesHighestRiskSignal(t *testing.T) {
+	t.Parallel()
+
+	result := codex.ParseJSONL(strings.NewReader(strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"rm -rf dist && npm install"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test"})
+
+	events := newCodexWatchRenderer(io.Discard).Events(result)
+	if got, want := len(events), 2; got != want {
+		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
+	}
+	if events[0].Status != "ok" || events[0].RiskLevel != model.RiskHigh || events[0].RiskSignal != "destructive_filesystem" {
+		t.Fatalf("command event risk = %+v, want highest risk signal", events[0])
+	}
+	if events[1].Status != "risk" || !strings.Contains(events[1].Message, "destructive_filesystem:") {
+		t.Fatalf("risk detail event = %+v", events[1])
 	}
 }
 

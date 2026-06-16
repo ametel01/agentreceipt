@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,27 @@ func TestEnsureSessionLayoutCreatesReservedDirectories(t *testing.T) {
 		if !info.IsDir() {
 			t.Fatalf("%q is not a directory", dir)
 		}
+	}
+}
+
+func TestEnsureSessionLayoutReportsDirectoryCreationErrors(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	blocked := filepath.Join(root, "blocked")
+	if err := os.WriteFile(blocked, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write blocker file: %v", err)
+	}
+
+	err := EnsureSessionLayout(Layout{
+		Root:     root,
+		Sessions: filepath.Join(blocked, SessionsDir),
+	})
+	if err == nil {
+		t.Fatal("EnsureSessionLayout() returned nil error for blocked directory")
+	}
+	if !strings.Contains(err.Error(), "create directory") {
+		t.Fatalf("EnsureSessionLayout() error = %q, want directory creation context", err.Error())
 	}
 }
 
