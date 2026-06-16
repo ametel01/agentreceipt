@@ -113,7 +113,7 @@ var defaultRules = []Rule{
 		Signal:   "git_mutation",
 		Category: "git",
 		Reason:   "command mutates local or remote git state",
-		Pattern:  regexp.MustCompile(`(?i)\bgit\s+(commit|merge|cherry-pick|stash|tag|push|rebase)\b`),
+		Pattern:  regexp.MustCompile(`(?i)\bgit\s+(add|commit|merge|cherry-pick|stash|tag|push|rebase)\b`),
 	},
 	{
 		Level:    model.RiskMedium,

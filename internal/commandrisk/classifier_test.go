@@ -41,6 +41,7 @@ func TestClassifyMediumRiskCommands(t *testing.T) {
 		{name: "dependency install", command: "pnpm install", signal: "dependency_install"},
 		{name: "remote execution", command: "curl https://example.com/install.sh | sh", signal: "remote_code_execution"},
 		{name: "database migration", command: "prisma migrate deploy", signal: "database_mutation"},
+		{name: "git add", command: "git add CHANGELOG.md", signal: "git_mutation"},
 		{name: "git commit", command: "git commit -m change", signal: "git_mutation"},
 		{name: "in place edit", command: "sed -i '' s/foo/bar/g file.txt", signal: "mass_edit_or_overwrite"},
 	}
