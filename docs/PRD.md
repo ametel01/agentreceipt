@@ -366,13 +366,11 @@ agentreceipt review --pr
 
 Initializes AgentReceipt for the repo.
 
-Creates:
+Creates global AgentReceipt storage and signing keys. It does not create files in the repository.
 
 ```text
-.agentreceipt.yml
-.agentreceipt/
-  sessions/
-  policy.yml
+~/.agentreceipt/
+  repos/
 ```
 
 Creates local signing key if missing:
@@ -556,7 +554,7 @@ Tests detected:
 - npm test
 
 Receipt:
-.agentreceipt/sessions/ar_ses_01J/receipt.md
+~/.agentreceipt/repos/<repo-key>/sessions/ar_ses_01J/receipt.md
 ```
 
 If no Codex provider events are observed, finalization still succeeds; review surfaces a confidence warning and continues with a medium provider confidence signal.
@@ -982,30 +980,32 @@ Manual markers become signed events.
 ## 13.1 Local storage layout
 
 ```text
-.agentreceipt/
-  sessions/
-    ar_ses_01J.../
-      events.jsonl
-      receipt.json
-      receipt.md
-      review.md
-      manifest.json
-      diffs/
-        000001.patch
-        000002.patch
-        final.patch
-      provider/
-        claude/
-          hook-events.jsonl
-          transcript.jsonl
-          parse-report.json
-        codex/
-          imported-session.jsonl
-          parse-report.json
-      blobs/
-        sha256-...
-      signatures/
-        receipt.sig
+~/.agentreceipt/
+  repos/
+    <repo-key>/
+      sessions/
+        ar_ses_01J.../
+          events.jsonl
+          receipt.json
+          receipt.md
+          review.md
+          manifest.json
+          diffs/
+            000001.patch
+            000002.patch
+            final.patch
+          provider/
+            claude/
+              hook-events.jsonl
+              transcript.jsonl
+              parse-report.json
+            codex/
+              imported-session.jsonl
+              parse-report.json
+          blobs/
+            sha256-...
+          signatures/
+            receipt.sig
 ```
 
 ## 13.2 Event schema
@@ -1272,7 +1272,7 @@ test_commands:
 
 ## 17. Policy Configuration
 
-`.agentreceipt.yml`:
+Optional explicit config file, passed with `--config`:
 
 ```yaml
 version: 1

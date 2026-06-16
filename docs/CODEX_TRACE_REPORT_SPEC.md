@@ -305,13 +305,13 @@ A report generated from this spec must include at least:
 Default output location for session-coupled extraction:
 
 ```text
-.agentreceipt/sessions/<session_id>/provider/codex/traces/
+~/.agentreceipt/repos/<repo-key>/sessions/<session_id>/provider/codex/traces/
 ```
 
 Provider parse reports and imported raw logs should remain under:
 
 ```text
-.agentreceipt/sessions/<session_id>/provider/codex/
+~/.agentreceipt/repos/<repo-key>/sessions/<session_id>/provider/codex/
 ```
 
 Standalone research-harness extraction may also write to `codex-traces/<session_id>/`, but those files are diagnostic artifacts and are not the canonical receipt storage location.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -207,7 +206,11 @@ func resolveSession(ctx context.Context, options Options) (string, string, error
 }
 
 func latestSession(repoRoot string) (string, error) {
-	root, err := os.OpenRoot(filepath.Join(repoRoot, storage.RootDir, storage.SessionsDir))
+	sessionsPath, err := storage.SessionsPath(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	root, err := os.OpenRoot(sessionsPath)
 	if err != nil {
 		return "", err
 	}

@@ -68,7 +68,7 @@ Rationale:
 
 `agentreceipt start` launches a managed sidecar process (or a process tied to terminal lifecycle) that:
 
-1. Creates a session record in `.agentreceipt/sessions/<session_id>/`.
+1. Creates a session record under global AgentReceipt storage keyed by repository path.
 2. Starts background goroutines for:
    - Git snapshot monitor
    - Filesystem watcher
@@ -100,7 +100,7 @@ fs events + git signals + codex logs
 
 | Command | Responsibility |
 | --- | --- |
-| `agentreceipt init` | Bootstrap `.agentreceipt.yml`, `.agentreceipt/policy.yml`, `.agentreceipt/sessions/`, and keys under `~/.agentreceipt/keys/` if missing. |
+| `agentreceipt init` | Bootstrap global AgentReceipt storage and keys under `~/.agentreceipt/` if missing; does not write repo-local files. |
 | `agentreceipt install codex` | Detect Codex log directories and set parser preferences in config. |
 | `agentreceipt install claude` | Deferred roadmap path; command may explain that Claude hook installation is not active in Codex-first MVP. |
 | `agentreceipt start` | Fail-fast if git monitor or filesystem watcher cannot initialize. Create session, persist `manifest.json`, begin capture. |
@@ -117,9 +117,9 @@ fs events + git signals + codex logs
 
 ## 6) Data model
 
-### 6.1 `.agentreceipt.yml`
+### 6.1 Optional explicit config
 
-Use explicit Codex-first defaults:
+AgentReceipt uses Codex-first defaults without requiring a repo-local config file. Advanced users may pass an explicit config file with `--config`:
 
 ```yaml
 version: 1
@@ -210,37 +210,39 @@ Key fields:
 ## 7) Storage layout
 
 ```
-.agentreceipt/
-  sessions/
-    ar_ses_<id>/
-      events.jsonl
-      receipt.json
-      receipt.md
-      review.md
-      manifest.json
-      diffs/
-        000001.patch
-        final.patch
-      provider/
-        codex/
-          imported-session.jsonl
-          parse-report.json
-          traces/
-            session-meta.ndjson
-            timeline.ndjson
-            tool-calls.ndjson
-            command-events.ndjson
-            errors.ndjson
-            risk-signals.ndjson
-            session-summary.ndjson
-        claude/
-          hook-events.jsonl
-          transcript.jsonl
-          parse-report.json
-      blobs/
-        sha256-...
-      signatures/
-        receipt.sig
+~/.agentreceipt/
+  repos/
+    <repo-key>/
+      sessions/
+        ar_ses_<id>/
+          events.jsonl
+          receipt.json
+          receipt.md
+          review.md
+          manifest.json
+          diffs/
+            000001.patch
+            final.patch
+          provider/
+            codex/
+              imported-session.jsonl
+              parse-report.json
+              traces/
+                session-meta.ndjson
+                timeline.ndjson
+                tool-calls.ndjson
+                command-events.ndjson
+                errors.ndjson
+                risk-signals.ndjson
+                session-summary.ndjson
+            claude/
+              hook-events.jsonl
+              transcript.jsonl
+              parse-report.json
+          blobs/
+            sha256-...
+          signatures/
+            receipt.sig
 ```
 
 Event log is append-only. Parsed Codex files should be treated as untrusted input and normalized with warnings.
@@ -324,7 +326,7 @@ idle -> starting -> active -> finalizing -> finalized -> verified(optional)
 
 Transitions:
 
-- `start`: validate repo + watchers, create session directories, seed manifest
+- `start`: validate repo + watchers, create global session directories keyed by repo path, seed manifest
 - `status/live`: readable only if active
 - `stop`: snapshot final state -> build diffs -> compute hashes -> sign -> write artifacts
 - On corruption, emit explicit warning and mark `receipt_verification=invalid` only for verify/report output.
@@ -445,7 +447,7 @@ GitHub Actions pipeline must enforce:
 
 - Which Cobra/Viper variants to standardize across commands?
 - Should signature key naming support per-project keys later (current spec assumes one local default key)?
-- Whether `.agentreceipt/sessions` retention is time-based or manual (MVP: manual).
+- Whether global `~/.agentreceipt/repos/*/sessions` retention is time-based or manual (MVP: manual).
 
 ## 17) Recommended implementation baseline
 

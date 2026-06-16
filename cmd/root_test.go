@@ -133,19 +133,20 @@ func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
 
 func TestInitCommandCreatesConfigPolicyStorageAndKeys(t *testing.T) {
 	repo := newCommandGitRepo(t)
+	homeDir := filepath.Join(t.TempDir(), "home")
 	keyDir := filepath.Join(t.TempDir(), "keys")
+	t.Setenv("AGENTRECEIPT_HOME", homeDir)
 	t.Setenv("AGENTRECEIPT_KEY_DIR", keyDir)
 
 	stdout, _, err := executeCommand(t, "--repo", repo, "init")
 	if err != nil {
 		t.Fatalf("init returned error: %v", err)
 	}
-	if !strings.Contains(stdout, "Initialized AgentReceipt") {
+	if !strings.Contains(stdout, "Initialized global AgentReceipt storage") {
 		t.Fatalf("init output = %q", stdout)
 	}
 	for _, path := range []string{
-		filepath.Join(repo, ".agentreceipt.yml"),
-		filepath.Join(repo, ".agentreceipt", "policy.yml"),
+		homeDir,
 		filepath.Join(keyDir, "default.ed25519"),
 		filepath.Join(keyDir, "default.pub"),
 	} {
@@ -153,8 +154,10 @@ func TestInitCommandCreatesConfigPolicyStorageAndKeys(t *testing.T) {
 			t.Fatalf("expected init artifact %s: %v", path, err)
 		}
 	}
-	if info, err := os.Stat(filepath.Join(repo, ".agentreceipt", "sessions")); err != nil || !info.IsDir() {
-		t.Fatalf("expected sessions directory info=%v err=%v", info, err)
+	for _, path := range []string{filepath.Join(repo, ".agentreceipt.yml"), filepath.Join(repo, ".agentreceipt")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("init polluted repo path %s: %v", path, err)
+		}
 	}
 }
 
@@ -401,7 +404,7 @@ func TestPRCommentReportsMissingCurrentPR(t *testing.T) {
 	if err := os.WriteFile(ghPath, []byte("#!/bin/sh\necho no pull request >&2\nexit 1\n"), 0o700); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+filepath.Dir(gitPath))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+filepath.Dir(gitPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if _, _, err := executeCommand(t, "--repo", repo, "pr", "comment"); err == nil || !strings.Contains(err.Error(), "no current pull request detected") {
 		t.Fatalf("pr comment error = %v", err)
 	}
@@ -427,9 +430,10 @@ if [ "$1 $2" = "pr view" ]; then
   echo '{"number":1}'
   exit 0
 fi
-if [ "$1 $2 $3 $4" = "pr comment --body-file .agentreceipt/pr-comment.md" ]; then
-  test -s "$4" || exit 2
-  grep -q "## AgentReceipt" "$4" || exit 3
+if [ "$1 $2 $3 $4" = "pr comment --body-file -" ]; then
+  body="$(cat)"
+  test -n "$body" || exit 2
+  printf '%s' "$body" | grep -q "## AgentReceipt" || exit 3
   echo commented >> "` + logPath + `"
   exit 0
 fi
@@ -438,7 +442,7 @@ exit 4
 	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(ghScript), 0o700); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+filepath.Dir(gitPath))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+filepath.Dir(gitPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stdout, _, err := executeCommand(t, "--repo", repo, "pr", "comment")
 	if err != nil {
 		t.Fatalf("pr comment returned error: %v", err)
@@ -446,8 +450,8 @@ exit 4
 	if !strings.Contains(stdout, "Posted AgentReceipt PR comment.") {
 		t.Fatalf("pr comment output = %q", stdout)
 	}
-	if _, err := os.Stat(filepath.Join(repo, prCommentFile)); !os.IsNotExist(err) {
-		t.Fatalf("temporary PR comment file was not removed: %v", err)
+	if _, err := os.Stat(filepath.Join(repo, ".agentreceipt")); !os.IsNotExist(err) {
+		t.Fatalf("pr comment polluted repo storage: %v", err)
 	}
 	if data, err := os.ReadFile(logPath); err != nil || !strings.Contains(string(data), "commented") {
 		t.Fatalf("fake gh was not invoked data=%q err=%v", data, err)

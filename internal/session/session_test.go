@@ -231,7 +231,10 @@ func TestStatusClearsStaleActivePointer(t *testing.T) {
 
 func TestStatusRejectsCorruptActivePointer(t *testing.T) {
 	repo := newSessionGitRepo(t)
-	rootDir := filepath.Join(repo, storage.RootDir)
+	rootDir, err := storage.RepositoryPath(repo)
+	if err != nil {
+		t.Fatalf("RepositoryPath() error = %v", err)
+	}
 	if err := os.MkdirAll(rootDir, 0o750); err != nil {
 		t.Fatalf("mkdir root dir: %v", err)
 	}

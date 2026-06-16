@@ -19,6 +19,7 @@ claude_output="$("$tmpdir/agentreceipt" install claude)"
 
 repo="$tmpdir/repo"
 keydir="$tmpdir/keys"
+home="$tmpdir/home"
 mkdir -p "$repo"
 git -C "$repo" init >/dev/null
 git -C "$repo" config user.email agentreceipt@example.test
@@ -28,6 +29,7 @@ git -C "$repo" add README.md
 git -C "$repo" commit -m initial >/dev/null
 
 export AGENTRECEIPT_KEY_DIR="$keydir"
+export AGENTRECEIPT_HOME="$home"
 
 init_output="$("$tmpdir/agentreceipt" --repo "$repo" init)"
 start_output="$("$tmpdir/agentreceipt" --repo "$repo" start)"
@@ -50,7 +52,7 @@ export_pr_output="$("$tmpdir/agentreceipt" --repo "$repo" export --pr)"
 export_json_output="$("$tmpdir/agentreceipt" --repo "$repo" export --json)"
 inspect_output="$("$tmpdir/agentreceipt" inspect codex --home "$tmpdir/missing-codex-home")"
 
-[[ "$init_output" == *"Initialized AgentReceipt"* ]]
+[[ "$init_output" == *"Initialized global AgentReceipt storage"* ]]
 [[ "$session_id" == ar_ses_* ]]
 [[ "$import_output" == *"warnings=1"* ]]
 [[ "$mark_output" == *"smoke reviewed"* ]]
@@ -64,6 +66,10 @@ inspect_output="$("$tmpdir/agentreceipt" inspect codex --home "$tmpdir/missing-c
 
 test -s "$keydir/default.ed25519"
 test -s "$keydir/default.pub"
-test -s "$repo/.agentreceipt/sessions/$session_id/receipt.json"
-test -s "$repo/.agentreceipt/sessions/$session_id/review.md"
-test -s "$repo/.agentreceipt/sessions/$session_id/signatures/receipt.sig"
+test ! -e "$repo/.agentreceipt"
+test ! -e "$repo/.agentreceipt.yml"
+session_dir="$(find "$home/repos" -path "*/sessions/$session_id" -type d -print -quit)"
+test -n "$session_dir"
+test -s "$session_dir/receipt.json"
+test -s "$session_dir/review.md"
+test -s "$session_dir/signatures/receipt.sig"

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
@@ -21,7 +20,7 @@ import (
 )
 
 const scaffoldMessage = "command scaffolded; implementation is scheduled for a later AgentReceipt plan step"
-const prCommentFile = ".agentreceipt/pr-comment.md"
+const prCommentFile = "-"
 
 // Execute runs the AgentReceipt CLI.
 func Execute(version string) error {
@@ -88,37 +87,20 @@ Core commands:
 func newInitCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Bootstrap AgentReceipt config and local storage",
+		Short: "Bootstrap global AgentReceipt storage and signing keys",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			repoRoot, err := repoRootFromCommand(cmd)
+			root, err := storage.DefaultRoot()
 			if err != nil {
 				return err
 			}
-			configPath, err := cmd.Root().PersistentFlags().GetString("config")
-			if err != nil {
-				return err
-			}
-			if configPath == "" {
-				configPath = filepath.Join(repoRoot, config.ConfigFile)
-			}
-			if fileExists(configPath) {
-				if _, err := config.Load(configPath); err != nil {
-					return err
-				}
-			} else if err := config.Write(configPath, config.Default()); err != nil {
-				return err
-			}
-			if err := os.MkdirAll(filepath.Join(repoRoot, storage.RootDir, storage.SessionsDir), 0o750); err != nil {
-				return fmt.Errorf("create session storage: %w", err)
-			}
-			if err := writePolicyIfMissing(repoRoot); err != nil {
-				return err
+			if err := os.MkdirAll(root, 0o750); err != nil {
+				return fmt.Errorf("create global AgentReceipt storage: %w", err)
 			}
 			keypair, err := signing.LoadOrCreateDefault("")
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Initialized AgentReceipt in %s\nConfig: %s\nPolicy: %s\nSigning key: %s\n", repoRoot, configPath, filepath.Join(repoRoot, config.PolicyFile), keypair.Public)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Initialized global AgentReceipt storage\nHome: %s\nSigning key: %s\n", root, keypair.Public)
 
 			return err
 		},
@@ -526,13 +508,7 @@ func newPRCommentCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := writeRepoRelativeFile(repoRoot, prCommentFile, data); err != nil {
-				return err
-			}
-			defer func() {
-				_ = removeRepoRelativeFile(repoRoot, prCommentFile)
-			}()
-			if output, err := runGitHubPRComment(cmd, repoRoot); err != nil {
+			if output, err := runGitHubPRComment(cmd, repoRoot, data); err != nil {
 				return fmt.Errorf("gh pr comment failed: %w: %s", err, strings.TrimSpace(output))
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Posted AgentReceipt PR comment.")
@@ -675,49 +651,6 @@ func exportFormatFromCommand(cmd *cobra.Command) (string, error) {
 	return format, nil
 }
 
-func fileExists(path string) bool {
-	root, err := os.OpenRoot(filepath.Dir(path))
-	if err != nil {
-		return false
-	}
-	defer func() {
-		_ = root.Close()
-	}()
-	_, err = root.Stat(filepath.Base(path))
-
-	return err == nil
-}
-
-func writePolicyIfMissing(repoRoot string) error {
-	rootPath := filepath.Join(repoRoot, storage.RootDir)
-	if err := os.MkdirAll(rootPath, 0o750); err != nil {
-		return fmt.Errorf("create policy directory: %w", err)
-	}
-	root, err := os.OpenRoot(rootPath)
-	if err != nil {
-		return fmt.Errorf("open policy directory: %w", err)
-	}
-	defer func() {
-		_ = root.Close()
-	}()
-	if _, err := root.Stat(storage.PolicyFile); err == nil {
-		return nil
-	}
-	policy := []byte(`version: 1
-privacy:
-  redact_secrets: true
-  store_prompts: false
-  store_raw_tool_outputs: false
-retention:
-  mode: manual
-`)
-	if err := root.WriteFile(storage.PolicyFile, policy, 0o600); err != nil {
-		return fmt.Errorf("write policy defaults: %w", err)
-	}
-
-	return nil
-}
-
 func runGitHubPRView(cmd *cobra.Command, repoRoot string) (string, error) {
 	gh := exec.CommandContext(cmd.Context(), "gh", "pr", "view", "--json", "number")
 	gh.Dir = repoRoot
@@ -726,40 +659,11 @@ func runGitHubPRView(cmd *cobra.Command, repoRoot string) (string, error) {
 	return string(output), err
 }
 
-func runGitHubPRComment(cmd *cobra.Command, repoRoot string) (string, error) {
+func runGitHubPRComment(cmd *cobra.Command, repoRoot string, body []byte) (string, error) {
 	gh := exec.CommandContext(cmd.Context(), "gh", "pr", "comment", "--body-file", prCommentFile)
 	gh.Dir = repoRoot
+	gh.Stdin = strings.NewReader(string(body))
 	output, err := gh.CombinedOutput()
 
 	return string(output), err
-}
-
-func writeRepoRelativeFile(repoRoot string, name string, data []byte) error {
-	root, err := os.OpenRoot(repoRoot)
-	if err != nil {
-		return fmt.Errorf("open repo root: %w", err)
-	}
-	defer func() {
-		_ = root.Close()
-	}()
-	if err := os.MkdirAll(filepath.Join(repoRoot, filepath.Dir(name)), 0o750); err != nil {
-		return fmt.Errorf("create PR comment directory: %w", err)
-	}
-	if err := root.WriteFile(name, data, 0o600); err != nil {
-		return fmt.Errorf("write PR comment file: %w", err)
-	}
-
-	return nil
-}
-
-func removeRepoRelativeFile(repoRoot string, name string) error {
-	root, err := os.OpenRoot(repoRoot)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = root.Close()
-	}()
-
-	return root.Remove(name)
 }

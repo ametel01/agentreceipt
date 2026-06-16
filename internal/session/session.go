@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -516,7 +515,10 @@ func writeSessionJSON(rootPath string, name string, value any) error {
 }
 
 func writeActiveSession(repoRoot string, sessionID string) error {
-	rootDir := filepath.Join(repoRoot, storage.RootDir)
+	rootDir, err := storage.RepositoryPath(repoRoot)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(rootDir, 0o750); err != nil {
 		return err
 	}
@@ -532,7 +534,11 @@ func writeActiveSession(repoRoot string, sessionID string) error {
 }
 
 func readActiveSession(repoRoot string) (string, bool, error) {
-	root, err := os.OpenRoot(filepath.Join(repoRoot, storage.RootDir))
+	rootDir, err := storage.RepositoryPath(repoRoot)
+	if err != nil {
+		return "", false, err
+	}
+	root, err := os.OpenRoot(rootDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
 	}
@@ -561,7 +567,11 @@ func readActiveSession(repoRoot string) (string, bool, error) {
 }
 
 func clearActiveSession(repoRoot string) error {
-	root, err := os.OpenRoot(filepath.Join(repoRoot, storage.RootDir))
+	rootDir, err := storage.RepositoryPath(repoRoot)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(rootDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

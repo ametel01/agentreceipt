@@ -1,17 +1,22 @@
 package storage
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/ametel01/agentreceipt/internal/model"
 )
 
 const (
 	RootDir              = ".agentreceipt"
+	HomeEnv              = "AGENTRECEIPT_HOME"
+	ReposDir             = "repos"
 	SessionsDir          = "sessions"
 	PolicyFile           = "policy.yml"
 	EventsFile           = "events.jsonl"
@@ -38,7 +43,9 @@ var sessionIDPattern = regexp.MustCompile(`^ar_ses_[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 type Layout struct {
 	RepoRoot             string
+	RepoKey              string
 	Root                 string
+	Repo                 string
 	Sessions             string
 	Session              string
 	EventsJSONL          string
@@ -68,16 +75,24 @@ func NewLayout(repoRoot string, sessionID string) (Layout, error) {
 	if repoRoot == "" {
 		return Layout{}, errors.New("repo root is required")
 	}
-	root := filepath.Join(repoRoot, RootDir)
-	session := filepath.Join(root, SessionsDir, sessionID)
+	repoRoot = canonicalRepoRoot(repoRoot)
+	root, err := DefaultRoot()
+	if err != nil {
+		return Layout{}, err
+	}
+	repoKey := RepositoryKey(repoRoot)
+	repo := filepath.Join(root, ReposDir, repoKey)
+	session := filepath.Join(repo, SessionsDir, sessionID)
 	provider := filepath.Join(session, ProviderDir)
 	codex := filepath.Join(provider, ProviderCodexDir)
 	claude := filepath.Join(provider, ProviderClaudeDir)
 
 	return Layout{
 		RepoRoot:             repoRoot,
+		RepoKey:              repoKey,
 		Root:                 root,
-		Sessions:             filepath.Join(root, SessionsDir),
+		Repo:                 repo,
+		Sessions:             filepath.Join(repo, SessionsDir),
 		Session:              session,
 		EventsJSONL:          filepath.Join(session, EventsFile),
 		ReceiptJSON:          filepath.Join(session, ReceiptJSONFile),
@@ -106,6 +121,59 @@ func ValidateSessionID(sessionID string) error {
 	}
 
 	return nil
+}
+
+func DefaultRoot() (string, error) {
+	if home := os.Getenv(HomeEnv); home != "" {
+		return home, nil
+	}
+	if strings.HasSuffix(os.Args[0], ".test") {
+		return filepath.Join(os.TempDir(), "agentreceipt-test"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+
+	return filepath.Join(home, RootDir), nil
+}
+
+func RepositoryPath(repoRoot string) (string, error) {
+	root, err := DefaultRoot()
+	if err != nil {
+		return "", err
+	}
+	if repoRoot == "" {
+		return "", errors.New("repo root is required")
+	}
+	repoRoot = canonicalRepoRoot(repoRoot)
+
+	return filepath.Join(root, ReposDir, RepositoryKey(repoRoot)), nil
+}
+
+func SessionsPath(repoRoot string) (string, error) {
+	repo, err := RepositoryPath(repoRoot)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(repo, SessionsDir), nil
+}
+
+func RepositoryKey(repoRoot string) string {
+	clean := canonicalRepoRoot(repoRoot)
+	sum := sha256.Sum256([]byte(clean))
+
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+func canonicalRepoRoot(repoRoot string) string {
+	clean := filepath.Clean(repoRoot)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+
+	return clean
 }
 
 func EnsureSessionLayout(layout Layout) error {

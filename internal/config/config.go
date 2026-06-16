@@ -11,11 +11,11 @@ import (
 
 const (
 	SchemaVersion = 1
-	ConfigFile    = ".agentreceipt.yml"
-	PolicyFile    = ".agentreceipt/policy.yml"
+	ConfigFile    = "agentreceipt.yml"
+	PolicyFile    = "policy.yml"
 )
 
-// Config is the repository-local AgentReceipt configuration.
+// Config is an optional explicit AgentReceipt configuration.
 type Config struct {
 	Version        int      `yaml:"version" json:"version"`
 	Session        Session  `yaml:"session" json:"session"`

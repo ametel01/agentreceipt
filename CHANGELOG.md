@@ -23,3 +23,4 @@ and this project will follow semantic versioning once releases begin.
 - Added signed receipt finalization with Ed25519 key management, receipt/review artifact writing, integrity verification, and `export --json|--md|--pr` output.
 - Added repository initialization, signed manual marker events, policy defaults, and guarded GitHub CLI PR comment posting.
 - Added end-to-end MVP smoke coverage for init/start/import/mark/stop/verify/review/export and refreshed README usage examples.
+- Changed session storage to global AgentReceipt home storage so repositories are not polluted with `.agentreceipt` directories or repo-local config files.

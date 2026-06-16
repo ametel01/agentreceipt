@@ -42,14 +42,15 @@ Build from source during the MVP:
 go build -o agentreceipt .
 ```
 
-### 1) Initialize your repo
+### 1) Optional global setup
 
 ```bash
 agentreceipt init
-agentreceipt install codex
 ```
 
-### 2) Start a session
+`init` only creates global AgentReceipt storage and signing keys. It does not write config or state into your repository.
+
+### 2) Start a session in any git repo
 
 ```bash
 agentreceipt start
@@ -93,6 +94,7 @@ agentreceipt pr comment
 - `start` fails fast if core monitors cannot initialize.
 - If Codex provider events are missing, the receipt still finalizes with a warning and reduced provider confidence.
 - Final diff mismatch or verification issues are surfaced as warning-level risk in review and invalid verification in `verify`, not a hard failure by default.
+- AgentReceipt does not write `.agentreceipt`, `.agentreceipt.yml`, or policy files into the repository. Session artifacts live under global AgentReceipt storage.
 - Zero trust-by-default: no cloud dependency, no account required, no prompt upload by default.
 
 ## How evidence is captured
@@ -147,22 +149,24 @@ If provider logs are unavailable, review shows:
 
 ## Storage layout
 
-Receipts are kept locally in the repo:
+Receipts are kept locally in global AgentReceipt storage, keyed by repository path:
 
 ```text
-.agentreceipt/
-  sessions/
-    ar_ses_...
-      events.jsonl
-      receipt.json
-      receipt.md
-      review.md
-      manifest.json
-      diffs/
-        000001.patch
-        final.patch
-      signatures/
-        receipt.sig
+~/.agentreceipt/
+  repos/
+    <repo-key>/
+      sessions/
+        ar_ses_...
+          events.jsonl
+          receipt.json
+          receipt.md
+          review.md
+          manifest.json
+          diffs/
+            000001.patch
+            final.patch
+          signatures/
+            receipt.sig
 ```
 
 ## Privacy and redaction
@@ -178,8 +182,7 @@ By default:
 
 ```bash
 # Setup
-agentreceipt init
-agentreceipt install codex
+agentreceipt init # optional global storage/key setup
 
 # Session lifecycle
 agentreceipt start

@@ -13,13 +13,18 @@ func TestNewLayoutUsesCanonicalPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLayout() error = %v", err)
 	}
-	if got, want := layout.EventsJSONL, filepath.Join("/repo", RootDir, SessionsDir, "ar_ses_123", EventsFile); got != want {
+	root, err := DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot() error = %v", err)
+	}
+	repo := filepath.Join(root, ReposDir, RepositoryKey("/repo"))
+	if got, want := layout.EventsJSONL, filepath.Join(repo, SessionsDir, "ar_ses_123", EventsFile); got != want {
 		t.Fatalf("EventsJSONL = %q, want %q", got, want)
 	}
-	if got, want := layout.StateJSON, filepath.Join("/repo", RootDir, SessionsDir, "ar_ses_123", StateFile); got != want {
+	if got, want := layout.StateJSON, filepath.Join(repo, SessionsDir, "ar_ses_123", StateFile); got != want {
 		t.Fatalf("StateJSON = %q, want %q", got, want)
 	}
-	if got, want := layout.ProviderCodexTraces, filepath.Join("/repo", RootDir, SessionsDir, "ar_ses_123", ProviderDir, ProviderCodexDir, TracesDir); got != want {
+	if got, want := layout.ProviderCodexTraces, filepath.Join(repo, SessionsDir, "ar_ses_123", ProviderDir, ProviderCodexDir, TracesDir); got != want {
 		t.Fatalf("ProviderCodexTraces = %q, want %q", got, want)
 	}
 }
@@ -49,6 +54,9 @@ func TestEnsureSessionLayoutCreatesReservedDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLayout() error = %v", err)
 	}
+	defer func() {
+		_ = os.RemoveAll(layout.Repo)
+	}()
 	if err := EnsureSessionLayout(layout); err != nil {
 		t.Fatalf("EnsureSessionLayout() error = %v", err)
 	}
@@ -76,5 +84,36 @@ func TestManifestArtifactsAreSessionRelative(t *testing.T) {
 	}
 	if artifacts.CodexTraceDir != "provider/codex/traces" {
 		t.Fatalf("CodexTraceDir = %q, want provider/codex/traces", artifacts.CodexTraceDir)
+	}
+}
+
+func TestRepositoryPathUsesGlobalHome(t *testing.T) {
+	t.Parallel()
+
+	path, err := RepositoryPath("/repo")
+	if err != nil {
+		t.Fatalf("RepositoryPath() error = %v", err)
+	}
+	if filepath.Dir(path) != filepath.Join(os.TempDir(), "agentreceipt-test", ReposDir) {
+		t.Fatalf("RepositoryPath() = %q, want test global home under tempdir", path)
+	}
+}
+
+func TestDefaultRootUsesEnvironmentOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(HomeEnv, home)
+	root, err := DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot() error = %v", err)
+	}
+	if root != home {
+		t.Fatalf("DefaultRoot() = %q, want %q", root, home)
+	}
+	sessions, err := SessionsPath("/repo")
+	if err != nil {
+		t.Fatalf("SessionsPath() error = %v", err)
+	}
+	if got, want := sessions, filepath.Join(home, ReposDir, RepositoryKey("/repo"), SessionsDir); got != want {
+		t.Fatalf("SessionsPath() = %q, want %q", got, want)
 	}
 }
