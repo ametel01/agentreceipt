@@ -108,6 +108,61 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
+func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"init"},
+		{"start"},
+		{"status"},
+		{"live"},
+		{"stop"},
+		{"review", "--last"},
+		{"verify"},
+		{"export", "--md"},
+		{"inspect", "codex", "--last"},
+		{"pr", "comment"},
+	} {
+		stdout, _, err := executeCommand(t, args...)
+		if err != nil {
+			t.Fatalf("%q returned error: %v", strings.Join(args, " "), err)
+		}
+		if !strings.Contains(stdout, scaffoldMessage) {
+			t.Fatalf("%q output missing scaffold message: %q", strings.Join(args, " "), stdout)
+		}
+	}
+}
+
+func TestImportCodexJSONLCommand(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := executeCommand(t, "import", "codex-jsonl"); err == nil {
+		t.Fatal("import codex-jsonl without a path returned nil error")
+	}
+	stdout, _, err := executeCommand(t, "import", "codex-jsonl", "trace.jsonl")
+	if err != nil {
+		t.Fatalf("import codex-jsonl returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "trace.jsonl") {
+		t.Fatalf("import output missing path: %q", stdout)
+	}
+}
+
+func TestMarkCommandRequiresMessage(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := executeCommand(t, "mark"); err == nil {
+		t.Fatal("mark without a message returned nil error")
+	}
+	stdout, _, err := executeCommand(t, "mark", "reviewed", "auth")
+	if err != nil {
+		t.Fatalf("mark returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "reviewed auth") {
+		t.Fatalf("mark output missing joined message: %q", stdout)
+	}
+}
+
 func executeCommand(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 

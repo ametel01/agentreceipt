@@ -13,3 +13,4 @@ and this project will follow semantic versioning once releases begin.
 - Added durable progress tracking for the incremental implementation plan.
 - Added Go module baseline, local quality-gate Makefile targets, lint configuration, CI matrix, and smoke-check script.
 - Added Cobra CLI skeleton with the MVP command surface, command flags, version output, and command-discovery tests.
+- Added Codex-first config defaults, receipt/session model contracts, deterministic JSON helpers, and canonical session storage layout helpers.

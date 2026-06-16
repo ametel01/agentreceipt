@@ -12,8 +12,8 @@ Update this file after every completed implementation step with the completed st
 
 ## Current Status
 
-- Current step: Step 2 complete
-- Next step: Step 3 - Define Config, Session, and Storage Contracts
+- Current step: Step 3 complete
+- Next step: Step 4 - Implement Event Log and Hash Chain
 - Last updated: 2026-06-16
 
 ## Step Checklist
@@ -21,7 +21,7 @@ Update this file after every completed implementation step with the completed st
 - [x] Step 0: Progress Tracking Setup
 - [x] Step 1: Quality Gates Setup
 - [x] Step 2: Bootstrap CLI Entry + Command Skeleton
-- [ ] Step 3: Define Config, Session, and Storage Contracts
+- [x] Step 3: Define Config, Session, and Storage Contracts
 - [ ] Step 4: Implement Event Log and Hash Chain
 - [ ] Step 5: Git Monitor and Snapshot Capture
 - [ ] Step 6: Filesystem Watcher and Change Classification
@@ -38,4 +38,5 @@ Update this file after every completed implementation step with the completed st
 | --- | --- | --- | --- | --- | --- |
 | 2026-06-16 | Step 0: Progress Tracking Setup | Complete | Confirmed `PROGRESS.md` exists and contains the checklist and update log format. | `9c94206` | Added durable progress tracking before quality-gate setup. |
 | 2026-06-16 | Step 1: Quality Gates Setup | Complete | Passed `test -z "$(gofmt -s -l .)"`, `golangci-lint run ./...`, `staticcheck ./...`, `go vet ./...`, `go test ./...`, `go test -race ./...`, `gosec ./...`, coverage threshold, `go build ./...`, and `make verify`. | `59f5e40` | Added Go module, Makefile gates, lint config, CI matrix, smoke script, and a minimal tested package. |
-| 2026-06-16 | Step 2: Bootstrap CLI Entry + Command Skeleton | Complete | Passed full quality gates and smoke checks after adding Cobra commands and tests. | Pending commit | Added root CLI entrypoint, all MVP top-level/nested command stubs, review/export flags, version output, and deferred Claude messaging. |
+| 2026-06-16 | Step 2: Bootstrap CLI Entry + Command Skeleton | Complete | Passed full quality gates and smoke checks after adding Cobra commands and tests. | `e7e155d` | Added root CLI entrypoint, all MVP top-level/nested command stubs, review/export flags, version output, and deferred Claude messaging. |
+| 2026-06-16 | Step 3: Define Config, Session, and Storage Contracts | Complete | Passed full quality gates and `make verify` after adding config/model/storage tests. | Pending commit | Added `.agentreceipt.yml` defaults and validation, receipt/session/review models, deterministic JSON marshaling, forward-compatible receipt decoding, and canonical session layout helpers. |
