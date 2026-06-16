@@ -255,7 +255,7 @@ func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
 		`{"type":"response_item","payload":{"type":"function_call","name":"update_plan","call_id":"call_2","arguments":{"plan":[]}}}`,
 		`{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call_3","input":"patch"}}`,
 		`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_3","output":"Exit code: 0\nok"}}`,
-		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":5,"output_tokens":7,"reasoning_output_tokens":0,"total_tokens":57}}}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":5,"output_tokens":7,"reasoning_output_tokens":0,"total_tokens":160}}}}`,
 		`{malformed`,
 	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test"})
 	if err := printCodexLiveResult(cmd, result); err != nil {
@@ -266,8 +266,8 @@ func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
 		"codex  fail    run",
 		"(exit 7)",
 		"codex  ok      edit apply_patch",
-		"codex  tokens  110 after",
-		"codex  tokens  57 after edit apply_patch",
+		"codex  tokens  110 (110 total) after",
+		"codex  tokens  50 (160 total) after edit apply_patch",
 		"codex  warn    malformed_json:",
 	} {
 		if !strings.Contains(output, want) {
@@ -307,7 +307,7 @@ func TestCodexWatchRendererBuildsStructuredEvents(t *testing.T) {
 		t.Fatalf("command event command = %q, want long command", commandEvent.Command)
 	}
 	tokenEvent := events[1]
-	if tokenEvent.Family != codex.LogFamilyTelemetry || tokenEvent.Category != codex.CategoryTokenCount || tokenEvent.Status != "tokens" || tokenEvent.Tokens != 110 {
+	if tokenEvent.Family != codex.LogFamilyTelemetry || tokenEvent.Category != codex.CategoryTokenCount || tokenEvent.Status != "tokens" || tokenEvent.Tokens != 110 || tokenEvent.TotalTokens != 110 {
 		t.Fatalf("token event fields = %+v", tokenEvent)
 	}
 	if !strings.HasPrefix(tokenEvent.Message, "after run ") {
@@ -339,7 +339,7 @@ func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
 	if got, want := len(events), 3; got != want {
 		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
 	}
-	if events[2].Status != "tokens" || events[2].Tokens != 220 || events[2].Message != "after 2 actions" {
+	if events[2].Status != "tokens" || events[2].Tokens != 220 || events[2].TotalTokens != 220 || events[2].Message != "after 2 actions" {
 		t.Fatalf("batch token event = %+v", events[2])
 	}
 
@@ -348,8 +348,42 @@ func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
 		t.Fatalf("Print() error = %v", err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "codex  tokens  220 after 2 actions") {
+	if !strings.Contains(output, "codex  tokens  220 (220 total) after 2 actions") {
 		t.Fatalf("batch token output missing:\n%s", output)
+	}
+}
+
+func TestCodexWatchRendererReportsTokenDeltaBeforeCumulativeTotal(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	result := codex.ParseJSONL(strings.NewReader(strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"make test"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":100}}}}`,
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_2","arguments":{"cmd":"make smoke"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_2","output":"Exit code: 0\nok"}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":135}}}}`,
+	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test"})
+	renderer := newCodexWatchRenderer(&stdout)
+	events := renderer.Events(result)
+	if got, want := len(events), 4; got != want {
+		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
+	}
+	if events[1].Tokens != 100 || events[1].TotalTokens != 100 {
+		t.Fatalf("first token event = %+v", events[1])
+	}
+	if events[3].Tokens != 35 || events[3].TotalTokens != 135 {
+		t.Fatalf("second token event = %+v", events[3])
+	}
+
+	renderer = newCodexWatchRenderer(&stdout)
+	if err := renderer.Print(result); err != nil {
+		t.Fatalf("Print() error = %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "codex  tokens  35 (135 total) after run make smoke") {
+		t.Fatalf("delta/cumulative token output missing:\n%s", output)
 	}
 }
 

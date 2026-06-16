@@ -10,30 +10,32 @@ import (
 )
 
 const (
-	watchFieldProvider   = "provider"
-	watchFieldFamily     = "family"
-	watchFieldCategory   = "category"
-	watchFieldStatus     = "status"
-	watchFieldTokens     = "tokens"
-	watchFieldExitCode   = "exit_code"
-	watchFieldSourcePath = "source_path"
-	watchFieldReason     = "reason"
-	watchFieldTool       = "tool"
-	watchFieldCommand    = "command"
+	watchFieldProvider    = "provider"
+	watchFieldFamily      = "family"
+	watchFieldCategory    = "category"
+	watchFieldStatus      = "status"
+	watchFieldTokens      = "tokens"
+	watchFieldTotalTokens = "total_tokens"
+	watchFieldExitCode    = "exit_code"
+	watchFieldSourcePath  = "source_path"
+	watchFieldReason      = "reason"
+	watchFieldTool        = "tool"
+	watchFieldCommand     = "command"
 )
 
 type WatchEvent struct {
-	Provider   string
-	Family     codex.LogFamily
-	Category   codex.LogCategory
-	Status     string
-	Message    string
-	Tokens     int
-	ExitCode   *int
-	SourcePath string
-	Reason     string
-	Tool       string
-	Command    string
+	Provider    string
+	Family      codex.LogFamily
+	Category    codex.LogCategory
+	Status      string
+	Message     string
+	Tokens      int
+	TotalTokens int
+	ExitCode    *int
+	SourcePath  string
+	Reason      string
+	Tool        string
+	Command     string
 }
 
 type codexWatchRenderer struct {
@@ -41,6 +43,8 @@ type codexWatchRenderer struct {
 	color          bool
 	calls          map[string]codex.ToolCall
 	pendingActions []string
+	lastTokenTotal int
+	hasTokenTotal  bool
 }
 
 func newCodexWatchRenderer(out io.Writer) *codexWatchRenderer {
@@ -141,14 +145,23 @@ func (r *codexWatchRenderer) tokenEvent(usage codex.TokenUsageEvent, record code
 	}
 	r.pendingActions = nil
 
+	totalTokens := usage.TotalTokens
+	tokens := totalTokens
+	if r.hasTokenTotal && totalTokens >= r.lastTokenTotal {
+		tokens = totalTokens - r.lastTokenTotal
+	}
+	r.lastTokenTotal = totalTokens
+	r.hasTokenTotal = true
+
 	return WatchEvent{
-		Provider:   "codex",
-		Family:     record.Family,
-		Category:   record.Category,
-		Status:     "tokens",
-		Message:    detail,
-		Tokens:     usage.TotalTokens,
-		SourcePath: sourcePath,
+		Provider:    "codex",
+		Family:      record.Family,
+		Category:    record.Category,
+		Status:      "tokens",
+		Message:     detail,
+		Tokens:      tokens,
+		TotalTokens: totalTokens,
+		SourcePath:  sourcePath,
 	}, true
 }
 
@@ -193,6 +206,9 @@ func (r *codexWatchRenderer) PrintEvent(event WatchEvent) error {
 	if event.Tokens > 0 {
 		logEvent = logEvent.Int(watchFieldTokens, event.Tokens)
 	}
+	if event.TotalTokens > 0 {
+		logEvent = logEvent.Int(watchFieldTotalTokens, event.TotalTokens)
+	}
 	if event.ExitCode != nil {
 		logEvent = logEvent.Int(watchFieldExitCode, *event.ExitCode)
 	}
@@ -205,6 +221,9 @@ func renderWatchMessage(event WatchEvent, color bool) string {
 	value := event.Message
 	if event.Status == "tokens" {
 		value = fmt.Sprintf("%d", event.Tokens)
+		if event.TotalTokens > 0 {
+			value += fmt.Sprintf(" (%d total)", event.TotalTokens)
+		}
 		if event.Message != "" {
 			value += " " + event.Message
 		}
@@ -232,6 +251,7 @@ func newWatchConsoleWriter(out io.Writer, color bool) zerolog.ConsoleWriter {
 			watchFieldCategory,
 			watchFieldStatus,
 			watchFieldTokens,
+			watchFieldTotalTokens,
 			watchFieldExitCode,
 			watchFieldSourcePath,
 			watchFieldReason,
