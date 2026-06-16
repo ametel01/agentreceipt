@@ -7,6 +7,20 @@ import (
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
 )
 
+type WatchEvent struct {
+	Provider   string
+	Family     codex.LogFamily
+	Category   codex.LogCategory
+	Status     string
+	Message    string
+	Tokens     int
+	ExitCode   *int
+	SourcePath string
+	Reason     string
+	Tool       string
+	Command    string
+}
+
 type codexWatchRenderer struct {
 	out            io.Writer
 	calls          map[string]codex.ToolCall
@@ -21,33 +35,8 @@ func newCodexWatchRenderer(out io.Writer) *codexWatchRenderer {
 }
 
 func (r *codexWatchRenderer) Print(result codex.ParseResult) error {
-	toolCalls := toolCallsByLine(result.ToolCalls)
-	commands := commandsByLine(result.Commands)
-	tokenUsages := tokenUsagesByLine(result.TokenUsages)
-	for _, record := range result.Timeline {
-		switch record.Category {
-		case codex.CategoryExecCommandCall, codex.CategoryFunctionCall, codex.CategoryApplyPatchCall, codex.CategoryCustomToolCall:
-			for _, toolCall := range toolCalls[record.Index] {
-				if err := r.printToolCall(toolCall, record.Category); err != nil {
-					return err
-				}
-			}
-		case codex.CategoryFunctionCallOutput, codex.CategoryCustomToolCallOutput:
-			for _, command := range commands[record.Index] {
-				if err := r.printCommandResult(command); err != nil {
-					return err
-				}
-			}
-		case codex.CategoryTokenCount:
-			for _, usage := range tokenUsages[record.Index] {
-				if err := r.printTokenUsage(usage); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	for _, warning := range result.Warnings {
-		if _, err := fmt.Fprintf(r.out, "[codex] warn   %s: %s\n", warning.Code, warning.Message); err != nil {
+	for _, event := range r.Events(result) {
+		if err := r.printEvent(event); err != nil {
 			return err
 		}
 	}
@@ -55,52 +44,119 @@ func (r *codexWatchRenderer) Print(result codex.ParseResult) error {
 	return nil
 }
 
-func (r *codexWatchRenderer) printToolCall(toolCall codex.ToolCall, category codex.LogCategory) error {
+func (r *codexWatchRenderer) Events(result codex.ParseResult) []WatchEvent {
+	events := []WatchEvent{}
+	toolCalls := toolCallsByLine(result.ToolCalls)
+	commands := commandsByLine(result.Commands)
+	tokenUsages := tokenUsagesByLine(result.TokenUsages)
+	for _, record := range result.Timeline {
+		switch record.Category {
+		case codex.CategoryExecCommandCall, codex.CategoryFunctionCall, codex.CategoryApplyPatchCall, codex.CategoryCustomToolCall:
+			for _, toolCall := range toolCalls[record.Index] {
+				r.recordToolCall(toolCall)
+			}
+		case codex.CategoryFunctionCallOutput, codex.CategoryCustomToolCallOutput:
+			for _, command := range commands[record.Index] {
+				event, ok := r.commandEvent(command, record, result.SourcePath)
+				if ok {
+					events = append(events, event)
+				}
+			}
+		case codex.CategoryTokenCount:
+			for _, usage := range tokenUsages[record.Index] {
+				event, ok := r.tokenEvent(usage, record, result.SourcePath)
+				if ok {
+					events = append(events, event)
+				}
+			}
+		}
+	}
+	for _, warning := range result.Warnings {
+		events = append(events, warningEvent(warning, result.SourcePath))
+	}
+
+	return events
+}
+
+func (r *codexWatchRenderer) recordToolCall(toolCall codex.ToolCall) {
 	if toolCall.CallID != "" {
 		r.calls[toolCall.CallID] = toolCall
 	}
-
-	return nil
 }
 
-func (r *codexWatchRenderer) printCommandResult(command codex.CommandEvent) error {
+func (r *codexWatchRenderer) commandEvent(command codex.CommandEvent, record codex.TimelineRecord, sourcePath string) (WatchEvent, bool) {
 	if command.Status == "unknown" && command.Command != "" {
-		return nil
+		return WatchEvent{}, false
 	}
-	subject := resultSubject(command, r.calls[command.CallID])
+	toolCall := r.calls[command.CallID]
+	subject := resultSubject(command, toolCall)
 	label := resultLabel(command)
-	suffix := ""
-	if command.ExitCode != nil {
-		suffix = fmt.Sprintf(" (exit %d)", *command.ExitCode)
-	}
-
-	if suffix != "" {
-		subject = truncate(subject, 240-len(suffix))
-	}
-
-	if err := writeLiveLine(r.out, label, subject+suffix); err != nil {
-		return err
-	}
 	r.pendingActions = append(r.pendingActions, subject)
 
-	return nil
+	return WatchEvent{
+		Provider:   "codex",
+		Family:     record.Family,
+		Category:   record.Category,
+		Status:     label,
+		Message:    subject,
+		ExitCode:   command.ExitCode,
+		SourcePath: sourcePath,
+		Tool:       emptyDefault(command.Tool, toolCall.Tool),
+		Command:    emptyDefault(command.Command, toolCall.Command),
+	}, true
 }
 
-func (r *codexWatchRenderer) printTokenUsage(usage codex.TokenUsageEvent) error {
+func (r *codexWatchRenderer) tokenEvent(usage codex.TokenUsageEvent, record codex.TimelineRecord, sourcePath string) (WatchEvent, bool) {
 	if len(r.pendingActions) == 0 {
-		return nil
+		return WatchEvent{}, false
 	}
 
-	detail := fmt.Sprintf("%d", usage.TotalTokens)
+	detail := ""
 	switch len(r.pendingActions) {
 	case 1:
-		detail += " after " + truncate(r.pendingActions[0], 80)
+		detail = "after " + truncate(r.pendingActions[0], 80)
 	default:
-		detail += fmt.Sprintf(" after %d actions", len(r.pendingActions))
+		detail = fmt.Sprintf("after %d actions", len(r.pendingActions))
 	}
 	r.pendingActions = nil
 
-	return writeLiveLine(r.out, "tokens", detail)
+	return WatchEvent{
+		Provider:   "codex",
+		Family:     record.Family,
+		Category:   record.Category,
+		Status:     "tokens",
+		Message:    detail,
+		Tokens:     usage.TotalTokens,
+		SourcePath: sourcePath,
+	}, true
+}
+
+func warningEvent(warning codex.ParseWarning, sourcePath string) WatchEvent {
+	return WatchEvent{
+		Provider:   "codex",
+		Family:     codex.LogFamilyUnknown,
+		Category:   codex.CategoryUnknown,
+		Status:     "warn",
+		Message:    warning.Code + ": " + warning.Message,
+		SourcePath: sourcePath,
+		Reason:     warning.Code,
+	}
+}
+
+func (r *codexWatchRenderer) printEvent(event WatchEvent) error {
+	value := event.Message
+	if event.Status == "tokens" {
+		value = fmt.Sprintf("%d", event.Tokens)
+		if event.Message != "" {
+			value += " " + event.Message
+		}
+	}
+	if event.ExitCode != nil {
+		suffix := fmt.Sprintf(" (exit %d)", *event.ExitCode)
+		value = truncate(value, 240-len(suffix)) + suffix
+	}
+
+	return writeLiveLine(r.out, event.Status, value)
 }
 
 func resultSubject(command codex.CommandEvent, toolCall codex.ToolCall) string {

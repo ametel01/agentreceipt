@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -264,6 +265,50 @@ func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
 	}
 }
 
+func TestCodexWatchRendererBuildsStructuredEvents(t *testing.T) {
+	t.Parallel()
+
+	longCommand := strings.Repeat("x", 300)
+	result := codex.ParseJSONL(strings.NewReader(strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"` + longCommand + `"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 7\nfailed"}}`,
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":25,"output_tokens":10,"reasoning_output_tokens":3,"total_tokens":110}}}}`,
+		`{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call_3","input":"patch"}}`,
+		`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_3","output":"Exit code: 0\nok"}}`,
+		`{malformed`,
+	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test", SourcePath: "/tmp/codex.jsonl"})
+
+	events := newCodexWatchRenderer(io.Discard).Events(result)
+	if got, want := len(events), 4; got != want {
+		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
+	}
+	commandEvent := events[0]
+	if commandEvent.Provider != "codex" || commandEvent.Family != codex.LogFamilyTool || commandEvent.Category != codex.CategoryFunctionCallOutput {
+		t.Fatalf("command event classification = %+v", commandEvent)
+	}
+	if commandEvent.Status != "fail" || commandEvent.ExitCode == nil || *commandEvent.ExitCode != 7 || !strings.HasPrefix(commandEvent.Message, "run ") {
+		t.Fatalf("command event fields = %+v", commandEvent)
+	}
+	if commandEvent.Command != longCommand {
+		t.Fatalf("command event command = %q, want long command", commandEvent.Command)
+	}
+	tokenEvent := events[1]
+	if tokenEvent.Family != codex.LogFamilyTelemetry || tokenEvent.Category != codex.CategoryTokenCount || tokenEvent.Status != "tokens" || tokenEvent.Tokens != 110 {
+		t.Fatalf("token event fields = %+v", tokenEvent)
+	}
+	if !strings.HasPrefix(tokenEvent.Message, "after run ") {
+		t.Fatalf("token event message = %q", tokenEvent.Message)
+	}
+	editEvent := events[2]
+	if editEvent.Status != "ok" || editEvent.Message != "edit apply_patch" || editEvent.Tool != "apply_patch" {
+		t.Fatalf("edit event fields = %+v", editEvent)
+	}
+	warningEvent := events[3]
+	if warningEvent.Status != "warn" || warningEvent.Reason != "malformed_json" || !strings.Contains(warningEvent.Message, "malformed_json:") {
+		t.Fatalf("warning event fields = %+v", warningEvent)
+	}
+}
+
 func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
 	t.Parallel()
 
@@ -275,7 +320,17 @@ func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
 		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_2","output":"Exit code: 0\nok"}}`,
 		`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"cached_input_tokens":75,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":220}}}}`,
 	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test"})
-	if err := newCodexWatchRenderer(&stdout).Print(result); err != nil {
+	renderer := newCodexWatchRenderer(&stdout)
+	events := renderer.Events(result)
+	if got, want := len(events), 3; got != want {
+		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
+	}
+	if events[2].Status != "tokens" || events[2].Tokens != 220 || events[2].Message != "after 2 actions" {
+		t.Fatalf("batch token event = %+v", events[2])
+	}
+
+	renderer = newCodexWatchRenderer(&stdout)
+	if err := renderer.Print(result); err != nil {
 		t.Fatalf("Print() error = %v", err)
 	}
 	output := stdout.String()
@@ -289,7 +344,11 @@ func TestCodexWatchRendererSkipsOrphanTokenTelemetry(t *testing.T) {
 
 	var stdout bytes.Buffer
 	result := codex.ParseJSONL(strings.NewReader(`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"cached_input_tokens":75,"output_tokens":20,"reasoning_output_tokens":4,"total_tokens":220}}}}`), codex.ParseOptions{SessionID: "ar_ses_test"})
-	if err := newCodexWatchRenderer(&stdout).Print(result); err != nil {
+	renderer := newCodexWatchRenderer(&stdout)
+	if events := renderer.Events(result); len(events) != 0 {
+		t.Fatalf("orphan token telemetry produced events: %+v", events)
+	}
+	if err := renderer.Print(result); err != nil {
 		t.Fatalf("Print() error = %v", err)
 	}
 	if output := stdout.String(); strings.Contains(output, "tokens") {
