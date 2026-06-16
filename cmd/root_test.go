@@ -323,6 +323,54 @@ func TestCodexWatchRendererBuildsStructuredEvents(t *testing.T) {
 	}
 }
 
+func TestCodexWatchRendererDisplaysRiskBadgesWithoutReplacingOutcome(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	result := codex.ParseJSONL(strings.NewReader(strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"rm -rf dist"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_2","arguments":{"cmd":"pnpm install"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_2","output":"Exit code: 0\nok"}}`,
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_3","arguments":{"cmd":"npm run build"}}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_3","output":"Exit code: 0\nok"}}`,
+	}, "\n")), codex.ParseOptions{SessionID: "ar_ses_test"})
+
+	renderer := newCodexWatchRenderer(&stdout)
+	events := renderer.Events(result)
+	if got, want := len(events), 4; got != want {
+		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
+	}
+	if events[0].Status != "ok" || events[0].RiskLevel != "high" || events[0].RiskSignal != "destructive_filesystem" {
+		t.Fatalf("high risk command event = %+v", events[0])
+	}
+	if events[1].Status != "risk" || !strings.Contains(events[1].Message, "destructive_filesystem:") {
+		t.Fatalf("high risk detail event = %+v", events[1])
+	}
+	if events[2].Status != "ok" || events[2].RiskLevel != "medium" {
+		t.Fatalf("medium risk command event = %+v", events[2])
+	}
+	if events[3].Status != "ok" || events[3].RiskLevel != "low" {
+		t.Fatalf("low risk command event = %+v", events[3])
+	}
+
+	renderer = newCodexWatchRenderer(&stdout)
+	if err := renderer.Print(result); err != nil {
+		t.Fatalf("Print() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"codex  ok      [HIGH] run rm -rf dist",
+		"codex  risk    destructive_filesystem:",
+		"codex  ok      [MED] run pnpm install",
+		"codex  ok      [low] run npm run build",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
 	t.Parallel()
 

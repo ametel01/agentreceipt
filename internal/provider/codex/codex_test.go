@@ -29,8 +29,11 @@ func TestParseJSONLExtractsCommandsWarningsAndRisk(t *testing.T) {
 	if result.WarningCount != 1 {
 		t.Fatalf("WarningCount = %d, want 1", result.WarningCount)
 	}
-	if !hasRiskSignal(result, "external_network") || !hasRiskSignal(result, "credential_context") {
+	if !hasRiskSignal(result, "network_egress") || !hasRiskSignal(result, "secret_access") {
 		t.Fatalf("risk signals = %+v", result.RiskSignals)
+	}
+	if result.RiskSignals[0].Level != "high" || result.RiskSignals[0].Category == "" {
+		t.Fatalf("risk classification missing level/category: %+v", result.RiskSignals)
 	}
 	if strings.Contains(result.Commands[0].Command, "secret") || strings.Contains(result.Commands[1].Stdout, "sk-secret") {
 		t.Fatalf("secrets were not redacted: %+v", result.Commands)

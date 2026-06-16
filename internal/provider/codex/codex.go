@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ametel01/agentreceipt/internal/commandrisk"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/storage"
 )
@@ -28,16 +29,6 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)sk-[A-Za-z0-9_-]+`),
 	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._-]+`),
 	regexp.MustCompile(`(?i)(authorization|token|api_key)=\S+`),
-}
-
-var riskyCommandPatterns = []struct {
-	signal  string
-	pattern *regexp.Regexp
-}{
-	{signal: "destructive_command", pattern: regexp.MustCompile(`\b(rm|dd|mkfs|shutdown|reboot)\b`)},
-	{signal: "external_network", pattern: regexp.MustCompile(`\b(curl|wget|ssh|nc|aws|gcloud)\b`)},
-	{signal: "package_publish_or_install", pattern: regexp.MustCompile(`\b(npm publish|pnpm dlx|pip install)\b`)},
-	{signal: "credential_context", pattern: regexp.MustCompile(`(?i)(PRIVATE|TOKEN|KEY|cat\s+\.env)`)},
 }
 
 type ParseOptions struct {
@@ -134,6 +125,7 @@ type RiskSignal struct {
 	SessionID  string           `json:"session_id"`
 	Level      model.RiskLevel  `json:"level"`
 	Signal     string           `json:"signal"`
+	Category   string           `json:"category,omitempty"`
 	Command    string           `json:"command,omitempty"`
 	Details    string           `json:"details"`
 	LineNumber int              `json:"line_no"`
@@ -387,18 +379,17 @@ func (r *ParseResult) consumeTokenCount(options ParseOptions, payload map[string
 }
 
 func (r *ParseResult) addRiskSignals(options ParseOptions, command string) {
-	for _, risky := range riskyCommandPatterns {
-		if risky.pattern.MatchString(command) {
-			r.RiskSignals = append(r.RiskSignals, RiskSignal{
-				SessionID:  options.SessionID,
-				Level:      model.RiskMedium,
-				Signal:     risky.signal,
-				Command:    redact(command, options.MaxOutputBytes),
-				Details:    "command matched Codex provider risk pattern",
-				LineNumber: r.LineCount,
-				Confidence: model.ConfidenceHigh,
-			})
-		}
+	for _, classification := range commandrisk.Classify(command) {
+		r.RiskSignals = append(r.RiskSignals, RiskSignal{
+			SessionID:  options.SessionID,
+			Level:      classification.Level,
+			Signal:     classification.Signal,
+			Category:   classification.Category,
+			Command:    redact(command, options.MaxOutputBytes),
+			Details:    classification.Reason,
+			LineNumber: r.LineCount,
+			Confidence: model.ConfidenceHigh,
+		})
 	}
 }
 

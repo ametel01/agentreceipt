@@ -7,6 +7,10 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added high/medium/low command-risk classification for Codex tool calls, with live `start --watch` risk badges that preserve command outcome status and add a detail line for high-risk commands.
+
 ## [0.1.0] - 2026-06-17
 
 ### Added
