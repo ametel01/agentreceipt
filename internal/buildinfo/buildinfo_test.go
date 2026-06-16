@@ -9,3 +9,11 @@ func TestName(t *testing.T) {
 		t.Fatalf("Name() = %q, want %q", got, "agentreceipt")
 	}
 }
+
+func TestVersionDefault(t *testing.T) {
+	t.Parallel()
+
+	if got := Version(); got == "" {
+		t.Fatal("Version() returned an empty string")
+	}
+}
