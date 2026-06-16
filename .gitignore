@@ -1,0 +1,5 @@
+.tools/
+coverage.out
+dist/
+agentreceipt
+.agentreceipt/
