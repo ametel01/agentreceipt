@@ -44,6 +44,7 @@ func TestRootHelpListsCommandSurface(t *testing.T) {
 		"--config",
 		"--repo",
 		"--quiet",
+		"--color",
 	}
 	for _, want := range required {
 		if !strings.Contains(stdout, want) {
@@ -77,6 +78,19 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		if found, _, err := root.Find(path); err != nil || found == nil {
 			t.Fatalf("command %q not found: %v", strings.Join(path, " "), err)
 		}
+	}
+}
+
+func TestColorFlagValidation(t *testing.T) {
+	t.Parallel()
+
+	root := NewRootCommand("test")
+	if flag := root.PersistentFlags().Lookup("color"); flag == nil {
+		t.Fatal("root color flag is not registered")
+	}
+
+	if _, _, err := executeCommand(t, "--color", "sometimes", "version"); err == nil || !strings.Contains(err.Error(), "--color must be one of auto, always, or never") {
+		t.Fatalf("expected color validation error, got %v", err)
 	}
 }
 
@@ -623,6 +637,50 @@ func TestStartWatchImportsMatchingCodexLog(t *testing.T) {
 	}
 	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
 		t.Fatalf("stop returned error: %v", err)
+	}
+}
+
+func TestStartWatchColorModes(t *testing.T) {
+	for _, tc := range []struct {
+		mode     string
+		wantANSI bool
+	}{
+		{mode: "never", wantANSI: false},
+		{mode: "always", wantANSI: true},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+			repo := newCommandGitRepo(t)
+			home := t.TempDir()
+			sessionDir := filepath.Join(home, "sessions", "2026", "06", "17")
+			if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+				t.Fatalf("mkdir sessions: %v", err)
+			}
+			tracePath := filepath.Join(sessionDir, "color.jsonl")
+			trace := strings.Join([]string{
+				`{"type":"session_meta","timestamp":"2026-06-17T00:00:00Z","payload":{"type":"session_meta","cwd":"` + repo + `"}}`,
+				`{"type":"response_item","timestamp":"2026-06-17T00:00:01Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"go test ./..."}}}`,
+				`{"type":"response_item","timestamp":"2026-06-17T00:00:02Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+			}, "\n") + "\n"
+			if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
+				t.Fatalf("write trace: %v", err)
+			}
+
+			stdout, _, err := executeCommand(t, "--color", tc.mode, "--repo", repo, "start", "--watch", "--codex-home", home, "--watch-existing", "--watch-interval", "1ms", "--watch-duration", "5ms")
+			if err != nil {
+				t.Fatalf("start --watch returned error: %v\n%s", err, stdout)
+			}
+			hasANSI := strings.Contains(stdout, "\x1b[")
+			if hasANSI != tc.wantANSI {
+				t.Fatalf("ANSI presence = %v, want %v\noutput:\n%q", hasANSI, tc.wantANSI, stdout)
+			}
+			if !strings.Contains(stdout, "codex") || !strings.Contains(stdout, "run go test ./...") {
+				t.Fatalf("watch output missing expected event text:\n%s", stdout)
+			}
+			if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+				t.Fatalf("stop returned error: %v", err)
+			}
+		})
 	}
 }
 

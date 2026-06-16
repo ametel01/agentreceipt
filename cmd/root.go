@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -27,6 +28,12 @@ import (
 const scaffoldMessage = "command scaffolded; implementation is scheduled for a later AgentReceipt plan step"
 const prCommentFile = "-"
 
+const (
+	colorModeAuto   = "auto"
+	colorModeAlways = "always"
+	colorModeNever  = "never"
+)
+
 // Execute runs the AgentReceipt CLI.
 func Execute(version string) error {
 	return NewRootCommand(version).Execute()
@@ -42,6 +49,10 @@ func NewRootCommand(version string) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := colorModeFromCommand(cmd)
+			return err
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
@@ -50,6 +61,7 @@ func NewRootCommand(version string) *cobra.Command {
 	root.PersistentFlags().String("config", "", "Path to an AgentReceipt config file")
 	root.PersistentFlags().String("repo", "", "Repository root to inspect; defaults to the current directory")
 	root.PersistentFlags().Bool("quiet", false, "Reduce non-essential terminal output")
+	root.PersistentFlags().String("color", colorModeAuto, "Colorize terminal output: auto, always, or never")
 
 	root.AddCommand(
 		newInitCommand(),
@@ -69,6 +81,51 @@ func NewRootCommand(version string) *cobra.Command {
 	)
 
 	return root
+}
+
+func colorModeFromCommand(cmd *cobra.Command) (string, error) {
+	flags := cmd.Root().PersistentFlags()
+	if flags.Lookup("color") == nil {
+		return colorModeAuto, nil
+	}
+	value, err := flags.GetString("color")
+	if err != nil {
+		return "", err
+	}
+	if err := validateColorMode(value); err != nil {
+		return "", err
+	}
+
+	return value, nil
+}
+
+func validateColorMode(value string) error {
+	switch value {
+	case colorModeAuto, colorModeAlways, colorModeNever:
+		return nil
+	default:
+		return fmt.Errorf("--color must be one of auto, always, or never")
+	}
+}
+
+func colorOutputEnabled(mode string, out io.Writer) bool {
+	switch mode {
+	case colorModeAlways:
+		return true
+	case colorModeNever:
+		return false
+	default:
+		file, ok := out.(*os.File)
+		if !ok {
+			return false
+		}
+		info, err := file.Stat()
+		if err != nil {
+			return false
+		}
+
+		return info.Mode()&os.ModeCharDevice != 0
+	}
 }
 
 const rootLong = `AgentReceipt records local evidence beside normal AI coding sessions and produces signed review receipts.
@@ -236,7 +293,12 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 	watchStarted := time.Now()
 	watched := map[string]watchedCodexFile{}
 	reportedWarnings := map[string]bool{}
-	renderer := newCodexWatchRenderer(cmd.OutOrStdout())
+	out := cmd.OutOrStdout()
+	colorMode, err := colorModeFromCommand(cmd)
+	if err != nil {
+		return err
+	}
+	renderer := newCodexWatchRendererWithColor(out, colorOutputEnabled(colorMode, out))
 	initialPoll := true
 	poll := func() error {
 		result := codex.Inspect(options.CodexHome)

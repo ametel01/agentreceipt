@@ -38,13 +38,19 @@ type WatchEvent struct {
 
 type codexWatchRenderer struct {
 	logger         zerolog.Logger
+	color          bool
 	calls          map[string]codex.ToolCall
 	pendingActions []string
 }
 
 func newCodexWatchRenderer(out io.Writer) *codexWatchRenderer {
+	return newCodexWatchRendererWithColor(out, false)
+}
+
+func newCodexWatchRendererWithColor(out io.Writer, color bool) *codexWatchRenderer {
 	return &codexWatchRenderer{
-		logger: zerolog.New(newWatchConsoleWriter(out, false)).Level(zerolog.InfoLevel),
+		logger: zerolog.New(newWatchConsoleWriter(out, color)).Level(zerolog.InfoLevel),
+		color:  color,
 		calls:  map[string]codex.ToolCall{},
 	}
 }
@@ -190,12 +196,12 @@ func (r *codexWatchRenderer) PrintEvent(event WatchEvent) error {
 	if event.ExitCode != nil {
 		logEvent = logEvent.Int(watchFieldExitCode, *event.ExitCode)
 	}
-	logEvent.Msg(renderWatchMessage(event))
+	logEvent.Msg(renderWatchMessage(event, r.color))
 
 	return nil
 }
 
-func renderWatchMessage(event WatchEvent) string {
+func renderWatchMessage(event WatchEvent, color bool) string {
 	value := event.Message
 	if event.Status == "tokens" {
 		value = fmt.Sprintf("%d", event.Tokens)
@@ -207,8 +213,12 @@ func renderWatchMessage(event WatchEvent) string {
 		suffix := fmt.Sprintf(" (exit %d)", *event.ExitCode)
 		value = truncate(value, 240-len(suffix)) + suffix
 	}
+	value = truncate(value, 240)
+	if color {
+		value = colorizeWatchMessage(event, value)
+	}
 
-	return truncate(value, 240)
+	return value
 }
 
 func newWatchConsoleWriter(out io.Writer, color bool) zerolog.ConsoleWriter {
@@ -231,19 +241,98 @@ func newWatchConsoleWriter(out io.Writer, color bool) zerolog.ConsoleWriter {
 		FormatMessage: func(value any) string {
 			return truncate(fmt.Sprint(value), 240)
 		},
-		FormatPartValueByName: formatWatchPartValue,
+		FormatPartValueByName: func(value any, name string) string {
+			return formatWatchPartValue(value, name, color)
+		},
 	}
 }
 
-func formatWatchPartValue(value any, name string) string {
+func formatWatchPartValue(value any, name string, color bool) string {
 	switch name {
 	case watchFieldProvider:
-		return fmt.Sprintf("%-6s", fmt.Sprint(value))
+		return watchColorize(fmt.Sprintf("%-6s", fmt.Sprint(value)), watchColorDimGray, color)
 	case watchFieldStatus:
-		return fmt.Sprintf("%-7s", fmt.Sprint(value))
+		status := fmt.Sprint(value)
+		return watchColorize(fmt.Sprintf("%-7s", status), watchStatusColor(status), color)
 	default:
 		return fmt.Sprint(value)
 	}
+}
+
+const (
+	watchColorBlue       = "34"
+	watchColorCyan       = "36"
+	watchColorDimGray    = "2;37"
+	watchColorGreen      = "32"
+	watchColorMagenta    = "35"
+	watchColorRed        = "31"
+	watchColorWhiteBold  = "1;37"
+	watchColorYellow     = "33"
+	watchColorYellowBold = "1;33"
+)
+
+func watchStatusColor(status string) string {
+	switch status {
+	case "ok":
+		return watchColorGreen
+	case "fail":
+		return watchColorRed
+	case "warn":
+		return watchColorYellowBold
+	case "tokens":
+		return watchColorYellow
+	case "watch":
+		return watchColorCyan
+	default:
+		return watchColorDimGray
+	}
+}
+
+func colorizeWatchMessage(event WatchEvent, message string) string {
+	switch event.Status {
+	case "watch":
+		return watchColorize(message, watchColorCyan, true)
+	case "tokens":
+		return watchColorize(message, watchColorYellow, true)
+	case "warn":
+		return watchColorize(message, watchColorYellowBold, true)
+	case "fail":
+		return watchColorize(message, watchColorRed, true)
+	case "ok":
+		switch {
+		case event.Tool == "apply_patch" || hasWatchPrefix(event.Message, "edit "):
+			return watchColorize(message, watchColorMagenta, true)
+		case event.Command != "" || hasWatchPrefix(event.Message, "run "):
+			return watchColorize(message, watchColorBlue, true)
+		default:
+			return watchColorize(message, watchColorGreen, true)
+		}
+	default:
+		switch event.Family {
+		case codex.LogFamilyConversation:
+			return watchColorize(message, watchColorWhiteBold, true)
+		case codex.LogFamilyTool:
+			return watchColorize(message, watchColorBlue, true)
+		case codex.LogFamilyTelemetry:
+			return watchColorize(message, watchColorYellow, true)
+		case codex.LogFamilyContext:
+			return watchColorize(message, watchColorCyan, true)
+		default:
+			return watchColorize(message, watchColorDimGray, true)
+		}
+	}
+}
+
+func hasWatchPrefix(value string, prefix string) bool {
+	return len(value) >= len(prefix) && value[:len(prefix)] == prefix
+}
+
+func watchColorize(value string, code string, enabled bool) string {
+	if !enabled || value == "" {
+		return value
+	}
+
+	return "\x1b[" + code + "m" + value + "\x1b[0m"
 }
 
 func resultSubject(command codex.CommandEvent, toolCall codex.ToolCall) string {
