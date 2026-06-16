@@ -12,14 +12,14 @@ Update this file after every completed implementation step with the completed st
 
 ## Current Status
 
-- Current step: Step 0 complete
-- Next step: Step 1: Add Zerolog Dependency
+- Current step: Step 1 complete
+- Next step: Step 2: Define Structured Watch Events
 - Last updated: 2026-06-17
 
 ## Step Checklist
 
 - [x] Step 0: Progress and Changelog Tracking Setup
-- [ ] Step 1: Add Zerolog Dependency
+- [x] Step 1: Add Zerolog Dependency
 - [ ] Step 2: Define Structured Watch Events
 - [ ] Step 3: Render Watch Events With Zerolog ConsoleWriter
 - [ ] Step 4: Add Color Mode Flag and Color Policy
@@ -30,7 +30,8 @@ Update this file after every completed implementation step with the completed st
 
 | Date | Step | Status | Validation | Commit | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 2026-06-17 | Step 0: Progress and Changelog Tracking Setup | Complete | Passed `make fmt-check` and `make test`. Confirmed this file identifies the zerolog watch formatter plan and includes the full checklist; confirmed `CHANGELOG.md` has a Keep a Changelog `## [Unreleased]` section. | Pending | Refreshed progress tracking for the zerolog watch formatter plan and documented the per-step changelog/update rule. |
+| 2026-06-17 | Step 0: Progress and Changelog Tracking Setup | Complete | Passed `make fmt-check` and `make test`. Confirmed this file identifies the zerolog watch formatter plan and includes the full checklist; confirmed `CHANGELOG.md` has a Keep a Changelog `## [Unreleased]` section. | `9bff3ef` | Refreshed progress tracking for the zerolog watch formatter plan and documented the per-step changelog/update rule. |
+| 2026-06-17 | Step 1: Add Zerolog Dependency | Complete | Passed `go mod tidy`, `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | Pending | Added `github.com/rs/zerolog` to the module graph with a test-only compile check so CLI runtime behavior remains unchanged before renderer wiring. |
 
 ## Prior MVP Plan History
 
