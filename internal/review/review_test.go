@@ -69,6 +69,78 @@ func TestBuildReviewFromSessionEvents(t *testing.T) {
 	}
 }
 
+func TestBuildReviewIncludesGitBranchAndWorkspaceDiff(t *testing.T) {
+	repo := newReviewGitRepo(t)
+	runReviewGit(t, repo, "checkout", "-b", "feature/review-diff")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nbranch\n"), 0o600); err != nil {
+		t.Fatalf("write branch README: %v", err)
+	}
+	runReviewGit(t, repo, "add", "README.md")
+	runReviewGit(t, repo, "commit", "-m", "branch change")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nbranch\nworkspace\n"), 0o600); err != nil {
+		t.Fatalf("write workspace README: %v", err)
+	}
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReviewNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if report.Git.Branch != "feature/review-diff" || report.Git.Base != "main" || !report.Git.BaseFound {
+		t.Fatalf("unexpected git branch summary: %+v", report.Git)
+	}
+	if report.Git.Ahead != 1 || report.Git.Behind != 0 {
+		t.Fatalf("ahead/behind = %d/%d, want 1/0", report.Git.Ahead, report.Git.Behind)
+	}
+	if !report.Git.Dirty || report.Git.Unstaged != 1 || report.Git.Staged != 0 || report.Git.Untracked != 0 {
+		t.Fatalf("unexpected working tree summary: %+v", report.Git)
+	}
+	if report.Git.BranchDiff.Files != 1 || report.Git.BranchDiff.Insertions != 1 {
+		t.Fatalf("unexpected branch diff: %+v", report.Git.BranchDiff)
+	}
+	if report.Git.WorkspaceDiff.Files != 1 || report.Git.WorkspaceDiff.Insertions != 1 {
+		t.Fatalf("unexpected workspace diff: %+v", report.Git.WorkspaceDiff)
+	}
+	if report.Git.ReceiptDiffStatus != "matches_current_workspace" {
+		t.Fatalf("ReceiptDiffStatus = %q, want matches_current_workspace", report.Git.ReceiptDiffStatus)
+	}
+	rendered := RenderTerminal(report)
+	for _, want := range []string{
+		"Branch state:",
+		"- Branch: feature/review-diff",
+		"- Ahead/behind: 1 ahead, 0 behind",
+		"- Working tree: dirty (0 staged, 1 unstaged, 0 untracked)",
+		"- Receipt diff: matches current workspace",
+		"- Branch vs main: 1 file changed, 1 insertion(+)",
+		"- Workspace vs HEAD: 1 file changed, 1 insertion(+)",
+		"Session evidence:",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered review missing %q\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "\x1b[") {
+		t.Fatalf("plain rendered review contains ANSI escapes:\n%s", rendered)
+	}
+	colorRendered := RenderTerminalColor(report, true)
+	for _, want := range []string{
+		"\x1b[1;37mAgentReceipt Review\x1b[0m",
+		"\x1b[33mdirty\x1b[0m",
+		"\x1b[32mmatches current workspace\x1b[0m",
+	} {
+		if !strings.Contains(colorRendered, want) {
+			t.Fatalf("colored review missing %q\n%s", want, colorRendered)
+		}
+	}
+}
+
 func TestBuildReviewFromActiveSessionRiskAndConfidenceSignals(t *testing.T) {
 	repo := newReviewGitRepo(t)
 	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReviewNow}
@@ -206,6 +278,7 @@ func newReviewGitRepo(t *testing.T) string {
 	runReviewGit(t, repo, "init")
 	runReviewGit(t, repo, "config", "user.email", "agentreceipt@example.test")
 	runReviewGit(t, repo, "config", "user.name", "AgentReceipt Test")
+	runReviewGit(t, repo, "branch", "-M", "main")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}

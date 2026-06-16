@@ -556,7 +556,12 @@ func newReviewCommand() *cobra.Command {
 				_, err := fmt.Fprint(cmd.OutOrStdout(), review.RenderMarkdown(report))
 				return err
 			default:
-				_, err := fmt.Fprint(cmd.OutOrStdout(), review.RenderTerminal(report))
+				out := cmd.OutOrStdout()
+				colorMode, err := colorModeFromCommand(cmd)
+				if err != nil {
+					return err
+				}
+				_, err = fmt.Fprint(out, review.RenderTerminalColor(report, colorOutputEnabled(colorMode, out)))
 				return err
 			}
 		},

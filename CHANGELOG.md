@@ -33,3 +33,7 @@ and this project will follow semantic versioning once releases begin.
 - Added repository initialization, signed manual marker events, policy defaults, and guarded GitHub CLI PR comment posting.
 - Added end-to-end MVP smoke coverage for init/start/import/mark/stop/verify/review/export and refreshed README usage examples.
 - Changed session storage to global AgentReceipt home storage so repositories are not polluted with `.agentreceipt` directories or repo-local config files.
+
+### Changed
+
+- Changed `agentreceipt review` to lead with Git-derived branch state, ahead/behind counts, branch/workspace diff stats, working-tree counts, and receipt/current-workspace diff agreement instead of generic capture-confidence labels, with color-coded terminal state when color output is enabled.

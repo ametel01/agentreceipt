@@ -66,7 +66,7 @@ agentreceipt start --watch
 
 `--watch` keeps AgentReceipt in the foreground, follows matching Codex JSONL session logs, prints tool calls and command results as they appear, and imports those provider events into the active receipt. Press `Ctrl-C` to stop watching; the receipt session remains active until you run `agentreceipt stop`.
 
-Watch output is human-readable by default and backed by structured watch events so later machine-readable rendering can reuse the same event shape. Color is controlled with `--color auto|always|never`; `auto` enables color only for terminal output.
+Watch and review output are human-readable by default. Watch output is backed by structured watch events so later machine-readable rendering can reuse the same event shape. Color is controlled with `--color auto|always|never`; `auto` enables color only for terminal output.
 
 Useful watch options:
 
@@ -135,13 +135,15 @@ AgentReceipt uses three sources in this order:
 
 The review focuses on actionable review questions:
 
-- changed files and summary
+- branch/base state against `main`, `master`, `origin/main`, or `origin/master`
+- ahead/behind counts for the branch
+- Git diff stats for branch changes and current workspace changes
+- staged, unstaged, and untracked working-tree counts
+- whether the finalized receipt diff still matches the current workspace
 - detected commands (tests/lint/typecheck when available)
 - tool calls the agent attempted (edit/read/write, command, tests/lint/typecheck)
 - whether sensitive paths changed
 - whether external risks were detected
-- whether final diff and recorded evidence align
-- confidence tags for each evidence source
 - explicit gaps / missing evidence
 
 ## What tools the agent called
@@ -249,18 +251,30 @@ AgentReceipt Review
 
 Session: ar_ses_01J...
 Provider: Codex CLI
-Capture quality: medium
+State: finalized
 Risk: medium
 
-Summary:
-- Modified 7 files
-- Ran npm test
-- No secret file changes detected
-- Final diff matches captured workspace state
+Branch state:
+- Branch: feature/auth-review
+- Base: main
+- Ahead/behind: 3 ahead, 0 behind
+- Working tree: dirty (0 staged, 1 unstaged, 0 untracked)
+- Receipt diff: matches current workspace
+
+Diff:
+- Branch vs main: 7 files changed, 122 insertions(+), 34 deletions(-)
+  cmd/root.go | 42 +++++++++++++++++------
+  internal/review/review.go | 71 +++++++++++++++++++++++++++++---------
+- Workspace vs HEAD: 1 file changed, 8 insertions(+), 2 deletions(-)
+  Makefile | 10 ++++++++--
+
+Session evidence:
+- Commands detected: 6
+- Filesystem write events: 4 files
+- Provider tool events: 18
 
 Warnings:
-- No typecheck command detected (expected if not run)
-- Codex provider events unavailable during session
+- none
 ```
 
 ## Where this fits in your workflow

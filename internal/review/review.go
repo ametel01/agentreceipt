@@ -2,13 +2,17 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +46,7 @@ type Report struct {
 	Warnings      []model.Warning         `json:"warnings,omitempty"`
 	Timeline      []TimelineItem          `json:"timeline"`
 	EventsByType  map[string]int          `json:"events_by_type"`
+	Git           GitSummary              `json:"git"`
 }
 
 type TimelineItem struct {
@@ -49,6 +54,36 @@ type TimelineItem struct {
 	Time   string `json:"time"`
 	Source string `json:"source"`
 	Type   string `json:"type"`
+}
+
+type GitSummary struct {
+	Branch            string      `json:"branch"`
+	Head              string      `json:"head"`
+	Base              string      `json:"base,omitempty"`
+	BaseFound         bool        `json:"base_found"`
+	Ahead             int         `json:"ahead"`
+	Behind            int         `json:"behind"`
+	Dirty             bool        `json:"dirty"`
+	Staged            int         `json:"staged"`
+	Unstaged          int         `json:"unstaged"`
+	Untracked         int         `json:"untracked"`
+	Status            []GitStatus `json:"status"`
+	BranchDiff        DiffSummary `json:"branch_diff"`
+	WorkspaceDiff     DiffSummary `json:"workspace_diff"`
+	ReceiptDiffStatus string      `json:"receipt_diff_status"`
+}
+
+type GitStatus struct {
+	Code string `json:"code"`
+	Path string `json:"path"`
+}
+
+type DiffSummary struct {
+	Files      int      `json:"files"`
+	Insertions int      `json:"insertions"`
+	Deletions  int      `json:"deletions"`
+	ShortStat  string   `json:"short_stat"`
+	StatLines  []string `json:"stat_lines,omitempty"`
 }
 
 var commandKindPatterns = []struct {
@@ -60,6 +95,12 @@ var commandKindPatterns = []struct {
 	{kind: "typecheck", pattern: regexp.MustCompile(`\b(typecheck|tsc --noEmit|pyright)\b`)},
 	{kind: "network", pattern: regexp.MustCompile(`\b(curl|wget|ssh|nc|aws|gcloud)\b`)},
 	{kind: "destructive", pattern: regexp.MustCompile(`\b(rm|dd|mkfs|shutdown|reboot)\b`)},
+}
+
+var shortStatPatterns = map[string]*regexp.Regexp{
+	"files":      regexp.MustCompile(`(\d+) files? changed`),
+	"insertions": regexp.MustCompile(`(\d+) insertions?\(\+\)`),
+	"deletions":  regexp.MustCompile(`(\d+) deletions?\(-\)`),
 }
 
 func Build(ctx context.Context, options Options) (Report, error) {
@@ -91,6 +132,14 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	}
 	report.Summary = summarize(events)
 	report.Confidence = confidence(events)
+	if gitSummary, gitErr := buildGitSummary(ctx, repoRoot, state.FinalDiffHash); gitErr != nil {
+		report.Warnings = append(report.Warnings, model.Warning{
+			Code:    "git_review_unavailable",
+			Message: gitErr.Error(),
+		})
+	} else {
+		report.Git = gitSummary
+	}
 	report.Risk = risk(report.Summary, state.Warnings)
 	report.Focus = focus(report.Summary, report.Risk)
 	report.Gaps = gaps(report.Summary, report.Confidence, state.Warnings)
@@ -124,26 +173,41 @@ func Build(ctx context.Context, options Options) (Report, error) {
 }
 
 func RenderTerminal(report Report) string {
+	return RenderTerminalColor(report, false)
+}
+
+func RenderTerminalColor(report Report, color bool) string {
 	var builder strings.Builder
-	builder.WriteString("AgentReceipt Review\n\n")
-	fmt.Fprintf(&builder, "Session: %s\n", report.SessionID)
+	builder.WriteString(reviewColorize("AgentReceipt Review", reviewColorBoldWhite, color) + "\n\n")
+	fmt.Fprintf(&builder, "Session: %s\n", reviewColorize(report.SessionID, reviewColorCyan, color))
 	fmt.Fprintf(&builder, "Provider: %s\n", report.Provider)
-	fmt.Fprintf(&builder, "State: %s\n", report.State)
-	fmt.Fprintf(&builder, "Risk: %s\n", report.Risk.Level)
-	fmt.Fprintf(&builder, "Commands detected: %d\n", len(report.Summary.DetectedCommands))
-	fmt.Fprintf(&builder, "Files changed: %d\n", len(report.Summary.ChangedFiles))
-	builder.WriteString("\nCapture confidence:\n")
-	fmt.Fprintf(&builder, "- Git diff: %s\n", report.Confidence.GitDiff)
-	fmt.Fprintf(&builder, "- Filesystem writes: %s\n", report.Confidence.FilesystemWrites)
-	fmt.Fprintf(&builder, "- Provider tool events: %s\n", report.Confidence.ProviderToolEvents)
-	builder.WriteString("\nWarnings:\n")
+	fmt.Fprintf(&builder, "State: %s\n", reviewColorize(string(report.State), reviewColorForState(report.State), color))
+	fmt.Fprintf(&builder, "Risk: %s\n", reviewColorize(string(report.Risk.Level), reviewColorForRisk(report.Risk.Level), color))
+	fmt.Fprintf(&builder, "\n%s\n", reviewColorize("Branch state:", reviewColorBoldCyan, color))
+	fmt.Fprintf(&builder, "- Branch: %s\n", valueOrUnknown(report.Git.Branch))
+	if report.Git.BaseFound {
+		fmt.Fprintf(&builder, "- Base: %s\n", report.Git.Base)
+		fmt.Fprintf(&builder, "- Ahead/behind: %d ahead, %d behind\n", report.Git.Ahead, report.Git.Behind)
+	} else {
+		fmt.Fprintf(&builder, "- Base: %s\n", reviewColorize("not found (looked for main/master)", reviewColorYellow, color))
+	}
+	fmt.Fprintf(&builder, "- Working tree: %s (%d staged, %d unstaged, %d untracked)\n", reviewColorize(dirtyText(report.Git.Dirty), reviewColorForDirty(report.Git.Dirty), color), report.Git.Staged, report.Git.Unstaged, report.Git.Untracked)
+	fmt.Fprintf(&builder, "- Receipt diff: %s\n", reviewColorize(receiptDiffText(report.Git.ReceiptDiffStatus), reviewColorForReceiptDiff(report.Git.ReceiptDiffStatus), color))
+	fmt.Fprintf(&builder, "\n%s\n", reviewColorize("Diff:", reviewColorBoldCyan, color))
+	renderDiffSummary(&builder, "Branch vs "+baseLabel(report.Git), report.Git.BranchDiff, color)
+	renderDiffSummary(&builder, "Workspace vs HEAD", report.Git.WorkspaceDiff, color)
+	fmt.Fprintf(&builder, "\n%s\n", reviewColorize("Session evidence:", reviewColorBoldCyan, color))
+	fmt.Fprintf(&builder, "- Commands detected: %d\n", len(report.Summary.DetectedCommands))
+	fmt.Fprintf(&builder, "- Filesystem write events: %d files\n", len(report.Summary.ChangedFiles))
+	fmt.Fprintf(&builder, "- Provider tool events: %d\n", report.EventsByType["provider.command"]+report.EventsByType["provider.event"])
+	fmt.Fprintf(&builder, "\n%s\n", reviewColorize("Warnings:", reviewColorBoldCyan, color))
 	if len(report.Warnings) == 0 {
-		builder.WriteString("- none\n")
+		fmt.Fprintf(&builder, "- %s\n", reviewColorize("none", reviewColorGreen, color))
 	}
 	for _, warning := range report.Warnings {
-		fmt.Fprintf(&builder, "- %s: %s\n", warning.Code, warning.Message)
+		fmt.Fprintf(&builder, "- %s: %s\n", reviewColorize(warning.Code, reviewColorYellow, color), warning.Message)
 	}
-	builder.WriteString("\nReviewer focus:\n")
+	fmt.Fprintf(&builder, "\n%s\n", reviewColorize("Reviewer focus:", reviewColorBoldCyan, color))
 	for _, item := range report.Focus {
 		fmt.Fprintf(&builder, "- %s\n", item)
 	}
@@ -158,7 +222,16 @@ func RenderMarkdown(report Report) string {
 	builder.WriteString("Session:\n")
 	fmt.Fprintf(&builder, "- Provider: %s\n", report.Provider)
 	fmt.Fprintf(&builder, "- Session: `%s`\n", report.SessionID)
-	fmt.Fprintf(&builder, "- Files changed: %d\n", len(report.Summary.ChangedFiles))
+	fmt.Fprintf(&builder, "- Branch: `%s`\n", valueOrUnknown(report.Git.Branch))
+	if report.Git.BaseFound {
+		fmt.Fprintf(&builder, "- Base: `%s`, %d ahead / %d behind\n", report.Git.Base, report.Git.Ahead, report.Git.Behind)
+	} else {
+		builder.WriteString("- Base: not found (looked for main/master)\n")
+	}
+	fmt.Fprintf(&builder, "- Working tree: %s (%d staged, %d unstaged, %d untracked)\n", dirtyText(report.Git.Dirty), report.Git.Staged, report.Git.Unstaged, report.Git.Untracked)
+	fmt.Fprintf(&builder, "- Branch diff: %s\n", diffShortStat(report.Git.BranchDiff))
+	fmt.Fprintf(&builder, "- Workspace diff: %s\n", diffShortStat(report.Git.WorkspaceDiff))
+	fmt.Fprintf(&builder, "- Receipt diff: %s\n", receiptDiffText(report.Git.ReceiptDiffStatus))
 	fmt.Fprintf(&builder, "- Tool events: %d\n", report.EventsByType["provider.command"]+report.EventsByType["provider.event"])
 	fmt.Fprintf(&builder, "- Commands detected: %d\n", len(report.Summary.DetectedCommands))
 	fmt.Fprintf(&builder, "- Tests detected: %t\n\n", report.Summary.TestDetected)
@@ -169,16 +242,444 @@ func RenderMarkdown(report Report) string {
 	if len(report.Risk.Reasons) == 0 {
 		builder.WriteString("- none\n")
 	}
-	builder.WriteString("\nCapture confidence:\n")
-	fmt.Fprintf(&builder, "- Git diff: %s\n", report.Confidence.GitDiff)
-	fmt.Fprintf(&builder, "- Filesystem writes: %s\n", report.Confidence.FilesystemWrites)
-	fmt.Fprintf(&builder, "- Provider tool events: %s\n\n", report.Confidence.ProviderToolEvents)
+	builder.WriteString("\nEvidence:\n")
+	fmt.Fprintf(&builder, "- Git snapshots: %s\n", report.Confidence.GitDiff)
+	fmt.Fprintf(&builder, "- Filesystem write events: %d files\n", len(report.Summary.ChangedFiles))
+	fmt.Fprintf(&builder, "- Provider tool events: %d\n\n", report.EventsByType["provider.command"]+report.EventsByType["provider.event"])
 	builder.WriteString("Reviewer focus:\n")
 	for _, item := range report.Focus {
 		fmt.Fprintf(&builder, "- %s\n", item)
 	}
 
 	return builder.String()
+}
+
+func buildGitSummary(ctx context.Context, repoRoot string, finalDiffHash string) (GitSummary, error) {
+	branch, err := gitBranchName(ctx, repoRoot)
+	if err != nil {
+		return GitSummary{}, err
+	}
+	head, err := gitShortHead(ctx, repoRoot)
+	if err != nil {
+		return GitSummary{}, err
+	}
+	statusText, err := gitStatus(ctx, repoRoot)
+	if err != nil {
+		return GitSummary{}, err
+	}
+	status, staged, unstaged, untracked := parseGitStatus(statusText)
+	workspaceDiff, err := gitDiffSummary(ctx, repoRoot, "HEAD")
+	if err != nil {
+		return GitSummary{}, err
+	}
+	summary := GitSummary{
+		Branch:            strings.TrimSpace(branch),
+		Head:              strings.TrimSpace(head),
+		Dirty:             len(status) > 0,
+		Staged:            staged,
+		Unstaged:          unstaged,
+		Untracked:         untracked,
+		Status:            status,
+		WorkspaceDiff:     workspaceDiff,
+		ReceiptDiffStatus: "not_finalized",
+	}
+	if finalDiffHash != "" {
+		currentDiff, diffErr := gitWorkspacePatch(ctx, repoRoot)
+		if diffErr != nil {
+			return GitSummary{}, diffErr
+		}
+		if hashString(currentDiff) == finalDiffHash {
+			summary.ReceiptDiffStatus = "matches_current_workspace"
+		} else {
+			summary.ReceiptDiffStatus = "differs_from_current_workspace"
+		}
+	}
+	if base, ok := detectBaseRef(ctx, repoRoot); ok {
+		summary.Base = base
+		summary.BaseFound = true
+		ahead, behind, countsErr := aheadBehind(ctx, repoRoot, base)
+		if countsErr != nil {
+			return GitSummary{}, countsErr
+		}
+		summary.Ahead = ahead
+		summary.Behind = behind
+		branchDiff, diffErr := gitDiffSummary(ctx, repoRoot, base+"...HEAD")
+		if diffErr != nil {
+			return GitSummary{}, diffErr
+		}
+		summary.BranchDiff = branchDiff
+	}
+
+	return summary, nil
+}
+
+func detectBaseRef(ctx context.Context, repoRoot string) (string, bool) {
+	for _, candidate := range []string{"main", "master", "origin/main", "origin/master"} {
+		if _, err := gitVerifyBase(ctx, repoRoot, candidate); err == nil {
+			return candidate, true
+		}
+	}
+
+	return "", false
+}
+
+func aheadBehind(ctx context.Context, repoRoot string, base string) (int, int, error) {
+	output, err := gitAheadBehind(ctx, repoRoot, base)
+	if err != nil {
+		return 0, 0, err
+	}
+	fields := strings.Fields(output)
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("git rev-list returned unexpected ahead/behind output: %q", strings.TrimSpace(output))
+	}
+	behind, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse behind count %q: %w", fields[0], err)
+	}
+	ahead, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse ahead count %q: %w", fields[1], err)
+	}
+
+	return ahead, behind, nil
+}
+
+func gitDiffSummary(ctx context.Context, repoRoot string, revision string) (DiffSummary, error) {
+	shortStat, err := gitDiffShortStat(ctx, repoRoot, revision)
+	if err != nil {
+		return DiffSummary{}, err
+	}
+	stat, err := gitDiffStat(ctx, repoRoot, revision)
+	if err != nil {
+		return DiffSummary{}, err
+	}
+	summary := parseShortStat(shortStat)
+	summary.ShortStat = strings.TrimSpace(shortStat)
+	summary.StatLines = parseStatLines(stat)
+
+	return summary, nil
+}
+
+func parseGitStatus(status string) ([]GitStatus, int, int, int) {
+	lines := strings.Split(strings.TrimRight(status, "\n"), "\n")
+	entries := make([]GitStatus, 0, len(lines))
+	var staged, unstaged, untracked int
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		code := strings.TrimSpace(line[:min(2, len(line))])
+		path := ""
+		if len(line) > 3 {
+			path = line[3:]
+		}
+		entries = append(entries, GitStatus{Code: code, Path: path})
+		if strings.HasPrefix(line, "??") {
+			untracked++
+			continue
+		}
+		if line[0] != ' ' {
+			staged++
+		}
+		if len(line) > 1 && line[1] != ' ' {
+			unstaged++
+		}
+	}
+
+	return entries, staged, unstaged, untracked
+}
+
+func parseShortStat(shortStat string) DiffSummary {
+	stat := DiffSummary{}
+	for field, pattern := range shortStatPatterns {
+		match := pattern.FindStringSubmatch(shortStat)
+		if len(match) != 2 {
+			continue
+		}
+		value, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		switch field {
+		case "files":
+			stat.Files = value
+		case "insertions":
+			stat.Insertions = value
+		case "deletions":
+			stat.Deletions = value
+		}
+	}
+
+	return stat
+}
+
+func parseStatLines(stat string) []string {
+	lines := strings.Split(strings.TrimSpace(stat), "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.Contains(trimmed, " changed") {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+
+	return result
+}
+
+func renderDiffSummary(builder *strings.Builder, label string, summary DiffSummary, color bool) {
+	fmt.Fprintf(builder, "- %s: %s\n", label, reviewColorize(diffShortStat(summary), reviewColorForDiff(summary), color))
+	for _, line := range summary.StatLines {
+		fmt.Fprintf(builder, "  %s\n", reviewColorize(line, reviewColorDim, color))
+	}
+}
+
+func diffShortStat(summary DiffSummary) string {
+	if summary.ShortStat == "" {
+		return "no changes"
+	}
+
+	return summary.ShortStat
+}
+
+func baseLabel(summary GitSummary) string {
+	if summary.BaseFound {
+		return summary.Base
+	}
+
+	return "base"
+}
+
+func dirtyText(dirty bool) string {
+	if dirty {
+		return "dirty"
+	}
+
+	return "clean"
+}
+
+func receiptDiffText(status string) string {
+	switch status {
+	case "matches_current_workspace":
+		return "matches current workspace"
+	case "differs_from_current_workspace":
+		return "differs from current workspace"
+	case "not_finalized":
+		return "not finalized"
+	default:
+		return "unavailable"
+	}
+}
+
+const (
+	reviewColorBoldCyan  = "1;36"
+	reviewColorBoldRed   = "1;31"
+	reviewColorBoldWhite = "1;37"
+	reviewColorCyan      = "36"
+	reviewColorDim       = "2;37"
+	reviewColorGreen     = "32"
+	reviewColorRed       = "31"
+	reviewColorYellow    = "33"
+)
+
+func reviewColorForRisk(level model.RiskLevel) string {
+	switch level {
+	case model.RiskInfo, model.RiskLow:
+		return reviewColorGreen
+	case model.RiskMedium:
+		return reviewColorYellow
+	case model.RiskHigh:
+		return reviewColorRed
+	case model.RiskCritical:
+		return reviewColorBoldRed
+	default:
+		return reviewColorDim
+	}
+}
+
+func reviewColorForState(state model.SessionState) string {
+	switch state {
+	case model.SessionStateFinalized, model.SessionStateVerified:
+		return reviewColorGreen
+	case model.SessionStateActive, model.SessionStateStarting, model.SessionStateFinalizing:
+		return reviewColorYellow
+	default:
+		return reviewColorDim
+	}
+}
+
+func reviewColorForDirty(dirty bool) string {
+	if dirty {
+		return reviewColorYellow
+	}
+
+	return reviewColorGreen
+}
+
+func reviewColorForReceiptDiff(status string) string {
+	switch status {
+	case "matches_current_workspace":
+		return reviewColorGreen
+	case "differs_from_current_workspace":
+		return reviewColorRed
+	case "not_finalized":
+		return reviewColorYellow
+	default:
+		return reviewColorDim
+	}
+}
+
+func reviewColorForDiff(summary DiffSummary) string {
+	if summary.ShortStat == "" {
+		return reviewColorDim
+	}
+	if summary.Deletions > 0 && summary.Insertions == 0 {
+		return reviewColorRed
+	}
+	if summary.Insertions > 0 || summary.Deletions > 0 || summary.Files > 0 {
+		return reviewColorYellow
+	}
+
+	return reviewColorDim
+}
+
+func reviewColorize(value string, code string, enabled bool) string {
+	if !enabled || value == "" {
+		return value
+	}
+
+	return "\x1b[" + code + "m" + value + "\x1b[0m"
+}
+
+func valueOrUnknown(value string) string {
+	if value == "" {
+		return "unknown"
+	}
+
+	return value
+}
+
+func hashString(value string) string {
+	sum := sha256.Sum256([]byte(value))
+
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func gitBranchName(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git rev-parse --abbrev-ref HEAD")
+}
+
+func gitShortHead(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git rev-parse --short HEAD")
+}
+
+func gitStatus(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1")
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git status --porcelain=v1")
+}
+
+func gitWorkspacePatch(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--binary", "HEAD")
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git diff --binary HEAD")
+}
+
+func gitVerifyBase(ctx context.Context, dir string, base string) (string, error) {
+	var cmd *exec.Cmd
+	switch base {
+	case "main":
+		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "main^{commit}")
+	case "master":
+		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "master^{commit}")
+	case "origin/main":
+		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "origin/main^{commit}")
+	case "origin/master":
+		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "origin/master^{commit}")
+	default:
+		return "", fmt.Errorf("unsupported base ref %q", base)
+	}
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git rev-parse --verify --quiet "+base+"^{commit}")
+}
+
+func gitAheadBehind(ctx context.Context, dir string, base string) (string, error) {
+	var cmd *exec.Cmd
+	switch base {
+	case "main":
+		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "main...HEAD")
+	case "master":
+		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "master...HEAD")
+	case "origin/main":
+		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "origin/main...HEAD")
+	case "origin/master":
+		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "origin/master...HEAD")
+	default:
+		return "", fmt.Errorf("unsupported base ref %q", base)
+	}
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git rev-list --left-right --count "+base+"...HEAD")
+}
+
+func gitDiffShortStat(ctx context.Context, dir string, revision string) (string, error) {
+	var cmd *exec.Cmd
+	switch revision {
+	case "HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "HEAD")
+	case "main...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "main...HEAD")
+	case "master...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "master...HEAD")
+	case "origin/main...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "origin/main...HEAD")
+	case "origin/master...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "origin/master...HEAD")
+	default:
+		return "", fmt.Errorf("unsupported diff revision %q", revision)
+	}
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git diff --shortstat --find-renames "+revision)
+}
+
+func gitDiffStat(ctx context.Context, dir string, revision string) (string, error) {
+	var cmd *exec.Cmd
+	switch revision {
+	case "HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "HEAD")
+	case "main...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "main...HEAD")
+	case "master...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "master...HEAD")
+	case "origin/main...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "origin/main...HEAD")
+	case "origin/master...HEAD":
+		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "origin/master...HEAD")
+	default:
+		return "", fmt.Errorf("unsupported diff revision %q", revision)
+	}
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git diff --stat --find-renames "+revision)
+}
+
+func gitCommandOutput(cmd *exec.Cmd, description string) (string, error) {
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w: %s", description, err, strings.TrimSpace(string(output)))
+	}
+
+	return string(output), nil
 }
 
 func resolveSession(ctx context.Context, options Options) (string, string, error) {

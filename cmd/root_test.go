@@ -632,8 +632,15 @@ func TestImportCodexJSONLActiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("review pr returned error: %v", err)
 	}
-	if !strings.Contains(stdout, "## AgentReceipt") || !strings.Contains(stdout, "Capture confidence:") {
+	if !strings.Contains(stdout, "## AgentReceipt") || !strings.Contains(stdout, "Working tree:") {
 		t.Fatalf("review pr output = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--color", "always", "--repo", repo, "review", "--last")
+	if err != nil {
+		t.Fatalf("review color returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "\x1b[") || !strings.Contains(stdout, "AgentReceipt Review") {
+		t.Fatalf("review color output = %q", stdout)
 	}
 }
 
