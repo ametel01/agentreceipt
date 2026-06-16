@@ -5,6 +5,7 @@ packages="$(go list ./...)"
 test -n "$packages"
 go test ./...
 ./scripts/test-extract-release-notes.sh
+./scripts/test-release-scripts.sh
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT

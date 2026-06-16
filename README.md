@@ -36,6 +36,18 @@ Planned for later:
 
 ## Core workflow
 
+Install the latest release with curl:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ametel01/agentreceipt/main/scripts/install.sh | sh
+```
+
+Pin a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ametel01/agentreceipt/main/scripts/install.sh | sh -s -- --version v1.2.3
+```
+
 Build from source during the MVP:
 
 ```bash
@@ -123,6 +135,12 @@ scripts/extract-release-notes.sh v1.2.3 CHANGELOG.md > release-notes.md
 ```
 
 The script accepts `--unreleased` for pre-release checks, and released versions with or without a leading `v`. It extracts only that release section body and fails if the requested section is missing or empty.
+
+## Release workflow
+
+Pushing a `v*` tag runs the release workflow. The workflow verifies the repo with `make verify`, extracts the matching SemVer section from `CHANGELOG.md`, builds Linux and macOS archives for `amd64` and `arm64`, writes `SHA256SUMS`, and publishes those assets to the GitHub Release.
+
+Before tagging, move the relevant `Unreleased` entries into a matching release section, for example `## [1.2.3] - 2026-06-17`. The release workflow fails if that section is missing or empty.
 
 ## Important behavior (MVP decisions)
 
