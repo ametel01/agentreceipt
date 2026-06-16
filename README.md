@@ -4,6 +4,18 @@ AgentReceipt is a **local-first CLI for watching AI coding sessions as they happ
 
 Run it beside Codex, keep your normal terminal workflow, and see tool calls, commands, edits, token usage, warnings, and final review evidence without wrapping or proxying the agent.
 
+Install the latest release:
+
+```bash
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh
+```
+
+Pin a specific release:
+
+```bash
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.1.0
+```
+
 ```bash
 agentreceipt start --watch
 ```
@@ -51,18 +63,6 @@ Planned for later:
 - GitHub App and wider team workflow enforcement
 
 ## Core workflow
-
-Install the latest release with curl:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ametel01/agentreceipt/main/scripts/install.sh | sh
-```
-
-Pin a specific release:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ametel01/agentreceipt/main/scripts/install.sh | sh -s -- --version v0.1.0
-```
 
 Build from source during the MVP:
 
