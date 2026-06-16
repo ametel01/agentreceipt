@@ -73,3 +73,20 @@ test -n "$session_dir"
 test -s "$session_dir/receipt.json"
 test -s "$session_dir/review.md"
 test -s "$session_dir/signatures/receipt.sig"
+
+codex_home="$tmpdir/codex-home"
+codex_session_dir="$codex_home/sessions/2026/06/17"
+mkdir -p "$codex_session_dir"
+cat > "$codex_session_dir/watch.jsonl" <<JSONL
+{"type":"session_meta","timestamp":"2026-06-17T00:00:00Z","payload":{"type":"session_meta","cwd":"$repo"}}
+{"type":"response_item","timestamp":"2026-06-17T00:00:01Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"go test ./..."}}}
+{"type":"response_item","timestamp":"2026-06-17T00:00:02Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}
+JSONL
+
+watch_output="$("$tmpdir/agentreceipt" --color never --repo "$repo" start --watch --codex-home "$codex_home" --watch-existing --watch-interval 1ms --watch-duration 5ms)"
+watch_stop_output="$("$tmpdir/agentreceipt" --repo "$repo" stop)"
+
+[[ "$watch_output" == *"codex  watch"* ]]
+[[ "$watch_output" == *"codex  ok      run go test ./..."* ]]
+[[ "$watch_output" != *$'\033['* ]]
+[[ "$watch_stop_output" == *"Finalized AgentReceipt session"* ]]

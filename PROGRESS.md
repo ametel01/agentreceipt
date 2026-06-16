@@ -12,8 +12,8 @@ Update this file after every completed implementation step with the completed st
 
 ## Current Status
 
-- Current step: Step 4 complete
-- Next step: Step 5: Update Docs and Smoke Coverage for Watch Formatting
+- Current step: Step 5 complete
+- Next step: Step 6: Final Review and Compatibility Pass
 - Last updated: 2026-06-17
 
 ## Step Checklist
@@ -23,7 +23,7 @@ Update this file after every completed implementation step with the completed st
 - [x] Step 2: Define Structured Watch Events
 - [x] Step 3: Render Watch Events With Zerolog ConsoleWriter
 - [x] Step 4: Add Color Mode Flag and Color Policy
-- [ ] Step 5: Update Docs and Smoke Coverage for Watch Formatting
+- [x] Step 5: Update Docs and Smoke Coverage for Watch Formatting
 - [ ] Step 6: Final Review and Compatibility Pass
 
 ## Update Log
@@ -34,7 +34,8 @@ Update this file after every completed implementation step with the completed st
 | 2026-06-17 | Step 1: Add Zerolog Dependency | Complete | Passed `go mod tidy`, `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | `4984b85` | Added `github.com/rs/zerolog` to the module graph with a test-only compile check so CLI runtime behavior remains unchanged before renderer wiring. |
 | 2026-06-17 | Step 2: Define Structured Watch Events | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | `0e756ac` | Added `WatchEvent` construction for command results, apply_patch edits, token summaries, and malformed JSON warnings while preserving existing rendered output. |
 | 2026-06-17 | Step 3: Render Watch Events With Zerolog ConsoleWriter | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | `33a11d4` | Replaced watch-line formatting with a zerolog `ConsoleWriter`, rendered compact no-color console events, and routed watch announcements and warnings through `WatchEvent`. |
-| 2026-06-17 | Step 4: Add Color Mode Flag and Color Policy | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | Pending | Added persistent `--color auto|always|never`, terminal-aware auto policy, invalid-value validation, and deterministic watch color tests for `always` and `never`. |
+| 2026-06-17 | Step 4: Add Color Mode Flag and Color Policy | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | `1a6cff2` | Added persistent `--color auto|always|never`, terminal-aware auto policy, invalid-value validation, and deterministic watch color tests for `always` and `never`. |
+| 2026-06-17 | Step 5: Update Docs and Smoke Coverage for Watch Formatting | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | Pending | Documented watch color modes and structured watch output, and added deterministic smoke coverage for `start --watch --color never`. |
 
 ## Prior MVP Plan History
 

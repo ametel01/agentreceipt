@@ -16,6 +16,7 @@ and this project will follow semantic versioning once releases begin.
 - Added structured `WatchEvent` modeling for Codex watch command results, edits, token summaries, and parser warnings.
 - Added zerolog `ConsoleWriter` rendering for compact Codex watch events and normalized watch warnings.
 - Added `--color auto|always|never` for watch output with deterministic forced-color and no-color behavior.
+- Added smoke coverage and README guidance for structured watch output and color modes.
 - Added Go module baseline, local quality-gate Makefile targets, lint configuration, CI matrix, and smoke-check script.
 - Added Cobra CLI skeleton with the MVP command surface, command flags, version output, and command-discovery tests.
 - Added Codex-first config defaults, receipt/session model contracts, deterministic JSON helpers, and canonical session storage layout helpers.

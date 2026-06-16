@@ -66,12 +66,16 @@ agentreceipt start --watch
 
 `--watch` keeps AgentReceipt in the foreground, follows matching Codex JSONL session logs, prints tool calls and command results as they appear, and imports those provider events into the active receipt. Press `Ctrl-C` to stop watching; the receipt session remains active until you run `agentreceipt stop`.
 
+Watch output is human-readable by default and backed by structured watch events so later machine-readable rendering can reuse the same event shape. Color is controlled with `--color auto|always|never`; `auto` enables color only for terminal output.
+
 Useful watch options:
 
 ```bash
 agentreceipt start --watch --watch-interval 500ms
 agentreceipt start --watch --watch-existing
 agentreceipt start --watch --codex-home ~/.codex
+agentreceipt --color never start --watch
+agentreceipt --color always start --watch
 ```
 
 When multiple Codex sessions exist, AgentReceipt prefers logs whose Codex `cwd` metadata matches the current git repository. Newly created Codex logs without `cwd` metadata are followed briefly so early tool calls are not missed.
