@@ -8,7 +8,23 @@ GOSEC ?= $(TOOLS_BIN)/gosec
 
 export PATH := $(TOOLS_BIN):$(PATH)
 
-.PHONY: fmt fmt-check lint test test-race build verify security coverage smoke tools clean
+.PHONY: help fmt fmt-check lint test test-race build verify security coverage smoke tools clean
+
+help:
+	@printf '%s\n' 'AgentReceipt Make targets:'
+	@printf '  %-12s %s\n' 'help' 'Show this help.'
+	@printf '  %-12s %s\n' 'fmt' 'Format Go files with gofmt.'
+	@printf '  %-12s %s\n' 'fmt-check' 'Fail if Go files need formatting.'
+	@printf '  %-12s %s\n' 'lint' 'Run golangci-lint, staticcheck, and go vet.'
+	@printf '  %-12s %s\n' 'test' 'Run go test ./...'
+	@printf '  %-12s %s\n' 'test-race' 'Run go test -race ./...'
+	@printf '  %-12s %s\n' 'security' 'Run gosec ./...'
+	@printf '  %-12s %s\n' 'coverage' 'Run tests with coverage and enforce the 80% threshold.'
+	@printf '  %-12s %s\n' 'build' 'Build all Go packages.'
+	@printf '  %-12s %s\n' 'smoke' 'Run the CLI smoke harness.'
+	@printf '  %-12s %s\n' 'verify' 'Run format, lint, tests, race, security, coverage, build, and smoke.'
+	@printf '  %-12s %s\n' 'tools' 'Install local lint/security tools into .tools/bin.'
+	@printf '  %-12s %s\n' 'clean' 'Remove local build and tool artifacts.'
 
 fmt:
 	$(GO) fmt ./...
