@@ -222,7 +222,7 @@ func renderWatchMessage(event WatchEvent, color bool) string {
 	if event.Status == "tokens" {
 		value = fmt.Sprintf("%d", event.Tokens)
 		if event.TotalTokens > 0 {
-			value += fmt.Sprintf(" (%d total)", event.TotalTokens)
+			value += fmt.Sprintf(" (%d session)", event.TotalTokens)
 		}
 		if event.Message != "" {
 			value += " " + event.Message

@@ -266,8 +266,8 @@ func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
 		"codex  fail    run",
 		"(exit 7)",
 		"codex  ok      edit apply_patch",
-		"codex  tokens  110 (110 total) after",
-		"codex  tokens  50 (160 total) after edit apply_patch",
+		"codex  tokens  110 (110 session) after",
+		"codex  tokens  50 (160 session) after edit apply_patch",
 		"codex  warn    malformed_json:",
 	} {
 		if !strings.Contains(output, want) {
@@ -348,7 +348,7 @@ func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
 		t.Fatalf("Print() error = %v", err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "codex  tokens  220 (220 total) after 2 actions") {
+	if !strings.Contains(output, "codex  tokens  220 (220 session) after 2 actions") {
 		t.Fatalf("batch token output missing:\n%s", output)
 	}
 }
@@ -382,8 +382,8 @@ func TestCodexWatchRendererReportsTokenDeltaBeforeCumulativeTotal(t *testing.T) 
 		t.Fatalf("Print() error = %v", err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "codex  tokens  35 (135 total) after run make smoke") {
-		t.Fatalf("delta/cumulative token output missing:\n%s", output)
+	if !strings.Contains(output, "codex  tokens  35 (135 session) after run make smoke") {
+		t.Fatalf("delta/session token output missing:\n%s", output)
 	}
 }
 
