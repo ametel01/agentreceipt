@@ -729,6 +729,52 @@ func TestStartWatchImportsMatchingCodexLog(t *testing.T) {
 	}
 }
 
+func TestStartWatchResumesActiveSession(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	repo := newCommandGitRepo(t)
+	startOut, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	sessionID := strings.TrimSpace(strings.TrimPrefix(startOut, "Started AgentReceipt session "))
+
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", "2026", "06", "17")
+	if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	tracePath := filepath.Join(sessionDir, "resume-test.jsonl")
+	trace := strings.Join([]string{
+		`{"type":"session_meta","timestamp":"2026-06-17T00:00:00Z","payload":{"type":"session_meta","cwd":"` + repo + `"}}`,
+		`{"type":"response_item","timestamp":"2026-06-17T00:00:01Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"go test ./..."}}}`,
+		`{"type":"response_item","timestamp":"2026-06-17T00:00:02Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "--repo", repo, "start", "--watch", "--codex-home", home, "--watch-existing", "--watch-interval", "1ms", "--watch-duration", "5ms")
+	if err != nil {
+		t.Fatalf("resume start --watch returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "Resumed AgentReceipt session "+sessionID) || strings.Contains(stdout, "Started AgentReceipt session") {
+		t.Fatalf("resume output did not reuse active session:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "codex  ok      run go test ./...") {
+		t.Fatalf("resume output missing live command details:\n%s", stdout)
+	}
+	statusOut, _, err := executeCommand(t, "--repo", repo, "status")
+	if err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+	if !strings.Contains(statusOut, "Session: "+sessionID) || !strings.Contains(statusOut, "- codex_logs: imported") {
+		t.Fatalf("status did not show resumed import for same session:\n%s", statusOut)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+}
+
 func TestStartWatchColorModes(t *testing.T) {
 	for _, tc := range []struct {
 		mode     string

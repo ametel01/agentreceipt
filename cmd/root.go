@@ -202,15 +202,19 @@ func newStartCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			state, err := manager.Start(cmd.Context())
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Started AgentReceipt session %s\n", state.SessionID)
-			if err != nil {
-				return err
-			}
 			watch, err := cmd.Flags().GetBool("watch")
+			if err != nil {
+				return err
+			}
+			state, resumed, err := startOrResumeSession(cmd.Context(), manager, watch)
+			if err != nil {
+				return err
+			}
+			if resumed {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Resumed AgentReceipt session %s\n", state.SessionID)
+			} else {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Started AgentReceipt session %s\n", state.SessionID)
+			}
 			if err != nil {
 				return err
 			}
@@ -241,6 +245,24 @@ func newStartCommand() *cobra.Command {
 	start.Flags().Bool("watch-existing", false, "With --watch, also import existing lines from matching Codex logs")
 
 	return start
+}
+
+func startOrResumeSession(ctx context.Context, manager session.Manager, watch bool) (session.State, bool, error) {
+	if watch {
+		state, ok, err := manager.Status(ctx)
+		if err != nil {
+			return session.State{}, false, err
+		}
+		if ok {
+			return state, true, nil
+		}
+	}
+	state, err := manager.Start(ctx)
+	if err != nil {
+		return session.State{}, false, err
+	}
+
+	return state, false, nil
 }
 
 type startWatchOptions struct {
