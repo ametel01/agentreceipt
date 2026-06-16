@@ -152,11 +152,13 @@ type RiskReason struct {
 }
 
 type Verification struct {
-	EventChainHash string `json:"event_chain_hash"`
-	DiffHash       string `json:"diff_hash"`
-	ManifestHash   string `json:"manifest_hash"`
-	Signature      string `json:"signature"`
-	Valid          bool   `json:"valid"`
+	EventChainHash     string `json:"event_chain_hash"`
+	DiffHash           string `json:"diff_hash"`
+	ManifestHash       string `json:"manifest_hash"`
+	ReceiptHash        string `json:"receipt_hash"`
+	SignatureAlgorithm string `json:"signature_algorithm"`
+	Signature          string `json:"signature"`
+	Valid              bool   `json:"valid"`
 }
 
 type Warning struct {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ametel01/agentreceipt/internal/storage"
 )
 
 func TestRootHelpListsCommandSurface(t *testing.T) {
@@ -117,8 +119,6 @@ func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"init"},
-		{"verify"},
-		{"export", "--md"},
 		{"pr", "comment"},
 	} {
 		stdout, _, err := executeCommand(t, args...)
@@ -132,6 +132,7 @@ func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
 }
 
 func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
 	repo := newCommandGitRepo(t)
 
 	stdout, _, err := executeCommand(t, "--repo", repo, "start")
@@ -165,6 +166,16 @@ func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
 	if !strings.Contains(stdout, "Finalized AgentReceipt session ar_ses_") {
 		t.Fatalf("stop output = %q", stdout)
 	}
+	sessionID := strings.TrimSpace(strings.TrimPrefix(stdout, "Finalized AgentReceipt session "))
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	for _, path := range []string{layout.ReceiptJSON, layout.ReceiptMarkdown, layout.ReviewMarkdown, layout.ReceiptSignature} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected artifact %s: %v", path, err)
+		}
+	}
 
 	stdout, _, err = executeCommand(t, "--repo", repo, "status")
 	if err != nil {
@@ -172,6 +183,27 @@ func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "No active AgentReceipt session.") {
 		t.Fatalf("status after stop output = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "verify")
+	if err != nil {
+		t.Fatalf("verify returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "Receipt valid.") || !strings.Contains(stdout, "Signature: valid") {
+		t.Fatalf("verify output = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "export", "--json")
+	if err != nil {
+		t.Fatalf("export json returned error: %v", err)
+	}
+	if !strings.Contains(stdout, `"signature_algorithm": "ed25519"`) {
+		t.Fatalf("export json output = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "export", "--pr")
+	if err != nil {
+		t.Fatalf("export pr returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "## AgentReceipt") {
+		t.Fatalf("export pr output = %q", stdout)
 	}
 }
 
@@ -195,6 +227,7 @@ func TestImportCodexJSONLCommand(t *testing.T) {
 }
 
 func TestImportCodexJSONLActiveSession(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
 	repo := newCommandGitRepo(t)
 	if _, _, err := executeCommand(t, "--repo", repo, "start"); err != nil {
 		t.Fatalf("start returned error: %v", err)

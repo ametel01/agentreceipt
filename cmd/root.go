@@ -8,6 +8,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
+	"github.com/ametel01/agentreceipt/internal/receipt"
 	"github.com/ametel01/agentreceipt/internal/review"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/storage"
@@ -204,6 +205,9 @@ func newStopCommand() *cobra.Command {
 				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
 				return err
 			}
+			if _, err := receipt.Finalize(cmd.Context(), receipt.Options{RepoPath: state.RepoRoot, SessionID: state.SessionID}); err != nil {
+				return err
+			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Finalized AgentReceipt session %s\n", state.SessionID)
 
 			return err
@@ -265,14 +269,55 @@ func newReviewCommand() *cobra.Command {
 }
 
 func newVerifyCommand() *cobra.Command {
-	verify := newScaffoldCommand("verify", "Verify receipt integrity and signatures", "verify will validate event chain continuity, manifest hashes, final diff hash, and receipt signature.")
+	verify := &cobra.Command{
+		Use:   "verify",
+		Short: "Verify receipt integrity and signatures",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options, err := receiptOptionsFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			result, err := receipt.Verify(cmd.Context(), options)
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), receipt.RenderVerify(result)); err != nil {
+				return err
+			}
+			if !result.Valid {
+				return fmt.Errorf("receipt verification failed")
+			}
+
+			return nil
+		},
+	}
 	verify.Flags().String("session", "", "Verify a specific session ID")
 
 	return verify
 }
 
 func newExportCommand() *cobra.Command {
-	export := newScaffoldCommand("export", "Export finalized receipt artifacts", "export will rehydrate finalized receipts as JSON, Markdown, or PR-ready Markdown.")
+	export := &cobra.Command{
+		Use:   "export",
+		Short: "Export finalized receipt artifacts",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options, err := receiptOptionsFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			format, err := exportFormatFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			data, err := receipt.Export(cmd.Context(), options, format)
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(data)
+
+			return err
+		},
+	}
 	export.Flags().Bool("json", false, "Export receipt as JSON")
 	export.Flags().Bool("md", false, "Export receipt as Markdown")
 	export.Flags().Bool("pr", false, "Export concise PR-comment Markdown")
@@ -487,4 +532,45 @@ func reviewOptionsFromCommand(cmd *cobra.Command) (review.Options, error) {
 	}
 
 	return review.Options{RepoPath: repoPath, SessionID: sessionID, Last: last, Security: security, Diff: diff}, nil
+}
+
+func receiptOptionsFromCommand(cmd *cobra.Command) (receipt.Options, error) {
+	repoPath, err := cmd.Root().PersistentFlags().GetString("repo")
+	if err != nil {
+		return receipt.Options{}, err
+	}
+	sessionID, err := cmd.Flags().GetString("session")
+	if err != nil {
+		return receipt.Options{}, err
+	}
+
+	return receipt.Options{RepoPath: repoPath, SessionID: sessionID, Last: sessionID == ""}, nil
+}
+
+func exportFormatFromCommand(cmd *cobra.Command) (string, error) {
+	asJSON, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return "", err
+	}
+	asMarkdown, err := cmd.Flags().GetBool("md")
+	if err != nil {
+		return "", err
+	}
+	asPR, err := cmd.Flags().GetBool("pr")
+	if err != nil {
+		return "", err
+	}
+	selected := 0
+	format := "md"
+	for name, enabled := range map[string]bool{"json": asJSON, "md": asMarkdown, "pr": asPR} {
+		if enabled {
+			selected++
+			format = name
+		}
+	}
+	if selected > 1 {
+		return "", fmt.Errorf("select only one export format")
+	}
+
+	return format, nil
 }
