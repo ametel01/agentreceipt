@@ -58,6 +58,24 @@ agentreceipt start
 
 Then run Codex normally in your terminal.
 
+For live Codex visibility while the session is active, run:
+
+```bash
+agentreceipt start --watch
+```
+
+`--watch` keeps AgentReceipt in the foreground, follows matching Codex JSONL session logs, prints tool calls and command results as they appear, and imports those provider events into the active receipt. Press `Ctrl-C` to stop watching; the receipt session remains active until you run `agentreceipt stop`.
+
+Useful watch options:
+
+```bash
+agentreceipt start --watch --watch-interval 500ms
+agentreceipt start --watch --watch-existing
+agentreceipt start --watch --codex-home ~/.codex
+```
+
+When multiple Codex sessions exist, AgentReceipt prefers logs whose Codex `cwd` metadata matches the current git repository. Newly created Codex logs without `cwd` metadata are followed briefly so early tool calls are not missed.
+
 ### 3) End session and finalize
 
 ```bash
@@ -186,6 +204,7 @@ agentreceipt init # optional global storage/key setup
 
 # Session lifecycle
 agentreceipt start
+agentreceipt start --watch
 agentreceipt status
 agentreceipt live
 agentreceipt stop

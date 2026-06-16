@@ -1,11 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
 	"github.com/ametel01/agentreceipt/internal/config"
@@ -132,7 +137,7 @@ func newInstallClaudeCommand() *cobra.Command {
 }
 
 func newStartCommand() *cobra.Command {
-	return &cobra.Command{
+	start := &cobra.Command{
 		Use:   "start",
 		Short: "Start a local receipt capture session",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -145,10 +150,245 @@ func newStartCommand() *cobra.Command {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Started AgentReceipt session %s\n", state.SessionID)
+			if err != nil {
+				return err
+			}
+			watch, err := cmd.Flags().GetBool("watch")
+			if err != nil {
+				return err
+			}
+			if !watch {
+				return nil
+			}
+			options, err := watchOptionsFromStartCommand(cmd)
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Watching Codex logs. Press Ctrl-C to stop watching; the AgentReceipt session stays active until `agentreceipt stop`."); err != nil {
+				return err
+			}
+			watchCtx, stopSignals := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stopSignals()
+			if err := watchCodex(watchCtx, cmd, manager, state, options); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Stopped watching Codex logs. Run `agentreceipt stop` to finalize the receipt.")
 
 			return err
 		},
 	}
+	start.Flags().Bool("watch", false, "Watch Codex session logs and import provider events into the active receipt")
+	start.Flags().String("codex-home", "", "Codex home directory for --watch; defaults to CODEX_HOME or ~/.codex")
+	start.Flags().Duration("watch-interval", time.Second, "Polling interval for --watch")
+	start.Flags().Duration("watch-duration", 0, "Stop --watch after this duration; zero watches until interrupted")
+	start.Flags().Bool("watch-existing", false, "With --watch, also import existing lines from matching Codex logs")
+
+	return start
+}
+
+type startWatchOptions struct {
+	CodexHome       string
+	Interval        time.Duration
+	Duration        time.Duration
+	IncludeExisting bool
+}
+
+type watchedCodexFile struct {
+	offset     int64
+	lineOffset int
+}
+
+func watchOptionsFromStartCommand(cmd *cobra.Command) (startWatchOptions, error) {
+	codexHome, err := cmd.Flags().GetString("codex-home")
+	if err != nil {
+		return startWatchOptions{}, err
+	}
+	interval, err := cmd.Flags().GetDuration("watch-interval")
+	if err != nil {
+		return startWatchOptions{}, err
+	}
+	if interval <= 0 {
+		return startWatchOptions{}, fmt.Errorf("--watch-interval must be greater than zero")
+	}
+	duration, err := cmd.Flags().GetDuration("watch-duration")
+	if err != nil {
+		return startWatchOptions{}, err
+	}
+	if duration < 0 {
+		return startWatchOptions{}, fmt.Errorf("--watch-duration must be zero or greater")
+	}
+	includeExisting, err := cmd.Flags().GetBool("watch-existing")
+	if err != nil {
+		return startWatchOptions{}, err
+	}
+
+	return startWatchOptions{CodexHome: codexHome, Interval: interval, Duration: duration, IncludeExisting: includeExisting}, nil
+}
+
+func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager, state session.State, options startWatchOptions) error {
+	operationCtx := ctx
+	watchCtx := ctx
+	if options.Duration > 0 {
+		var cancel context.CancelFunc
+		watchCtx, cancel = context.WithTimeout(ctx, options.Duration)
+		defer cancel()
+	}
+	watchStarted := time.Now()
+	watched := map[string]watchedCodexFile{}
+	reportedWarnings := map[string]bool{}
+	poll := func() error {
+		result := codex.Inspect(options.CodexHome)
+		for _, warning := range result.Warnings {
+			warningKey := warning.Code + ":" + warning.Message
+			if reportedWarnings[warningKey] {
+				continue
+			}
+			reportedWarnings[warningKey] = true
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] warning %s: %s\n", warning.Code, warning.Message); err != nil {
+				return err
+			}
+		}
+		for _, candidate := range result.Candidates {
+			matches, reason := codexCandidateMatches(candidate, state.RepoRoot, watchStarted)
+			if !matches {
+				continue
+			}
+			tracked, ok := watched[candidate.Path]
+			if !ok {
+				tracked = watchedCodexFile{}
+				if !options.IncludeExisting && candidate.ModTime.Before(watchStarted.Add(-2*time.Second)) {
+					tracked.offset = candidate.Size
+				}
+				watched[candidate.Path] = tracked
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] selected %s (%s)\n", candidate.Path, reason); err != nil {
+					return err
+				}
+			}
+			tail, err := codex.TailFile(candidate.Path, codex.TailOptions{
+				SessionID:  state.SessionID,
+				CWD:        state.RepoRoot,
+				Offset:     tracked.offset,
+				LineOffset: tracked.lineOffset,
+			})
+			if err != nil {
+				if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "[codex] warning tail_failed: %s\n", err); writeErr != nil {
+					return writeErr
+				}
+				continue
+			}
+			tracked.offset = tail.NextOffset
+			tracked.lineOffset = tail.NextLineOffset
+			watched[candidate.Path] = tracked
+			if tail.EventCount == 0 {
+				continue
+			}
+			if _, _, err := manager.AppendProviderEvents(operationCtx, tail.Events, codexWarnings(tail.Warnings)); err != nil {
+				return err
+			}
+			if err := printCodexLiveResult(cmd, tail.ParseResult); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+	if err := poll(); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(options.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-watchCtx.Done():
+			return watchCtx.Err()
+		case <-ticker.C:
+			if err := poll(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func codexCandidateMatches(candidate codex.Candidate, repoRoot string, watchStarted time.Time) (bool, string) {
+	cwd, ok, err := codex.SessionCWD(candidate.Path)
+	if err == nil && ok {
+		if samePath(cwd, repoRoot) {
+			return true, "cwd " + cwd
+		}
+
+		return false, ""
+	}
+	if candidate.ModTime.After(watchStarted.Add(-2 * time.Second)) {
+		return true, "new log without cwd metadata yet"
+	}
+
+	return false, ""
+}
+
+func samePath(left string, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if resolved, err := filepath.EvalSymlinks(left); err == nil {
+		left = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(right); err == nil {
+		right = resolved
+	}
+
+	return left == right
+}
+
+func printCodexLiveResult(cmd *cobra.Command, result codex.ParseResult) error {
+	for _, toolCall := range result.ToolCalls {
+		if toolCall.Command != "" {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] tool %s cmd=%q\n", emptyDefault(toolCall.Tool, "unknown"), truncate(toolCall.Command, 240)); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] tool %s\n", emptyDefault(toolCall.Tool, "unknown")); err != nil {
+			return err
+		}
+	}
+	for _, command := range result.Commands {
+		if command.Status == "unknown" && command.Command != "" {
+			continue
+		}
+		exit := ""
+		if command.ExitCode != nil {
+			exit = fmt.Sprintf(" exit=%d", *command.ExitCode)
+		}
+		callID := command.CallID
+		if callID == "" {
+			callID = "unknown"
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] result %s status=%s%s\n", callID, command.Status, exit); err != nil {
+			return err
+		}
+	}
+	for _, warning := range result.Warnings {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] warning %s: %s\n", warning.Code, warning.Message); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func emptyDefault(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+
+	return value
+}
+
+func truncate(value string, max int) string {
+	if max > 0 && len(value) > max {
+		return value[:max]
+	}
+
+	return value
 }
 
 func newStatusCommand() *cobra.Command {

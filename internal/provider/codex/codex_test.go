@@ -83,6 +83,50 @@ func TestParseFileAndWriteTraces(t *testing.T) {
 	}
 }
 
+func TestSessionCWDAndTailFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	tracePath := filepath.Join(dir, "trace.jsonl")
+	if err := os.WriteFile(tracePath, []byte(`{"type":"session_meta","payload":{"type":"session_meta","cwd":"`+dir+`"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	cwd, ok, err := SessionCWD(tracePath)
+	if err != nil {
+		t.Fatalf("SessionCWD() error = %v", err)
+	}
+	if !ok || cwd != dir {
+		t.Fatalf("SessionCWD() cwd=%q ok=%v, want %q true", cwd, ok, dir)
+	}
+	info, err := os.Stat(tracePath)
+	if err != nil {
+		t.Fatalf("stat trace: %v", err)
+	}
+	file, err := os.OpenFile(tracePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open trace append: %v", err)
+	}
+	if _, err := file.WriteString(`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":{"cmd":"go test ./..."}}}` + "\n" + `{"type":"response_item"`); err != nil {
+		t.Fatalf("append trace: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close trace: %v", err)
+	}
+	tail, err := TailFile(tracePath, TailOptions{SessionID: "ar_ses_test", CWD: dir, Offset: info.Size(), LineOffset: 1})
+	if err != nil {
+		t.Fatalf("TailFile() error = %v", err)
+	}
+	if tail.EventCount != 1 || tail.CompleteLines != 1 {
+		t.Fatalf("tail result events=%d lines=%d", tail.EventCount, tail.CompleteLines)
+	}
+	if tail.Commands[0].Command != "go test ./..." {
+		t.Fatalf("tail command = %+v", tail.Commands)
+	}
+	if tail.NextOffset <= info.Size() {
+		t.Fatalf("tail did not advance offset: got %d start %d", tail.NextOffset, info.Size())
+	}
+}
+
 func TestInspectReportsMissingAndCandidateLogs(t *testing.T) {
 	t.Parallel()
 

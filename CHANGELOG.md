@@ -19,6 +19,7 @@ and this project will follow semantic versioning once releases begin.
 - Added filesystem watcher support with debounced fsnotify events, changed-file summaries, sensitive path classification, and dependency file classification.
 - Added session lifecycle orchestration for `start`, `status`, `live`, and `stop` with persisted state, active-session tracking, finalized manifests, event replay, and zero-Codex-evidence warnings.
 - Added robust Codex JSONL parsing, provider trace export, `inspect codex`, active-session `import codex-jsonl`, parser warnings, command extraction, output redaction, and provider risk signals.
+- Added foreground `start --watch` support for live Codex JSONL tailing, repo-aware session matching, real-time tool/command output, and automatic provider-event import into active receipts.
 - Added confidence-aware review reports with risk reasons, command detection, capture confidence, evidence gaps, reviewer focus prompts, and JSON/Markdown/PR output modes.
 - Added signed receipt finalization with Ed25519 key management, receipt/review artifact writing, integrity verification, and `export --json|--md|--pr` output.
 - Added repository initialization, signed manual marker events, policy defaults, and guarded GitHub CLI PR comment posting.

@@ -45,6 +45,7 @@ type ParseOptions struct {
 	CWD            string
 	SourcePath     string
 	MaxOutputBytes int
+	LineOffset     int
 }
 
 type ParseResult struct {
@@ -172,6 +173,7 @@ func ParseJSONL(reader io.Reader, options ParseOptions) ParseResult {
 	}
 	result := ParseResult{
 		SourcePath: options.SourcePath,
+		LineCount:  options.LineOffset,
 		SourceConfidence: []ConfidenceRecord{{
 			Source:     "session_jsonl",
 			Confidence: model.ConfidenceHigh,

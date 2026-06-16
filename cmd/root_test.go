@@ -8,9 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ametel01/agentreceipt/internal/eventlog"
+	"github.com/ametel01/agentreceipt/internal/provider/codex"
+	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 func TestRootHelpListsCommandSurface(t *testing.T) {
@@ -88,6 +92,160 @@ func TestReviewModeFlags(t *testing.T) {
 		if review.Flags().Lookup(name) == nil {
 			t.Fatalf("review flag %q is not registered", name)
 		}
+	}
+}
+
+func TestStartWatchFlags(t *testing.T) {
+	t.Parallel()
+
+	root := NewRootCommand("test")
+	start, _, err := root.Find([]string{"start"})
+	if err != nil {
+		t.Fatalf("find start command: %v", err)
+	}
+
+	for _, name := range []string{"watch", "codex-home", "watch-interval", "watch-duration", "watch-existing"} {
+		if start.Flags().Lookup(name) == nil {
+			t.Fatalf("start flag %q is not registered", name)
+		}
+	}
+}
+
+func TestStartWatchOptionsValidation(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStartCommand()
+	if err := cmd.Flags().Set("watch-interval", "0"); err != nil {
+		t.Fatalf("set watch-interval: %v", err)
+	}
+	if _, err := watchOptionsFromStartCommand(cmd); err == nil || !strings.Contains(err.Error(), "watch-interval") {
+		t.Fatalf("expected interval validation error, got %v", err)
+	}
+
+	cmd = newStartCommand()
+	if err := cmd.Flags().Set("watch-duration", "-1s"); err != nil {
+		t.Fatalf("set watch-duration: %v", err)
+	}
+	if _, err := watchOptionsFromStartCommand(cmd); err == nil || !strings.Contains(err.Error(), "watch-duration") {
+		t.Fatalf("expected duration validation error, got %v", err)
+	}
+
+	cmd = newStartCommand()
+	if err := cmd.Flags().Set("watch-interval", "250ms"); err != nil {
+		t.Fatalf("set watch-interval: %v", err)
+	}
+	if err := cmd.Flags().Set("watch-duration", "1s"); err != nil {
+		t.Fatalf("set watch-duration: %v", err)
+	}
+	if err := cmd.Flags().Set("watch-existing", "true"); err != nil {
+		t.Fatalf("set watch-existing: %v", err)
+	}
+	options, err := watchOptionsFromStartCommand(cmd)
+	if err != nil {
+		t.Fatalf("watchOptionsFromStartCommand() error = %v", err)
+	}
+	if options.Interval != 250*time.Millisecond || options.Duration != time.Second || !options.IncludeExisting {
+		t.Fatalf("options = %+v", options)
+	}
+}
+
+func TestCodexCandidateMatchesRepoAndNewLogs(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	otherRepo := t.TempDir()
+	dir := t.TempDir()
+	matchingTrace := filepath.Join(dir, "matching.jsonl")
+	if err := os.WriteFile(matchingTrace, []byte(`{"type":"session_meta","payload":{"type":"session_meta","cwd":"`+repo+`"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write matching trace: %v", err)
+	}
+	matches, reason := codexCandidateMatches(codex.Candidate{Path: matchingTrace, ModTime: time.Now()}, repo, time.Now())
+	if !matches || !strings.Contains(reason, "cwd") {
+		t.Fatalf("expected cwd match, got matches=%v reason=%q", matches, reason)
+	}
+
+	otherTrace := filepath.Join(dir, "other.jsonl")
+	if err := os.WriteFile(otherTrace, []byte(`{"type":"session_meta","payload":{"type":"session_meta","cwd":"`+otherRepo+`"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write other trace: %v", err)
+	}
+	matches, _ = codexCandidateMatches(codex.Candidate{Path: otherTrace, ModTime: time.Now()}, repo, time.Now())
+	if matches {
+		t.Fatal("candidate from another cwd matched repo")
+	}
+
+	noMetadataTrace := filepath.Join(dir, "new.jsonl")
+	if err := os.WriteFile(noMetadataTrace, []byte(`{"type":"response_item"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write new trace: %v", err)
+	}
+	matches, reason = codexCandidateMatches(codex.Candidate{Path: noMetadataTrace, ModTime: time.Now()}, repo, time.Now().Add(-time.Second))
+	if !matches || !strings.Contains(reason, "new log") {
+		t.Fatalf("expected new log match, got matches=%v reason=%q", matches, reason)
+	}
+	matches, _ = codexCandidateMatches(codex.Candidate{Path: noMetadataTrace, ModTime: time.Now().Add(-time.Minute)}, repo, time.Now())
+	if matches {
+		t.Fatal("old candidate without cwd metadata matched repo")
+	}
+}
+
+func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	exitCode := 7
+	longCommand := strings.Repeat("x", 300)
+	result := codex.ParseResult{
+		ToolCalls: []codex.ToolCall{
+			{Tool: "read_file"},
+			{Tool: "exec_command", Command: longCommand},
+			{Command: "go test ./..."},
+		},
+		Commands: []codex.CommandEvent{
+			{Command: "go test ./...", Status: "unknown"},
+			{CallID: "call_1", Status: "failed", ExitCode: &exitCode},
+			{Status: "success"},
+		},
+		Warnings: []codex.ParseWarning{{Code: "malformed_json", Message: "bad record"}},
+	}
+	if err := printCodexLiveResult(cmd, result); err != nil {
+		t.Fatalf("printCodexLiveResult() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"[codex] tool read_file",
+		"[codex] tool exec_command",
+		"[codex] tool unknown cmd=\"go test ./...\"",
+		"[codex] result call_1 status=failed exit=7",
+		"[codex] result unknown status=success",
+		"[codex] warning malformed_json: bad record",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, longCommand) {
+		t.Fatalf("long command was not truncated: %q", output)
+	}
+}
+
+func TestWatchCodexReportsMissingLogsOnce(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	err := watchCodex(context.Background(), cmd, session.Manager{}, session.State{RepoRoot: t.TempDir(), SessionID: "ar_ses_test"}, startWatchOptions{
+		CodexHome: t.TempDir(),
+		Interval:  1 * time.Millisecond,
+		Duration:  3 * time.Millisecond,
+	})
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatalf("watchCodex() error = %v", err)
+	}
+	output := stdout.String()
+	if got := strings.Count(output, "warning codex_logs_missing"); got != 1 {
+		t.Fatalf("missing-log warning count = %d, output:\n%s", got, output)
 	}
 }
 
@@ -301,6 +459,43 @@ func TestImportCodexJSONLActiveSession(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "## AgentReceipt") || !strings.Contains(stdout, "Capture confidence:") {
 		t.Fatalf("review pr output = %q", stdout)
+	}
+}
+
+func TestStartWatchImportsMatchingCodexLog(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	repo := newCommandGitRepo(t)
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", "2026", "06", "17")
+	if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	tracePath := filepath.Join(sessionDir, "rollout-test.jsonl")
+	trace := strings.Join([]string{
+		`{"type":"session_meta","timestamp":"2026-06-17T00:00:00Z","payload":{"type":"session_meta","cwd":"` + repo + `"}}`,
+		`{"type":"response_item","timestamp":"2026-06-17T00:00:01Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":"{\"cmd\":\"go test ./...\"}"}}`,
+		`{"type":"response_item","timestamp":"2026-06-17T00:00:02Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "--repo", repo, "start", "--watch", "--codex-home", home, "--watch-existing", "--watch-interval", "1ms", "--watch-duration", "5ms")
+	if err != nil {
+		t.Fatalf("start --watch returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "Watching Codex logs") || !strings.Contains(stdout, "[codex] tool exec_command") || !strings.Contains(stdout, `cmd="go test ./..."`) {
+		t.Fatalf("watch output missing live command details: %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "status")
+	if err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "- codex_logs: imported") {
+		t.Fatalf("status did not show imported Codex logs: %q", stdout)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
 	}
 }
 
