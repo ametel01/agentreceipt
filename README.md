@@ -2,7 +2,7 @@
 
 AgentReceipt is a **local-first CLI for watching AI coding sessions as they happen**.
 
-Run it beside Codex, keep your normal terminal workflow, and see tool calls, commands, edits, token usage, warnings, and final review evidence without wrapping or proxying the agent.
+It is built for developers who run agents in permissive "YOLO mode": Codex today, and Claude once hook support lands. Keep your normal terminal workflow, run AgentReceipt beside the agent, and see tool calls, commands, edits, token usage, warnings, and final review evidence without wrapping or proxying the agent.
 
 Install the latest release:
 
@@ -24,7 +24,7 @@ While it watches, AgentReceipt records observable local evidence from your works
 
 ## Current limitations
 
-- **Live provider capture is Codex-only.** `start --watch`, `inspect codex`, and `import codex-jsonl` work with Codex logs today. `agentreceipt install claude` is present for roadmap readiness, but it only reports that Claude hook integration is deferred.
+- **Live provider capture is Codex-only.** AgentReceipt is intended for high-autonomy Codex/Claude workflows, but `start --watch`, `inspect codex`, and `import codex-jsonl` work with Codex logs today. `agentreceipt install claude` is present for roadmap readiness, but it only reports that Claude hook integration is deferred.
 - **Codex log parsing is best effort.** Interactive Codex logs are treated as local evidence, not a stable provider API. Missing, incomplete, malformed, or format-changed logs reduce provider confidence but do not stop receipt generation.
 - **AgentReceipt observes; it does not gate.** It does not launch, wrap, sandbox, approve, deny, or proxy agent actions. This is intentional for the sidecar model, but permission enforcement is outside the current release.
 - **Risk classification is heuristic.** Command risk badges use built-in rules for high/medium/low signals. They help reviewers focus attention, but they are not a policy engine and do not replace review.
