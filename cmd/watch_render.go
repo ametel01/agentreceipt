@@ -70,6 +70,14 @@ func newCodexWatchRendererWithColor(out io.Writer, color bool) *codexWatchRender
 	}
 }
 
+func (r *codexWatchRenderer) SeedTokenTotal(total int) {
+	if total <= 0 {
+		return
+	}
+	r.lastTokenTotal = total
+	r.hasTokenTotal = true
+}
+
 func (r *codexWatchRenderer) Print(result codex.ParseResult) error {
 	for _, event := range r.Events(result) {
 		if err := r.PrintEvent(event); err != nil {

@@ -321,6 +321,9 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 		return err
 	}
 	renderer := newCodexWatchRendererWithColor(out, colorOutputEnabled(colorMode, out))
+	if err := seedCodexWatchTokenBaseline(operationCtx, manager, renderer); err != nil {
+		return err
+	}
 	initialPoll := true
 	poll := func() error {
 		result := codex.Inspect(options.CodexHome)
@@ -404,6 +407,84 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 				return err
 			}
 		}
+	}
+}
+
+func seedCodexWatchTokenBaseline(ctx context.Context, manager session.Manager, renderer *codexWatchRenderer) error {
+	events, err := manager.Live(ctx, 0)
+	if err != nil {
+		return err
+	}
+	if total, ok := lastCodexTokenTotal(events); ok {
+		renderer.SeedTokenTotal(total)
+	}
+
+	return nil
+}
+
+func lastCodexTokenTotal(events []model.Event) (int, bool) {
+	for index := len(events) - 1; index >= 0; index-- {
+		total, ok := codexTokenTotal(events[index])
+		if ok {
+			return total, true
+		}
+	}
+
+	return 0, false
+}
+
+func codexTokenTotal(event model.Event) (int, bool) {
+	if event.Source != codex.Source && event.Provider != "codex" {
+		return 0, false
+	}
+	if stringPayload(event.Payload, "payload_type") != "token_count" {
+		return 0, false
+	}
+	raw := mapPayload(event.Payload, "raw")
+	payload := mapPayload(raw, "payload")
+	if payload == nil {
+		payload = raw
+	}
+	info := mapPayload(payload, "info")
+	usage := mapPayload(info, "last_token_usage")
+
+	return intPayload(usage, "total_tokens")
+}
+
+func stringPayload(payload map[string]any, key string) string {
+	if value, ok := payload[key].(string); ok {
+		return value
+	}
+
+	return ""
+}
+
+func mapPayload(payload map[string]any, key string) map[string]any {
+	if payload == nil {
+		return nil
+	}
+	if value, ok := payload[key].(map[string]any); ok {
+		return value
+	}
+
+	return nil
+}
+
+func intPayload(payload map[string]any, key string) (int, bool) {
+	switch value := payload[key].(type) {
+	case int:
+		return value, true
+	case float64:
+		return int(value), true
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0, false
+		}
+
+		return int(parsed), true
+	default:
+		return 0, false
 	}
 }
 

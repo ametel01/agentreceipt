@@ -737,6 +737,14 @@ func TestStartWatchResumesActiveSession(t *testing.T) {
 		t.Fatalf("start returned error: %v", err)
 	}
 	sessionID := strings.TrimSpace(strings.TrimPrefix(startOut, "Started AgentReceipt session "))
+	baselineTracePath := filepath.Join(t.TempDir(), "baseline.jsonl")
+	baselineTrace := `{"type":"event_msg","timestamp":"2026-06-17T00:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":100}}}}` + "\n"
+	if err := os.WriteFile(baselineTracePath, []byte(baselineTrace), 0o600); err != nil {
+		t.Fatalf("write baseline trace: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "import", "codex-jsonl", baselineTracePath); err != nil {
+		t.Fatalf("baseline import returned error: %v", err)
+	}
 
 	home := t.TempDir()
 	sessionDir := filepath.Join(home, "sessions", "2026", "06", "17")
@@ -748,6 +756,7 @@ func TestStartWatchResumesActiveSession(t *testing.T) {
 		`{"type":"session_meta","timestamp":"2026-06-17T00:00:00Z","payload":{"type":"session_meta","cwd":"` + repo + `"}}`,
 		`{"type":"response_item","timestamp":"2026-06-17T00:00:01Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":{"cmd":"go test ./..."}}}`,
 		`{"type":"response_item","timestamp":"2026-06-17T00:00:02Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+		`{"type":"event_msg","timestamp":"2026-06-17T00:00:03Z","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":135}}}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
 		t.Fatalf("write trace: %v", err)
@@ -762,6 +771,9 @@ func TestStartWatchResumesActiveSession(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "codex  ok      run go test ./...") {
 		t.Fatalf("resume output missing live command details:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "codex  tokens  35 (135 session) after run go test ./...") || strings.Contains(stdout, "codex  tokens  135 (135 session)") {
+		t.Fatalf("resume output did not use existing token baseline:\n%s", stdout)
 	}
 	statusOut, _, err := executeCommand(t, "--repo", repo, "status")
 	if err != nil {

@@ -12,6 +12,10 @@ and this project follows semantic versioning.
 - Added high/medium/low command-risk classification for Codex tool calls, with live `start --watch` risk badges that preserve command outcome status and add a detail line for high-risk commands.
 - Added `start --watch` resume behavior so rerunning it after Ctrl-C attaches to the active session instead of failing with a concurrent-session error.
 
+### Fixed
+
+- Fixed the first token summary after resuming `start --watch` so it reports the delta from the last imported Codex token total instead of repeating the cumulative session total.
+
 ## [0.1.0] - 2026-06-17
 
 ### Added
