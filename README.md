@@ -112,6 +112,18 @@ agentreceipt export --pr
 agentreceipt pr comment
 ```
 
+## Release notes extraction
+
+CI release jobs can extract the GitHub Release body for a specific SemVer section from `CHANGELOG.md`:
+
+```bash
+scripts/extract-release-notes.sh --unreleased CHANGELOG.md > release-notes.md
+scripts/extract-release-notes.sh --version 1.2.3 --changelog CHANGELOG.md > release-notes.md
+scripts/extract-release-notes.sh v1.2.3 CHANGELOG.md > release-notes.md
+```
+
+The script accepts `--unreleased` for pre-release checks, and released versions with or without a leading `v`. It extracts only that release section body and fails if the requested section is missing or empty.
+
 ## Important behavior (MVP decisions)
 
 - **Session mode is explicit**: use `start` and `stop`.
