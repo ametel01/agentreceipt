@@ -1,12 +1,28 @@
 # AgentReceipt
 
-AgentReceipt is a **local-first CLI** that creates a verifiable receipt for AI-assisted code changes before you merge a PR.
+AgentReceipt is a **local-first CLI for watching AI coding sessions as they happen**.
 
-It works beside your normal AI coding workflow (no wrapper, no proxy, no agent orchestration) and records observable evidence from your workspace to help you review **what changed, why it changed, and how trustworthy that evidence is**.
+Run it beside Codex, keep your normal terminal workflow, and see tool calls, commands, edits, token usage, warnings, and final review evidence without wrapping or proxying the agent.
+
+```bash
+agentreceipt start --watch
+```
+
+While it watches, AgentReceipt records observable local evidence from your workspace. When the session is done, it turns that evidence into a verifiable receipt and reviewer-focused summary for PRs.
 
 ## Why this exists
 
-In AI-assisted workflows, the final diff is often not enough to answer key safety questions:
+AI-assisted coding is hard to review because most of the important activity happens before the final diff. AgentReceipt gives you a live window into the current session and leaves behind evidence you can verify later.
+
+The watch view answers the immediate questions:
+
+- What command or tool did the agent just run?
+- Did the command pass or fail?
+- How many tokens did that action use, and what is the session total?
+- Which Codex log is being followed?
+- Did parsing or evidence capture produce warnings?
+
+The final review answers the merge-time questions:
 
 - Which files changed and how?
 - Did the session include risky paths (auth, security, deployments)?
@@ -14,13 +30,13 @@ In AI-assisted workflows, the final diff is often not enough to answer key safet
 - Did the final diff match what was observed during the session?
 - Did we lose evidence because logs were incomplete?
 
-AgentReceipt answers those questions with a **local, signed review artifact** you can attach to PRs.
-
 ## What is included in this MVP
 
 AgentReceipt MVP focuses on:
 
 - **Codex-first support** as the primary provider path
+- live `start --watch` visibility for the active Codex session
+- compact command/edit/token/warning output designed for repeated terminal use
 - explicit session recording with `start` / `stop`
 - `git` + filesystem evidence as high-confidence sources
 - best-effort Codex session-log enrichment (non-blocking)
@@ -45,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/ametel01/agentreceipt/main/scripts/
 Pin a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ametel01/agentreceipt/main/scripts/install.sh | sh -s -- --version v1.2.3
+curl -fsSL https://raw.githubusercontent.com/ametel01/agentreceipt/main/scripts/install.sh | sh -s -- --version v0.1.0
 ```
 
 Build from source during the MVP:
@@ -62,21 +78,30 @@ agentreceipt init
 
 `init` only creates global AgentReceipt storage and signing keys. It does not write config or state into your repository.
 
-### 2) Start a session in any git repo
-
-```bash
-agentreceipt start
-```
-
-Then run Codex normally in your terminal.
-
-For live Codex visibility while the session is active, run:
+### 2) Watch the current session
 
 ```bash
 agentreceipt start --watch
 ```
 
-`--watch` keeps AgentReceipt in the foreground, follows matching Codex JSONL session logs, prints tool calls and command results as they appear, and imports those provider events into the active receipt. Press `Ctrl-C` to stop watching; the receipt session remains active until you run `agentreceipt stop`.
+`--watch` starts an AgentReceipt session, follows the matching Codex JSONL session log for the current repository, prints command/edit/token/warning events as they appear, and imports those provider events into the active receipt.
+
+```bash
+Started AgentReceipt session ar_ses_...
+Watching Codex logs. Press Ctrl-C to stop watching; the AgentReceipt session stays active until `agentreceipt stop`.
+codex  watch   rollout-2026-06-17T02-53-28.jsonl (cwd /path/to/repo)
+codex  ok      run make test (exit 0)
+codex  tokens  361 (208899 session) after run make test
+codex  ok      edit apply_patch (exit 0)
+```
+
+Press `Ctrl-C` to stop watching; the receipt session remains active until you run `agentreceipt stop`.
+
+You can also record without foreground watch output:
+
+```bash
+agentreceipt start
+```
 
 Watch and review output are human-readable by default. Watch output is backed by structured watch events so later machine-readable rendering can reuse the same event shape. Color is controlled with `--color auto|always|never`; `auto` enables color only for terminal output.
 
@@ -130,8 +155,8 @@ CI release jobs can extract the GitHub Release body for a specific SemVer sectio
 
 ```bash
 scripts/extract-release-notes.sh --unreleased CHANGELOG.md > release-notes.md
-scripts/extract-release-notes.sh --version 1.2.3 --changelog CHANGELOG.md > release-notes.md
-scripts/extract-release-notes.sh v1.2.3 CHANGELOG.md > release-notes.md
+scripts/extract-release-notes.sh --version 0.1.0 --changelog CHANGELOG.md > release-notes.md
+scripts/extract-release-notes.sh v0.1.0 CHANGELOG.md > release-notes.md
 ```
 
 The script accepts `--unreleased` for pre-release checks, and released versions with or without a leading `v`. It extracts only that release section body and fails if the requested section is missing or empty.
@@ -140,7 +165,7 @@ The script accepts `--unreleased` for pre-release checks, and released versions 
 
 Pushing a `v*` tag runs the release workflow. The workflow verifies the repo with `make verify`, extracts the matching SemVer section from `CHANGELOG.md`, builds Linux and macOS archives for `amd64` and `arm64`, writes `SHA256SUMS`, and publishes those assets to the GitHub Release.
 
-Before tagging, move the relevant `Unreleased` entries into a matching release section, for example `## [1.2.3] - 2026-06-17`. The release workflow fails if that section is missing or empty.
+Before tagging, move the relevant `Unreleased` entries into a matching release section, for example `## [0.1.0] - 2026-06-17`. The release workflow fails if that section is missing or empty.
 
 ## Important behavior (MVP decisions)
 

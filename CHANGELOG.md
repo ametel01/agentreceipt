@@ -3,9 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project will follow semantic versioning once releases begin.
+and this project follows semantic versioning.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-06-17
 
 ### Added
 
@@ -39,5 +41,6 @@ and this project will follow semantic versioning once releases begin.
 
 ### Changed
 
+- Refocused README positioning around the live `start --watch` session view as the primary workflow.
 - Changed `agentreceipt review` to lead with Git-derived branch state, ahead/behind counts, branch/workspace diff stats, working-tree counts, and receipt/current-workspace diff agreement instead of generic capture-confidence labels, with color-coded terminal state when color output is enabled.
 - Clarified that `zerolog` is reserved for structured streaming runtime events while review, receipt, verify, Markdown, PR, and short command responses stay on explicit renderers.
