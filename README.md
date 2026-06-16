@@ -36,6 +36,12 @@ Planned for later:
 
 ## Core workflow
 
+Build from source during the MVP:
+
+```bash
+go build -o agentreceipt .
+```
+
 ### 1) Initialize your repo
 
 ```bash
@@ -77,6 +83,8 @@ agentreceipt review --json
 agentreceipt review --md
 agentreceipt export --md
 agentreceipt export --json
+agentreceipt export --pr
+agentreceipt pr comment
 ```
 
 ## Important behavior (MVP decisions)
@@ -182,20 +190,28 @@ agentreceipt stop
 # Review & checks
 agentreceipt review
 agentreceipt review --last
+agentreceipt review --session <id>
+agentreceipt review --security
+agentreceipt review --diff
 agentreceipt review --json
 agentreceipt review --md
 agentreceipt review --pr
 agentreceipt verify
+agentreceipt verify --session <id>
 
 # Exports
 agentreceipt export --json
 agentreceipt export --md
 agentreceipt export --pr
+agentreceipt export --session <id> --json
 
 # Parsers
 agentreceipt inspect codex --last
 agentreceipt import codex-jsonl ./codex-run.jsonl
-agentreceipt review --codex-jsonl ./codex-run.jsonl
+
+# Human context and PRs
+agentreceipt mark "Manually reviewed generated auth changes"
+agentreceipt pr comment
 ```
 
 > Note: `agentreceipt install claude` exists for roadmap readiness, while Codex is the MVP primary path.

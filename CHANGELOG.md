@@ -22,3 +22,4 @@ and this project will follow semantic versioning once releases begin.
 - Added confidence-aware review reports with risk reasons, command detection, capture confidence, evidence gaps, reviewer focus prompts, and JSON/Markdown/PR output modes.
 - Added signed receipt finalization with Ed25519 key management, receipt/review artifact writing, integrity verification, and `export --json|--md|--pr` output.
 - Added repository initialization, signed manual marker events, policy defaults, and guarded GitHub CLI PR comment posting.
+- Added end-to-end MVP smoke coverage for init/start/import/mark/stop/verify/review/export and refreshed README usage examples.

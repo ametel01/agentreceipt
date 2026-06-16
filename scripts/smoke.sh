@@ -16,3 +16,54 @@ claude_output="$("$tmpdir/agentreceipt" install claude)"
 [[ "$help_output" == *"install codex"* ]]
 [[ "$version_output" == *"agentreceipt"* ]]
 [[ "$claude_output" == *"deferred in the Codex-first MVP"* ]]
+
+repo="$tmpdir/repo"
+keydir="$tmpdir/keys"
+mkdir -p "$repo"
+git -C "$repo" init >/dev/null
+git -C "$repo" config user.email agentreceipt@example.test
+git -C "$repo" config user.name "AgentReceipt Smoke"
+printf 'hello\n' > "$repo/README.md"
+git -C "$repo" add README.md
+git -C "$repo" commit -m initial >/dev/null
+
+export AGENTRECEIPT_KEY_DIR="$keydir"
+
+init_output="$("$tmpdir/agentreceipt" --repo "$repo" init)"
+start_output="$("$tmpdir/agentreceipt" --repo "$repo" start)"
+session_id="${start_output##* }"
+printf 'changed\n' >> "$repo/README.md"
+
+trace="$tmpdir/codex.jsonl"
+cat > "$trace" <<'JSONL'
+{"type":"response_item","timestamp":"2026-06-16T00:00:00Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":"{\"cmd\":\"go test ./...\"}"}}
+{malformed
+JSONL
+
+import_output="$("$tmpdir/agentreceipt" --repo "$repo" import codex-jsonl "$trace")"
+mark_output="$("$tmpdir/agentreceipt" --repo "$repo" mark "smoke reviewed")"
+stop_output="$("$tmpdir/agentreceipt" --repo "$repo" stop)"
+verify_output="$("$tmpdir/agentreceipt" --repo "$repo" verify)"
+review_pr_output="$("$tmpdir/agentreceipt" --repo "$repo" review --last --pr)"
+review_json_output="$("$tmpdir/agentreceipt" --repo "$repo" review --last --json)"
+export_pr_output="$("$tmpdir/agentreceipt" --repo "$repo" export --pr)"
+export_json_output="$("$tmpdir/agentreceipt" --repo "$repo" export --json)"
+inspect_output="$("$tmpdir/agentreceipt" inspect codex --home "$tmpdir/missing-codex-home")"
+
+[[ "$init_output" == *"Initialized AgentReceipt"* ]]
+[[ "$session_id" == ar_ses_* ]]
+[[ "$import_output" == *"warnings=1"* ]]
+[[ "$mark_output" == *"smoke reviewed"* ]]
+[[ "$stop_output" == *"Finalized AgentReceipt session"* ]]
+[[ "$verify_output" == *"Receipt valid."* ]]
+[[ "$review_pr_output" == *"## AgentReceipt"* ]]
+[[ "$review_json_output" == *'"session_id"'* ]]
+[[ "$export_pr_output" == *"## AgentReceipt"* ]]
+[[ "$export_json_output" == *'"signature_algorithm": "ed25519"'* ]]
+[[ "$inspect_output" == *"warning[codex_logs_missing]"* ]]
+
+test -s "$keydir/default.ed25519"
+test -s "$keydir/default.pub"
+test -s "$repo/.agentreceipt/sessions/$session_id/receipt.json"
+test -s "$repo/.agentreceipt/sessions/$session_id/review.md"
+test -s "$repo/.agentreceipt/sessions/$session_id/signatures/receipt.sig"

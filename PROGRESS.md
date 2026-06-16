@@ -12,8 +12,8 @@ Update this file after every completed implementation step with the completed st
 
 ## Current Status
 
-- Current step: Step 11 complete
-- Next step: Step 12 - Fixtures, Integration Tests, and CI Hardening
+- Current step: Step 12 complete
+- Next step: Plan complete
 - Last updated: 2026-06-16
 
 ## Step Checklist
@@ -30,7 +30,7 @@ Update this file after every completed implementation step with the completed st
 - [x] Step 9: Risk Engine, Confidence Model, and Evidence Reporting
 - [x] Step 10: Receipt Build, Sign, Verify, and Export Surfaces
 - [x] Step 11: Manual Marker Command and Policy Controls
-- [ ] Step 12: Fixtures, Integration Tests, and CI Hardening
+- [x] Step 12: Fixtures, Integration Tests, and CI Hardening
 
 ## Update Log
 
@@ -47,4 +47,5 @@ Update this file after every completed implementation step with the completed st
 | 2026-06-16 | Step 8: Codex Log Ingestion and Best-Effort Provider Events | Complete | Passed full quality gates and `make verify` after Codex parser, command, trace-output, and active import tests. | `1ed9366` | Added defensive line-by-line Codex JSONL parsing, malformed-record warnings, unknown event passthrough, command/result extraction, redaction/truncation, risk signals, trace files under `provider/codex/traces/`, `inspect codex`, and active-session `import codex-jsonl`. |
 | 2026-06-16 | Step 9: Risk Engine, Confidence Model, and Evidence Reporting | Complete | Passed full quality gates and `make verify` after review report, risk/confidence, command-detection, and CLI output-mode tests. | `bdd9df0` | Added deterministic review assembly with risk levels/reasons, capture confidence, evidence gaps, reviewer focus prompts, warning propagation, and `review --last/--session/--security/--diff/--json/--md/--pr` output support. |
 | 2026-06-16 | Step 10: Receipt Build, Sign, Verify, and Export Surfaces | Complete | Passed full quality gates and `make verify` after signed receipt, verification, export, tamper-detection, and key-management tests. | `9d231d3` | Added Ed25519 default key creation/loading, signed `receipt.json`, `receipt.md`, `review.md`, detached `signatures/receipt.sig`, `verify` integrity checks, final diff mismatch reporting, and `export --json/--md/--pr`. |
-| 2026-06-16 | Step 11: Manual Marker Command and Policy Controls | Complete | Passed full quality gates and `make verify` after init, signed marker, deferred Claude install, and guarded `gh pr comment` tests. | Pending commit | Added real `init` config/policy/key setup, signed `manual.marker` events, active-session marker checks, fixed deferred Claude behavior, and `pr comment` safeguards for missing `gh`, missing PRs, and GitHub CLI failures. |
+| 2026-06-16 | Step 11: Manual Marker Command and Policy Controls | Complete | Passed full quality gates and `make verify` after init, signed marker, deferred Claude install, and guarded `gh pr comment` tests. | `c86783a` | Added real `init` config/policy/key setup, signed `manual.marker` events, active-session marker checks, fixed deferred Claude behavior, and `pr comment` safeguards for missing `gh`, missing PRs, and GitHub CLI failures. |
+| 2026-06-16 | Step 12: Fixtures, Integration Tests, and CI Hardening | Complete | Passed full quality gates and `make verify` after expanding smoke coverage across init/start/import/mark/stop/verify/review/export and missing Codex-log inspection. | Pending commit | Hardened the smoke harness for the MVP success path, verified generated signatures/artifacts in temp repos, refreshed README source-build and command examples, and confirmed CI already runs `make verify` on Linux and macOS. |
