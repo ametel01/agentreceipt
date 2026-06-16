@@ -8,6 +8,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
+	"github.com/ametel01/agentreceipt/internal/review"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/storage"
 	"github.com/spf13/cobra"
@@ -211,19 +212,56 @@ func newStopCommand() *cobra.Command {
 }
 
 func newReviewCommand() *cobra.Command {
-	review := newScaffoldCommand("review", "Build a reviewer-focused receipt summary", "review will render risk, confidence, command, diff, and evidence-gap summaries.")
-	review.Flags().Bool("last", false, "Review the most recent finalized session")
-	review.Flags().String("session", "", "Review a specific session ID")
-	review.Flags().Bool("security", false, "Focus output on security-sensitive evidence")
-	review.Flags().Bool("diff", false, "Include diff-focused receipt details")
-	review.Flags().Bool("json", false, "Render review output as JSON")
-	review.Flags().Bool("md", false, "Render review output as Markdown")
-	review.Flags().Bool("pr", false, "Render concise PR-comment Markdown")
-	review.Flags().Bool("full", false, "Include expanded evidence details")
-	review.Flags().String("codex-jsonl", "", "Import a Codex JSONL trace before building the review")
-	review.Flags().String("provider", "", "Filter review output by provider")
+	reviewCmd := &cobra.Command{
+		Use:   "review",
+		Short: "Build a reviewer-focused receipt summary",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options, err := reviewOptionsFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			report, err := review.Build(cmd.Context(), options)
+			if err != nil {
+				return err
+			}
+			asJSON, err := cmd.Flags().GetBool("json")
+			if err != nil {
+				return err
+			}
+			asMarkdown, err := cmd.Flags().GetBool("md")
+			if err != nil {
+				return err
+			}
+			asPR, err := cmd.Flags().GetBool("pr")
+			if err != nil {
+				return err
+			}
+			switch {
+			case asJSON:
+				encoder := json.NewEncoder(cmd.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(report)
+			case asMarkdown || asPR:
+				_, err := fmt.Fprint(cmd.OutOrStdout(), review.RenderMarkdown(report))
+				return err
+			default:
+				_, err := fmt.Fprint(cmd.OutOrStdout(), review.RenderTerminal(report))
+				return err
+			}
+		},
+	}
+	reviewCmd.Flags().Bool("last", false, "Review the most recent finalized session")
+	reviewCmd.Flags().String("session", "", "Review a specific session ID")
+	reviewCmd.Flags().Bool("security", false, "Focus output on security-sensitive evidence")
+	reviewCmd.Flags().Bool("diff", false, "Include diff-focused receipt details")
+	reviewCmd.Flags().Bool("json", false, "Render review output as JSON")
+	reviewCmd.Flags().Bool("md", false, "Render review output as Markdown")
+	reviewCmd.Flags().Bool("pr", false, "Render concise PR-comment Markdown")
+	reviewCmd.Flags().Bool("full", false, "Include expanded evidence details")
+	reviewCmd.Flags().String("codex-jsonl", "", "Import a Codex JSONL trace before building the review")
+	reviewCmd.Flags().String("provider", "", "Filter review output by provider")
 
-	return review
+	return reviewCmd
 }
 
 func newVerifyCommand() *cobra.Command {
@@ -424,4 +462,29 @@ func codexWarnings(warnings []codex.ParseWarning) []model.Warning {
 	}
 
 	return converted
+}
+
+func reviewOptionsFromCommand(cmd *cobra.Command) (review.Options, error) {
+	repoPath, err := cmd.Root().PersistentFlags().GetString("repo")
+	if err != nil {
+		return review.Options{}, err
+	}
+	sessionID, err := cmd.Flags().GetString("session")
+	if err != nil {
+		return review.Options{}, err
+	}
+	last, err := cmd.Flags().GetBool("last")
+	if err != nil {
+		return review.Options{}, err
+	}
+	security, err := cmd.Flags().GetBool("security")
+	if err != nil {
+		return review.Options{}, err
+	}
+	diff, err := cmd.Flags().GetBool("diff")
+	if err != nil {
+		return review.Options{}, err
+	}
+
+	return review.Options{RepoPath: repoPath, SessionID: sessionID, Last: last, Security: security, Diff: diff}, nil
 }

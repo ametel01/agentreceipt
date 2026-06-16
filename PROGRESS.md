@@ -12,8 +12,8 @@ Update this file after every completed implementation step with the completed st
 
 ## Current Status
 
-- Current step: Step 8 complete
-- Next step: Step 9 - Risk Engine, Confidence Model, and Evidence Reporting
+- Current step: Step 9 complete
+- Next step: Step 10 - Receipt Build, Sign, Verify, and Export Surfaces
 - Last updated: 2026-06-16
 
 ## Step Checklist
@@ -27,7 +27,7 @@ Update this file after every completed implementation step with the completed st
 - [x] Step 6: Filesystem Watcher and Change Classification
 - [x] Step 7: Sidecar Lifecycle Orchestration
 - [x] Step 8: Codex Log Ingestion and Best-Effort Provider Events
-- [ ] Step 9: Risk Engine, Confidence Model, and Evidence Reporting
+- [x] Step 9: Risk Engine, Confidence Model, and Evidence Reporting
 - [ ] Step 10: Receipt Build, Sign, Verify, and Export Surfaces
 - [ ] Step 11: Manual Marker Command and Policy Controls
 - [ ] Step 12: Fixtures, Integration Tests, and CI Hardening
@@ -44,4 +44,5 @@ Update this file after every completed implementation step with the completed st
 | 2026-06-16 | Step 5: Git Monitor and Snapshot Capture | Complete | Passed full quality gates and `make verify` after temp git repo integration tests. | `9672439` | Added git toplevel/branch/HEAD/status capture, staged/unstaged/final diff hashing, `diffs/000001.patch`, `diffs/final.patch`, git snapshot events, and post-final diff mismatch detection. |
 | 2026-06-16 | Step 6: Filesystem Watcher and Change Classification | Complete | Passed full quality gates and `make verify` after fsnotify watcher and classifier tests. | `93616b1` | Added recursive fsnotify watcher setup, debounce/coalescing, canonical `fs.change` events, changed-file summary tracking, sensitive path flags, and dependency file flags. |
 | 2026-06-16 | Step 7: Sidecar Lifecycle Orchestration | Complete | Passed full quality gates and `make verify` after session lifecycle package and command tests. | `b2c7cb0` | Wired `start`, `status`, `live`, and `stop` to persisted session state, active-session tracking, start/final git snapshots, event replay, finalized manifests, idempotent cleanup, and non-fatal zero-Codex warning behavior. |
-| 2026-06-16 | Step 8: Codex Log Ingestion and Best-Effort Provider Events | Complete | Passed full quality gates and `make verify` after Codex parser, command, trace-output, and active import tests. | Pending commit | Added defensive line-by-line Codex JSONL parsing, malformed-record warnings, unknown event passthrough, command/result extraction, redaction/truncation, risk signals, trace files under `provider/codex/traces/`, `inspect codex`, and active-session `import codex-jsonl`. |
+| 2026-06-16 | Step 8: Codex Log Ingestion and Best-Effort Provider Events | Complete | Passed full quality gates and `make verify` after Codex parser, command, trace-output, and active import tests. | `1ed9366` | Added defensive line-by-line Codex JSONL parsing, malformed-record warnings, unknown event passthrough, command/result extraction, redaction/truncation, risk signals, trace files under `provider/codex/traces/`, `inspect codex`, and active-session `import codex-jsonl`. |
+| 2026-06-16 | Step 9: Risk Engine, Confidence Model, and Evidence Reporting | Complete | Passed full quality gates and `make verify` after review report, risk/confidence, command-detection, and CLI output-mode tests. | Pending commit | Added deterministic review assembly with risk levels/reasons, capture confidence, evidence gaps, reviewer focus prompts, warning propagation, and `review --last/--session/--security/--diff/--json/--md/--pr` output support. |

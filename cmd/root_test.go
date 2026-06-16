@@ -117,7 +117,6 @@ func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"init"},
-		{"review", "--last"},
 		{"verify"},
 		{"export", "--md"},
 		{"pr", "comment"},
@@ -224,6 +223,21 @@ func TestImportCodexJSONLActiveSession(t *testing.T) {
 	}
 	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
 		t.Fatalf("stop returned error: %v", err)
+	}
+
+	stdout, _, err = executeCommand(t, "--repo", repo, "review", "--last", "--json")
+	if err != nil {
+		t.Fatalf("review json returned error: %v", err)
+	}
+	if !strings.Contains(stdout, `"session_id"`) || !strings.Contains(stdout, `"risk"`) {
+		t.Fatalf("review json output = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "review", "--last", "--pr")
+	if err != nil {
+		t.Fatalf("review pr returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "## AgentReceipt") || !strings.Contains(stdout, "Capture confidence:") {
+		t.Fatalf("review pr output = %q", stdout)
 	}
 }
 
