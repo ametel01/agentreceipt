@@ -16,3 +16,4 @@ and this project will follow semantic versioning once releases begin.
 - Added Codex-first config defaults, receipt/session model contracts, deterministic JSON helpers, and canonical session storage layout helpers.
 - Added append-only event log support with deterministic normalization, genesis hash chaining, replay verification, and JSONL persistence tests.
 - Added Git monitor snapshot capture with start/final diff artifacts, patch hashes, git snapshot events, and final-diff mismatch detection.
+- Added filesystem watcher support with debounced fsnotify events, changed-file summaries, sensitive path classification, and dependency file classification.

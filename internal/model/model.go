@@ -117,9 +117,10 @@ type Summary struct {
 }
 
 type ChangedFile struct {
-	Path      string `json:"path"`
-	Action    string `json:"action"`
-	Sensitive bool   `json:"sensitive"`
+	Path       string `json:"path"`
+	Action     string `json:"action"`
+	Sensitive  bool   `json:"sensitive"`
+	Dependency bool   `json:"dependency"`
 }
 
 type DetectedCommand struct {
