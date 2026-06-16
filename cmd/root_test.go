@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/storage"
 )
 
@@ -118,8 +119,7 @@ func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
 	t.Parallel()
 
 	for _, args := range [][]string{
-		{"init"},
-		{"pr", "comment"},
+		{"install", "codex"},
 	} {
 		stdout, _, err := executeCommand(t, args...)
 		if err != nil {
@@ -128,6 +128,33 @@ func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
 		if !strings.Contains(stdout, scaffoldMessage) {
 			t.Fatalf("%q output missing scaffold message: %q", strings.Join(args, " "), stdout)
 		}
+	}
+}
+
+func TestInitCommandCreatesConfigPolicyStorageAndKeys(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	keyDir := filepath.Join(t.TempDir(), "keys")
+	t.Setenv("AGENTRECEIPT_KEY_DIR", keyDir)
+
+	stdout, _, err := executeCommand(t, "--repo", repo, "init")
+	if err != nil {
+		t.Fatalf("init returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "Initialized AgentReceipt") {
+		t.Fatalf("init output = %q", stdout)
+	}
+	for _, path := range []string{
+		filepath.Join(repo, ".agentreceipt.yml"),
+		filepath.Join(repo, ".agentreceipt", "policy.yml"),
+		filepath.Join(keyDir, "default.ed25519"),
+		filepath.Join(keyDir, "default.pub"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected init artifact %s: %v", path, err)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(repo, ".agentreceipt", "sessions")); err != nil || !info.IsDir() {
+		t.Fatalf("expected sessions directory info=%v err=%v", info, err)
 	}
 }
 
@@ -313,12 +340,117 @@ func TestMarkCommandRequiresMessage(t *testing.T) {
 	if _, _, err := executeCommand(t, "mark"); err == nil {
 		t.Fatal("mark without a message returned nil error")
 	}
-	stdout, _, err := executeCommand(t, "mark", "reviewed", "auth")
+}
+
+func TestMarkCommandWritesSignedManualMarker(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	stdout, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	sessionID := strings.TrimSpace(strings.TrimPrefix(stdout, "Started AgentReceipt session "))
+
+	stdout, _, err = executeCommand(t, "--repo", repo, "mark", "reviewed", "auth")
 	if err != nil {
 		t.Fatalf("mark returned error: %v", err)
 	}
 	if !strings.Contains(stdout, "reviewed auth") {
 		t.Fatalf("mark output missing joined message: %q", stdout)
+	}
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	events, err := eventlog.ReadFile(layout.EventsJSONL)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	last := events[len(events)-1]
+	if last.Source != "manual_marker" || last.Type != "manual.marker" {
+		t.Fatalf("last event is not manual marker: %+v", last)
+	}
+	if last.Payload["message"] != "reviewed auth" || last.Payload["signature"] == "" {
+		t.Fatalf("marker payload missing message/signature: %+v", last.Payload)
+	}
+}
+
+func TestMarkCommandRequiresActiveSession(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	if _, _, err := executeCommand(t, "--repo", repo, "mark", "reviewed"); err == nil {
+		t.Fatal("mark without active session returned nil error")
+	}
+}
+
+func TestPRCommentRequiresGitHubCLI(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, _, err := executeCommand(t, "pr", "comment"); err == nil || !strings.Contains(err.Error(), "GitHub CLI gh is required") {
+		t.Fatalf("pr comment error = %v", err)
+	}
+}
+
+func TestPRCommentReportsMissingCurrentPR(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not available")
+	}
+	binDir := t.TempDir()
+	ghPath := filepath.Join(binDir, "gh")
+	if err := os.WriteFile(ghPath, []byte("#!/bin/sh\necho no pull request >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+filepath.Dir(gitPath))
+	if _, _, err := executeCommand(t, "--repo", repo, "pr", "comment"); err == nil || !strings.Contains(err.Error(), "no current pull request detected") {
+		t.Fatalf("pr comment error = %v", err)
+	}
+}
+
+func TestPRCommentPostsGeneratedMarkdownWithGitHubCLI(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not available")
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "start"); err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "gh.log")
+	ghScript := `#!/bin/sh
+if [ "$1 $2" = "pr view" ]; then
+  echo '{"number":1}'
+  exit 0
+fi
+if [ "$1 $2 $3 $4" = "pr comment --body-file .agentreceipt/pr-comment.md" ]; then
+  test -s "$4" || exit 2
+  grep -q "## AgentReceipt" "$4" || exit 3
+  echo commented >> "` + logPath + `"
+  exit 0
+fi
+exit 4
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+filepath.Dir(gitPath))
+	stdout, _, err := executeCommand(t, "--repo", repo, "pr", "comment")
+	if err != nil {
+		t.Fatalf("pr comment returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "Posted AgentReceipt PR comment.") {
+		t.Fatalf("pr comment output = %q", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(repo, prCommentFile)); !os.IsNotExist(err) {
+		t.Fatalf("temporary PR comment file was not removed: %v", err)
+	}
+	if data, err := os.ReadFile(logPath); err != nil || !strings.Contains(string(data), "commented") {
+		t.Fatalf("fake gh was not invoked data=%q err=%v", data, err)
 	}
 }
 

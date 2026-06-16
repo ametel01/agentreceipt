@@ -171,6 +171,45 @@ func TestLiveWithoutActiveSessionReturnsNoEvents(t *testing.T) {
 	}
 }
 
+func TestMarkWritesSignedManualMarker(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+	started, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	state, ok, err := manager.Mark(context.Background(), "manual review complete", filepath.Join(t.TempDir(), "keys"))
+	if err != nil {
+		t.Fatalf("Mark() error = %v", err)
+	}
+	if !ok || state.EventCount != 2 || state.CaptureSources.CodexLogs != "not_observed" {
+		t.Fatalf("unexpected mark state ok=%v state=%+v", ok, state)
+	}
+	layout, err := storage.NewLayout(repo, started.SessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	events, err := eventlog.ReadFile(layout.EventsJSONL)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	last := events[len(events)-1]
+	if last.Source != "manual_marker" || last.Type != "manual.marker" {
+		t.Fatalf("unexpected marker event: %+v", last)
+	}
+	if last.Payload["message"] != "manual review complete" || last.Payload["signature_algorithm"] != "ed25519" || last.Payload["signature"] == "" {
+		t.Fatalf("marker payload missing signed context: %+v", last.Payload)
+	}
+}
+
+func TestMarkWithoutActiveSessionReturnsFalse(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+	if _, ok, err := manager.Mark(context.Background(), "manual review", filepath.Join(t.TempDir(), "keys")); err != nil || ok {
+		t.Fatalf("Mark() without active session ok=%v err=%v", ok, err)
+	}
+}
+
 func TestStatusClearsStaleActivePointer(t *testing.T) {
 	repo := newSessionGitRepo(t)
 	if err := writeActiveSession(repo, "ar_ses_missing"); err != nil {

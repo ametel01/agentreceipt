@@ -18,6 +18,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/signing"
 	"github.com/ametel01/agentreceipt/internal/storage"
 )
 
@@ -321,6 +322,89 @@ func (m Manager) AppendProviderEvents(ctx context.Context, providerEvents []mode
 	for _, warning := range warnings {
 		state.Warnings = appendWarning(state.Warnings, warning)
 	}
+	manifest := model.NewManifest(state.SessionID, state.StartedAt, storage.ManifestArtifacts(layout))
+	manifest.State = state.State
+	manifest.UpdatedAt = now
+	manifest.EventCount = state.EventCount
+	manifest.Warnings = state.Warnings
+	if err := writeManifest(layout, manifest); err != nil {
+		return State{}, false, err
+	}
+	if err := writeState(layout, state); err != nil {
+		return State{}, false, err
+	}
+
+	return state, true, nil
+}
+
+func (m Manager) Mark(ctx context.Context, message string, keyDir string) (State, bool, error) {
+	state, ok, err := m.Status(ctx)
+	if err != nil {
+		return State{}, false, err
+	}
+	if !ok {
+		return State{}, false, nil
+	}
+	layout, err := storage.NewLayout(state.RepoRoot, state.SessionID)
+	if err != nil {
+		return State{}, false, err
+	}
+	events, err := eventlog.ReadFile(layout.EventsJSONL)
+	if err != nil {
+		return State{}, false, err
+	}
+	prevHash, err := eventlog.Replay(events)
+	if err != nil {
+		return State{}, false, err
+	}
+	keypair, err := signing.LoadOrCreateDefault(keyDir)
+	if err != nil {
+		return State{}, false, err
+	}
+	now := m.now()
+	payloadForSignature := struct {
+		SessionID string    `json:"session_id"`
+		RepoRoot  string    `json:"repo_root"`
+		Message   string    `json:"message"`
+		Timestamp time.Time `json:"timestamp"`
+	}{
+		SessionID: state.SessionID,
+		RepoRoot:  state.RepoRoot,
+		Message:   message,
+		Timestamp: now,
+	}
+	signaturePayload, err := model.MarshalCanonical(payloadForSignature)
+	if err != nil {
+		return State{}, false, err
+	}
+	marker := model.Event{
+		EventID:   fmt.Sprintf("evt_manual_%d", now.UnixNano()),
+		SessionID: state.SessionID,
+		Timestamp: now,
+		Source:    "manual_marker",
+		Type:      "manual.marker",
+		CWD:       state.RepoRoot,
+		Payload: map[string]any{
+			"message":             message,
+			"signature_algorithm": "ed25519",
+			"signature":           signing.Sign(keypair.PrivateKey, signaturePayload),
+			"public_key":          keypair.Public,
+		},
+	}
+	writer, err := eventlog.NewWriter(layout.EventsJSONL, prevHash, int64(len(events)+1))
+	if err != nil {
+		return State{}, false, err
+	}
+	defer func() {
+		_ = writer.Close()
+	}()
+	appended, err := writer.Append(marker)
+	if err != nil {
+		return State{}, false, err
+	}
+	state.UpdatedAt = now
+	state.EventCount = appended.Seq
+	state.ChainHash = appended.EventHash
 	manifest := model.NewManifest(state.SessionID, state.StartedAt, storage.ManifestArtifacts(layout))
 	manifest.State = state.State
 	manifest.UpdatedAt = now
