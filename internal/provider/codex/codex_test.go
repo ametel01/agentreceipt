@@ -29,7 +29,7 @@ func TestParseJSONLExtractsCommandsWarningsAndRisk(t *testing.T) {
 	if result.WarningCount != 1 {
 		t.Fatalf("WarningCount = %d, want 1", result.WarningCount)
 	}
-	if !hasRiskSignal(result, "network_egress") || !hasRiskSignal(result, "secret_access") {
+	if !hasRiskSignal(result, "network_egress") {
 		t.Fatalf("risk signals = %+v", result.RiskSignals)
 	}
 	if result.RiskSignals[0].Level != "high" || result.RiskSignals[0].Category == "" {

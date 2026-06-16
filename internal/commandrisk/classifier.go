@@ -50,7 +50,7 @@ var defaultRules = []Rule{
 		Signal:   "secret_access",
 		Category: "credentials",
 		Reason:   "command appears to read or expose credential material",
-		Pattern:  regexp.MustCompile(`(?i)\b(cat|less|more|tail|head|grep|rg)\b.*(\.env\b|\.ssh/|\.aws/credentials|id_rsa|id_ed25519|\.npmrc|\.pypirc|\.netrc)|\b(printenv|env)\b|\b(token|api_key|secret|private_key|password)\b`),
+		Pattern:  regexp.MustCompile(`(?i)\b(cat|less|more|tail|head|grep|rg)\b.*(\.env\b|\.ssh/|\.aws/credentials|id_rsa|id_ed25519|\.npmrc|\.pypirc|\.netrc)|(^|[;&|]\s*)(printenv|env)\b|(\$|--|[A-Za-z_])(?:TOKEN|API_KEY|SECRET|PRIVATE_KEY|PASSWORD)(=|\b)`),
 	},
 	{
 		Level:    model.RiskHigh,

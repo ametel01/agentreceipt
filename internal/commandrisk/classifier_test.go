@@ -16,6 +16,8 @@ func TestClassifyHighRiskCommands(t *testing.T) {
 	}{
 		{name: "recursive remove", command: "rm -rf dist", signal: "destructive_filesystem"},
 		{name: "secret read", command: "cat ~/.ssh/id_ed25519", signal: "secret_access"},
+		{name: "env dump", command: "printenv", signal: "secret_access"},
+		{name: "token reference", command: "curl -H \"Authorization: Bearer $TOKEN\" https://example.com", signal: "secret_access"},
 		{name: "network egress", command: "curl https://example.com/upload", signal: "network_egress"},
 		{name: "force push", command: "git push --force origin main", signal: "destructive_git"},
 		{name: "cloud mutation", command: "kubectl delete deployment api", signal: "cloud_or_deploy_mutation"},
@@ -51,6 +53,19 @@ func TestClassifyMediumRiskCommands(t *testing.T) {
 
 			assertClassification(t, test.command, model.RiskMedium, test.signal)
 		})
+	}
+}
+
+func TestClassifyCommitMessageDoesNotTriggerSecretAccess(t *testing.T) {
+	t.Parallel()
+
+	command := `git add CHANGELOG.md cmd/root.go cmd/root_test.go cmd/watch_render.go && git commit -m "Fix resumed watch token deltas"`
+	classifications := Classify(command)
+	if hasClassification(classifications, model.RiskHigh, "secret_access") {
+		t.Fatalf("Classify(%q) = %+v, want no high secret_access", command, classifications)
+	}
+	if !hasClassification(classifications, model.RiskMedium, "git_mutation") {
+		t.Fatalf("Classify(%q) = %+v, want medium git_mutation", command, classifications)
 	}
 }
 

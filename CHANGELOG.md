@@ -15,6 +15,7 @@ and this project follows semantic versioning.
 ### Fixed
 
 - Fixed the first token summary after resuming `start --watch` so it reports the delta from the last imported Codex token total instead of repeating the cumulative session total.
+- Fixed `secret_access` command-risk false positives for commit messages and other prose that mention words like "token" without reading credential material.
 
 ## [0.1.0] - 2026-06-17
 
