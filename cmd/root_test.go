@@ -216,7 +216,7 @@ func TestStartWatchDefaultsToNewestMatchingCodexLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start --watch returned error: %v\n%s", err, stdout)
 	}
-	if got := strings.Count(stdout, "[codex] watching"); got != 1 {
+	if got := strings.Count(stdout, "codex  watch   "); got != 1 {
 		t.Fatalf("watching count = %d, output:\n%s", got, stdout)
 	}
 	if !strings.Contains(stdout, "rollout-new.jsonl") || strings.Contains(stdout, "rollout-old.jsonl") {
@@ -249,12 +249,12 @@ func TestPrintCodexLiveResultFormatsToolsResultsAndWarnings(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"[codex] fail   run",
+		"codex  fail    run",
 		"(exit 7)",
-		"[codex] ok     edit apply_patch",
-		"[codex] tokens 110 after",
-		"[codex] tokens 57 after edit apply_patch",
-		"[codex] warn   malformed_json:",
+		"codex  ok      edit apply_patch",
+		"codex  tokens  110 after",
+		"codex  tokens  57 after edit apply_patch",
+		"codex  warn    malformed_json:",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q:\n%s", want, output)
@@ -334,7 +334,7 @@ func TestCodexWatchRendererReportsBatchTokenUsage(t *testing.T) {
 		t.Fatalf("Print() error = %v", err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "[codex] tokens 220 after 2 actions") {
+	if !strings.Contains(output, "codex  tokens  220 after 2 actions") {
 		t.Fatalf("batch token output missing:\n%s", output)
 	}
 }
@@ -371,7 +371,7 @@ func TestWatchCodexReportsMissingLogsOnce(t *testing.T) {
 		t.Fatalf("watchCodex() error = %v", err)
 	}
 	output := stdout.String()
-	if got := strings.Count(output, "warning codex_logs_missing"); got != 1 {
+	if got := strings.Count(output, "codex  warn    codex_logs_missing"); got != 1 {
 		t.Fatalf("missing-log warning count = %d, output:\n%s", got, output)
 	}
 }
@@ -611,7 +611,7 @@ func TestStartWatchImportsMatchingCodexLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start --watch returned error: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "Watching Codex logs") || !strings.Contains(stdout, "[codex] watching") || !strings.Contains(stdout, "[codex] ok     run go test ./...") {
+	if !strings.Contains(stdout, "Watching Codex logs") || !strings.Contains(stdout, "codex  watch") || !strings.Contains(stdout, "codex  ok      run go test ./...") {
 		t.Fatalf("watch output missing live command details: %q", stdout)
 	}
 	stdout, _, err = executeCommand(t, "--repo", repo, "status")

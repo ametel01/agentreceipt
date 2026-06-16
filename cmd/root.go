@@ -246,7 +246,7 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 				continue
 			}
 			reportedWarnings[warningKey] = true
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] warning %s: %s\n", warning.Code, warning.Message); err != nil {
+			if err := renderer.PrintEvent(watchWarningEvent(warning.Code, warning.Message, "")); err != nil {
 				return err
 			}
 		}
@@ -273,7 +273,7 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 					tracked.offset = candidate.Size
 				}
 				watched[candidate.Path] = tracked
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[codex] watching %s (%s)\n", filepath.Base(candidate.Path), reason); err != nil {
+				if err := renderer.PrintEvent(watchFileEvent(candidate.Path, reason)); err != nil {
 					return err
 				}
 			}
@@ -284,7 +284,7 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 				LineOffset: tracked.lineOffset,
 			})
 			if err != nil {
-				if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "[codex] warning tail_failed: %s\n", err); writeErr != nil {
+				if writeErr := renderer.PrintEvent(watchWarningEvent("tail_failed", err.Error(), candidate.Path)); writeErr != nil {
 					return writeErr
 				}
 				continue

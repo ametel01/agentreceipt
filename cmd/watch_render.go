@@ -3,8 +3,23 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
+	"github.com/rs/zerolog"
+)
+
+const (
+	watchFieldProvider   = "provider"
+	watchFieldFamily     = "family"
+	watchFieldCategory   = "category"
+	watchFieldStatus     = "status"
+	watchFieldTokens     = "tokens"
+	watchFieldExitCode   = "exit_code"
+	watchFieldSourcePath = "source_path"
+	watchFieldReason     = "reason"
+	watchFieldTool       = "tool"
+	watchFieldCommand    = "command"
 )
 
 type WatchEvent struct {
@@ -22,21 +37,21 @@ type WatchEvent struct {
 }
 
 type codexWatchRenderer struct {
-	out            io.Writer
+	logger         zerolog.Logger
 	calls          map[string]codex.ToolCall
 	pendingActions []string
 }
 
 func newCodexWatchRenderer(out io.Writer) *codexWatchRenderer {
 	return &codexWatchRenderer{
-		out:   out,
-		calls: map[string]codex.ToolCall{},
+		logger: zerolog.New(newWatchConsoleWriter(out, false)).Level(zerolog.InfoLevel),
+		calls:  map[string]codex.ToolCall{},
 	}
 }
 
 func (r *codexWatchRenderer) Print(result codex.ParseResult) error {
 	for _, event := range r.Events(result) {
-		if err := r.printEvent(event); err != nil {
+		if err := r.PrintEvent(event); err != nil {
 			return err
 		}
 	}
@@ -132,18 +147,55 @@ func (r *codexWatchRenderer) tokenEvent(usage codex.TokenUsageEvent, record code
 }
 
 func warningEvent(warning codex.ParseWarning, sourcePath string) WatchEvent {
+	return watchWarningEvent(warning.Code, warning.Message, sourcePath)
+}
+
+func watchFileEvent(sourcePath string, reason string) WatchEvent {
+	return WatchEvent{
+		Provider:   "codex",
+		Family:     codex.LogFamilyContext,
+		Category:   codex.CategorySessionMeta,
+		Status:     "watch",
+		Message:    fmt.Sprintf("%s (%s)", filepath.Base(sourcePath), reason),
+		SourcePath: sourcePath,
+		Reason:     reason,
+	}
+}
+
+func watchWarningEvent(code string, message string, sourcePath string) WatchEvent {
 	return WatchEvent{
 		Provider:   "codex",
 		Family:     codex.LogFamilyUnknown,
 		Category:   codex.CategoryUnknown,
 		Status:     "warn",
-		Message:    warning.Code + ": " + warning.Message,
+		Message:    code + ": " + message,
 		SourcePath: sourcePath,
-		Reason:     warning.Code,
+		Reason:     code,
 	}
 }
 
-func (r *codexWatchRenderer) printEvent(event WatchEvent) error {
+func (r *codexWatchRenderer) PrintEvent(event WatchEvent) error {
+	logEvent := r.logger.Info().
+		Str(watchFieldProvider, event.Provider).
+		Str(watchFieldFamily, string(event.Family)).
+		Str(watchFieldCategory, string(event.Category)).
+		Str(watchFieldStatus, event.Status).
+		Str(watchFieldSourcePath, event.SourcePath).
+		Str(watchFieldReason, event.Reason).
+		Str(watchFieldTool, event.Tool).
+		Str(watchFieldCommand, event.Command)
+	if event.Tokens > 0 {
+		logEvent = logEvent.Int(watchFieldTokens, event.Tokens)
+	}
+	if event.ExitCode != nil {
+		logEvent = logEvent.Int(watchFieldExitCode, *event.ExitCode)
+	}
+	logEvent.Msg(renderWatchMessage(event))
+
+	return nil
+}
+
+func renderWatchMessage(event WatchEvent) string {
 	value := event.Message
 	if event.Status == "tokens" {
 		value = fmt.Sprintf("%d", event.Tokens)
@@ -156,7 +208,42 @@ func (r *codexWatchRenderer) printEvent(event WatchEvent) error {
 		value = truncate(value, 240-len(suffix)) + suffix
 	}
 
-	return writeLiveLine(r.out, event.Status, value)
+	return truncate(value, 240)
+}
+
+func newWatchConsoleWriter(out io.Writer, color bool) zerolog.ConsoleWriter {
+	return zerolog.ConsoleWriter{
+		Out:        out,
+		NoColor:    !color,
+		PartsOrder: []string{watchFieldProvider, watchFieldStatus, zerolog.MessageFieldName},
+		FieldsExclude: []string{
+			watchFieldProvider,
+			watchFieldFamily,
+			watchFieldCategory,
+			watchFieldStatus,
+			watchFieldTokens,
+			watchFieldExitCode,
+			watchFieldSourcePath,
+			watchFieldReason,
+			watchFieldTool,
+			watchFieldCommand,
+		},
+		FormatMessage: func(value any) string {
+			return truncate(fmt.Sprint(value), 240)
+		},
+		FormatPartValueByName: formatWatchPartValue,
+	}
+}
+
+func formatWatchPartValue(value any, name string) string {
+	switch name {
+	case watchFieldProvider:
+		return fmt.Sprintf("%-6s", fmt.Sprint(value))
+	case watchFieldStatus:
+		return fmt.Sprintf("%-7s", fmt.Sprint(value))
+	default:
+		return fmt.Sprint(value)
+	}
 }
 
 func resultSubject(command codex.CommandEvent, toolCall codex.ToolCall) string {
@@ -191,12 +278,6 @@ func resultLabel(command codex.CommandEvent) string {
 	default:
 		return "result"
 	}
-}
-
-func writeLiveLine(out io.Writer, label string, value string) error {
-	_, err := fmt.Fprintf(out, "[codex] %-6s %s\n", label, truncate(value, 240))
-
-	return err
 }
 
 func toolCallsByLine(calls []codex.ToolCall) map[int][]codex.ToolCall {

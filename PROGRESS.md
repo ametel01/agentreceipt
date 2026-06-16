@@ -12,8 +12,8 @@ Update this file after every completed implementation step with the completed st
 
 ## Current Status
 
-- Current step: Step 2 complete
-- Next step: Step 3: Render Watch Events With Zerolog ConsoleWriter
+- Current step: Step 3 complete
+- Next step: Step 4: Add Color Mode Flag and Color Policy
 - Last updated: 2026-06-17
 
 ## Step Checklist
@@ -21,7 +21,7 @@ Update this file after every completed implementation step with the completed st
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Add Zerolog Dependency
 - [x] Step 2: Define Structured Watch Events
-- [ ] Step 3: Render Watch Events With Zerolog ConsoleWriter
+- [x] Step 3: Render Watch Events With Zerolog ConsoleWriter
 - [ ] Step 4: Add Color Mode Flag and Color Policy
 - [ ] Step 5: Update Docs and Smoke Coverage for Watch Formatting
 - [ ] Step 6: Final Review and Compatibility Pass
@@ -32,7 +32,8 @@ Update this file after every completed implementation step with the completed st
 | --- | --- | --- | --- | --- | --- |
 | 2026-06-17 | Step 0: Progress and Changelog Tracking Setup | Complete | Passed `make fmt-check` and `make test`. Confirmed this file identifies the zerolog watch formatter plan and includes the full checklist; confirmed `CHANGELOG.md` has a Keep a Changelog `## [Unreleased]` section. | `9bff3ef` | Refreshed progress tracking for the zerolog watch formatter plan and documented the per-step changelog/update rule. |
 | 2026-06-17 | Step 1: Add Zerolog Dependency | Complete | Passed `go mod tidy`, `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | `4984b85` | Added `github.com/rs/zerolog` to the module graph with a test-only compile check so CLI runtime behavior remains unchanged before renderer wiring. |
-| 2026-06-17 | Step 2: Define Structured Watch Events | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | Pending | Added `WatchEvent` construction for command results, apply_patch edits, token summaries, and malformed JSON warnings while preserving existing rendered output. |
+| 2026-06-17 | Step 2: Define Structured Watch Events | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | `0e756ac` | Added `WatchEvent` construction for command results, apply_patch edits, token summaries, and malformed JSON warnings while preserving existing rendered output. |
+| 2026-06-17 | Step 3: Render Watch Events With Zerolog ConsoleWriter | Complete | Passed `make fmt-check`, `make lint`, `make test`, `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, and `make verify`. | Pending | Replaced watch-line formatting with a zerolog `ConsoleWriter`, rendered compact no-color console events, and routed watch announcements and warnings through `WatchEvent`. |
 
 ## Prior MVP Plan History
 
