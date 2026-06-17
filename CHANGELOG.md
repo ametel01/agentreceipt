@@ -7,6 +7,10 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added a Claude provider design covering hook event normalization, storage and privacy behavior, install command requirements, and MVP acceptance criteria.
+
 ### Fixed
 
 - Fixed session filesystem capture so `agentreceipt start` launches a durable watcher sidecar, records `fs.change` events while active, and flushes watcher evidence before `stop` finalizes the receipt.

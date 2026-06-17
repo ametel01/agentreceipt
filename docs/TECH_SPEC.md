@@ -110,7 +110,7 @@ fs events + git signals + codex logs
 | `agentreceipt status` | Show current session health and event summary counts. |
 | `agentreceipt live` | Stream recent canonicalized events from current session. |
 | `agentreceipt stop` | Finalize session, compute diff/hash/signature/manifest summary, emit warning if Codex provider evidence missing, exit success (non-blocking). |
-| `agentreceipt review` | Produce concise summary in terminal (`--last`, `--session <id>`, `--security`, `--diff`, `--json`, `--md`, `--pr`, `--full`). |
+| `agentreceipt review` | Produce concise summary in terminal (`--last`, `--session <id>`, `--security`, `--diff`, `--codex-jsonl <path>`, `--json`, `--md`, `--pr`). |
 | `agentreceipt verify` | Validate chain, manifest, diff hash, signature. |
 | `agentreceipt export --json|--md|--pr` | Rehydrate finalized receipt in requested format. |
 | `agentreceipt import codex-jsonl <path>` | Optional parser path for non-interactive Codex JSONL. |
@@ -249,7 +249,7 @@ Key fields:
 ```
 
 Event log is append-only. Parsed Codex files should be treated as untrusted input and normalized with warnings.
-Claude directories are reserved for roadmap compatibility and should not imply active Claude hook support in the Codex-first MVP.
+Claude directories are reserved for roadmap compatibility and should not imply active Claude hook support in the Codex-first MVP. The deferred Claude contract is documented in [Claude Provider Design](CLAUDE_PROVIDER_DESIGN.md) before implementation.
 Large provider payloads and command outputs should be stored as content-addressed local blobs when retained, with redacted references in exported reports.
 
 ## 8) Component design

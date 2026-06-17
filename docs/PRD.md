@@ -1745,7 +1745,7 @@ Commands:
 ```bash
 agentreceipt install codex
 agentreceipt live
-agentreceipt review --provider codex
+agentreceipt review --codex-jsonl ./codex-run.jsonl
 ```
 
 Features:
