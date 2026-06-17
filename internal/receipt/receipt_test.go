@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/config"
+	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/signing"
@@ -135,6 +136,78 @@ func TestVerifyDetectsFinalPatchTampering(t *testing.T) {
 	}
 	if !strings.Contains(RenderVerify(result), "Receipt invalid.") {
 		t.Fatalf("RenderVerify() = %q", RenderVerify(result))
+	}
+}
+
+func TestFinalizeConfidenceDowngradesMissingProviderOnly(t *testing.T) {
+	repo := newReceiptGitRepo(t)
+	keyDir := t.TempDir()
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReceiptNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	receipt, err := Finalize(context.Background(), Options{
+		RepoPath:    repo,
+		SessionID:   state.SessionID,
+		KeyDir:      keyDir,
+		GeneratedAt: fixedReceiptNow(),
+	})
+	if err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if receipt.Agent.ProviderConfidence != model.ConfidenceNone || receipt.CaptureConfidence.ProviderToolEvents != model.ConfidenceNone {
+		t.Fatalf("provider confidence should be downgraded with no provider events: %+v", receipt.CaptureConfidence)
+	}
+	if receipt.CaptureConfidence.GitDiff != model.ConfidenceHigh {
+		t.Fatalf("git confidence = %q, want high", receipt.CaptureConfidence.GitDiff)
+	}
+	if receipt.CaptureConfidence.FilesystemWrites != model.ConfidenceNone {
+		t.Fatalf("filesystem confidence = %q, want none without fs events", receipt.CaptureConfidence.FilesystemWrites)
+	}
+	if !hasReceiptWarning(receipt.Warnings, "codex_events_missing") {
+		t.Fatalf("missing provider warning not present: %+v", receipt.Warnings)
+	}
+}
+
+func TestFinalizeFilesystemConfidenceRequiresFilesystemEvent(t *testing.T) {
+	repo := newReceiptGitRepo(t)
+	keyDir := t.TempDir()
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReceiptNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	layout, err := storage.NewLayout(repo, state.SessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	appendReceiptFile(t, filepath.Join(repo, "README.md"), "receipt change\n")
+	waitForReceiptEvent(t, layout.EventsJSONL, func(event model.Event) bool {
+		return event.Source == "fs_watcher" && event.Type == "fs.change"
+	})
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	receipt, err := Finalize(context.Background(), Options{
+		RepoPath:    repo,
+		SessionID:   state.SessionID,
+		KeyDir:      keyDir,
+		GeneratedAt: fixedReceiptNow(),
+	})
+	if err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if receipt.CaptureConfidence.FilesystemWrites != model.ConfidenceHigh {
+		t.Fatalf("filesystem confidence = %q, want high with fs event", receipt.CaptureConfidence.FilesystemWrites)
+	}
+	if receipt.CaptureConfidence.ProviderToolEvents != model.ConfidenceNone {
+		t.Fatalf("provider confidence = %q, want none without provider events", receipt.CaptureConfidence.ProviderToolEvents)
 	}
 }
 
@@ -322,4 +395,47 @@ func runReceiptGit(t *testing.T, dir string, args ...string) {
 
 func fixedReceiptNow() time.Time {
 	return time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+}
+
+func appendReceiptFile(t *testing.T, path string, content string) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	if _, err := file.WriteString(content); err != nil {
+		t.Fatalf("append %s: %v", path, err)
+	}
+}
+
+func waitForReceiptEvent(t *testing.T, eventsPath string, match func(model.Event) bool) model.Event {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		events, err := eventlog.ReadFile(eventsPath)
+		if err == nil {
+			for _, event := range events {
+				if match(event) {
+					return event
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	events, _ := eventlog.ReadFile(eventsPath)
+	t.Fatalf("timed out waiting for matching event in %+v", events)
+	return model.Event{}
+}
+
+func hasReceiptWarning(warnings []model.Warning, code string) bool {
+	for _, warning := range warnings {
+		if warning.Code == code {
+			return true
+		}
+	}
+
+	return false
 }

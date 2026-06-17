@@ -303,6 +303,81 @@ func TestBuildReviewPropagatesCommandResultStatus(t *testing.T) {
 	}
 }
 
+func TestConfidenceInvariants(t *testing.T) {
+	gitEvent := model.Event{Source: "git_monitor", Type: "git.snapshot"}
+	fsEvent := model.Event{Source: "fs_watcher", Type: "fs.change"}
+	providerEvent := model.Event{Source: "codex_session_log", Provider: "codex", Type: "provider.command"}
+	warningEvent := model.Event{Source: "codex_session_log", Provider: "codex", Type: "provider.parse_warning"}
+
+	for _, tc := range []struct {
+		name   string
+		events []model.Event
+		want   model.CaptureConfidence
+	}{
+		{
+			name:   "no events",
+			events: nil,
+			want: model.CaptureConfidence{
+				GitDiff:            model.ConfidenceNone,
+				FilesystemWrites:   model.ConfidenceNone,
+				ProviderToolEvents: model.ConfidenceNone,
+				FileReads:          model.ConfidenceNone,
+				NetworkCalls:       model.ConfidenceLow,
+			},
+		},
+		{
+			name:   "only git",
+			events: []model.Event{gitEvent},
+			want: model.CaptureConfidence{
+				GitDiff:            model.ConfidenceHigh,
+				FilesystemWrites:   model.ConfidenceNone,
+				ProviderToolEvents: model.ConfidenceNone,
+				FileReads:          model.ConfidenceNone,
+				NetworkCalls:       model.ConfidenceLow,
+			},
+		},
+		{
+			name:   "git and filesystem",
+			events: []model.Event{gitEvent, fsEvent},
+			want: model.CaptureConfidence{
+				GitDiff:            model.ConfidenceHigh,
+				FilesystemWrites:   model.ConfidenceHigh,
+				ProviderToolEvents: model.ConfidenceNone,
+				FileReads:          model.ConfidenceNone,
+				NetworkCalls:       model.ConfidenceLow,
+			},
+		},
+		{
+			name:   "git and provider",
+			events: []model.Event{gitEvent, providerEvent},
+			want: model.CaptureConfidence{
+				GitDiff:            model.ConfidenceHigh,
+				FilesystemWrites:   model.ConfidenceNone,
+				ProviderToolEvents: model.ConfidenceMedium,
+				FileReads:          model.ConfidenceNone,
+				NetworkCalls:       model.ConfidenceLow,
+			},
+		},
+		{
+			name:   "warning only provider",
+			events: []model.Event{warningEvent},
+			want: model.CaptureConfidence{
+				GitDiff:            model.ConfidenceNone,
+				FilesystemWrites:   model.ConfidenceNone,
+				ProviderToolEvents: model.ConfidenceNone,
+				FileReads:          model.ConfidenceNone,
+				NetworkCalls:       model.ConfidenceLow,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := confidence(tc.events); got != tc.want {
+				t.Fatalf("confidence() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReviewErrorsWhenNoSessionExists(t *testing.T) {
 	repo := newReviewGitRepo(t)
 	if _, err := Build(context.Background(), Options{RepoPath: repo, Last: true}); err == nil {

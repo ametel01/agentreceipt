@@ -853,11 +853,22 @@ func confidence(events []model.Event) model.CaptureConfidence {
 		case "fs_watcher":
 			confidence.FilesystemWrites = model.ConfidenceHigh
 		case "codex_session_log":
-			confidence.ProviderToolEvents = model.ConfidenceMedium
+			if isProviderToolEvidenceEvent(event) {
+				confidence.ProviderToolEvents = model.ConfidenceMedium
+			}
 		}
 	}
 
 	return confidence
+}
+
+func isProviderToolEvidenceEvent(event model.Event) bool {
+	switch event.Type {
+	case "provider.command", "provider.command_result", "provider.event":
+		return true
+	default:
+		return false
+	}
 }
 
 func risk(summary model.Summary, warnings []model.Warning) model.Risk {

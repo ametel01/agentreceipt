@@ -131,6 +131,54 @@ func TestAppendProviderEventsPreventsMissingCodexWarning(t *testing.T) {
 	}
 }
 
+func TestAppendProviderWarningsOnlyDoesNotClaimCodexImported(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	warningEvent := model.Event{
+		EventID:   "evt_codex_warning_only",
+		SessionID: state.SessionID,
+		Timestamp: fixedNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.parse_warning",
+		Provider:  "codex",
+		CWD:       repo,
+		Payload: map[string]any{
+			"code":    "malformed_json",
+			"message": "bad line",
+		},
+	}
+	state, ok, err := manager.AppendProviderEvents(context.Background(), []model.Event{warningEvent}, []model.Warning{{
+		Code:    "codex_malformed_json",
+		Message: "bad line",
+	}})
+	if err != nil {
+		t.Fatalf("AppendProviderEvents() error = %v", err)
+	}
+	if !ok || state.CaptureSources.CodexLogs != "not_observed" {
+		t.Fatalf("warnings-only import should not claim Codex logs imported ok=%v state=%+v", ok, state)
+	}
+	if len(state.Warnings) != 1 || state.Warnings[0].Code != "codex_malformed_json" {
+		t.Fatalf("expected parse warning to be retained: %+v", state.Warnings)
+	}
+	finalized, stopped, err := manager.Stop(context.Background())
+	if err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if !stopped {
+		t.Fatal("Stop() stopped=false")
+	}
+	if finalized.CaptureSources.Git != "finalized" || finalized.CaptureSources.Filesystem != "stopped" || finalized.CaptureSources.CodexLogs != "missing" {
+		t.Fatalf("unexpected finalized capture sources: %+v", finalized.CaptureSources)
+	}
+	if !hasSessionWarning(finalized.Warnings, "codex_malformed_json") || !hasSessionWarning(finalized.Warnings, "codex_events_missing") {
+		t.Fatalf("expected parse and missing-Codex warnings: %+v", finalized.Warnings)
+	}
+}
+
 func TestSessionCapturesFilesystemChanges(t *testing.T) {
 	repo := newSessionGitRepo(t)
 	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
@@ -138,6 +186,9 @@ func TestSessionCapturesFilesystemChanges(t *testing.T) {
 	state, err := manager.Start(context.Background())
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
+	}
+	if state.CaptureSources.Git != "active" || state.CaptureSources.Filesystem != "active" || state.CaptureSources.CodexLogs != "not_observed" {
+		t.Fatalf("start should report active git/filesystem and no Codex import: %+v", state)
 	}
 	layout, err := storage.NewLayout(repo, state.SessionID)
 	if err != nil {
@@ -515,6 +566,16 @@ func TestSessionHelpers(t *testing.T) {
 	if got := (Manager{}).now(); got.IsZero() {
 		t.Fatal("default now returned zero time")
 	}
+}
+
+func hasSessionWarning(warnings []model.Warning, code string) bool {
+	for _, warning := range warnings {
+		if warning.Code == code {
+			return true
+		}
+	}
+
+	return false
 }
 
 func readManifest(t *testing.T, path string) model.Manifest {

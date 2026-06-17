@@ -340,7 +340,9 @@ func (m Manager) AppendProviderEvents(ctx context.Context, providerEvents []mode
 		state.EventCount = appended.Seq
 		state.ChainHash = appended.EventHash
 	}
-	state.CaptureSources.CodexLogs = "imported"
+	if codexEventsPresent(providerEvents) {
+		state.CaptureSources.CodexLogs = "imported"
+	}
 	for _, warning := range warnings {
 		state.Warnings = appendWarning(state.Warnings, warning)
 	}
@@ -624,12 +626,25 @@ func appendWarning(warnings []model.Warning, warning model.Warning) []model.Warn
 
 func codexEventsPresent(events []model.Event) bool {
 	for _, event := range events {
-		if event.Provider == "codex" || event.Source == "codex_session_log" {
+		if isCodexProviderEvidenceEvent(event) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func isCodexProviderEvidenceEvent(event model.Event) bool {
+	if event.Provider != "codex" && event.Source != "codex_session_log" {
+		return false
+	}
+
+	switch event.Type {
+	case "provider.command", "provider.command_result", "provider.event":
+		return true
+	default:
+		return false
+	}
 }
 
 func repoPathOrCWD(path string) string {
