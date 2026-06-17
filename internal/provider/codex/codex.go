@@ -32,11 +32,22 @@ var secretPatterns = []*regexp.Regexp{
 }
 
 type ParseOptions struct {
-	SessionID      string
-	CWD            string
-	SourcePath     string
-	MaxOutputBytes int
-	LineOffset     int
+	SessionID           string
+	CWD                 string
+	SourcePath          string
+	MaxOutputBytes      int
+	LineOffset          int
+	RedactSecrets       bool
+	RedactSecretsSet    bool
+	StorePrompts        bool
+	StoreRawToolOutputs bool
+}
+
+type parsePrivacy struct {
+	maxBytes            int
+	redactSecrets       bool
+	storePrompts        bool
+	storeRawToolOutputs bool
 }
 
 type ParseResult struct {
@@ -225,6 +236,7 @@ func ParseJSONL(reader io.Reader, options ParseOptions) ParseResult {
 }
 
 func (r *ParseResult) consumeRecord(options ParseOptions, raw map[string]any) {
+	privacy := privacyFromOptions(options)
 	recordType := stringField(raw, "type")
 	payload := mapField(raw, "payload")
 	if payload == nil {
@@ -234,7 +246,7 @@ func (r *ParseResult) consumeRecord(options ParseOptions, raw map[string]any) {
 	ts := firstString(raw, "timestamp", "ts", "time")
 	turnID := firstString(raw, "turn_id", "turnID")
 	callID := firstString(payload, "call_id", "callID")
-	summary := summarize(recordType, payloadType, payload)
+	summary := summarize(recordType, payloadType, payload, privacy)
 	category := CategorizeRecord(raw)
 	r.Timeline = append(r.Timeline, TimelineRecord{
 		Index:    r.LineCount,
@@ -261,6 +273,7 @@ func (r *ParseResult) consumeRecord(options ParseOptions, raw map[string]any) {
 }
 
 func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, payload map[string]any, ts string, turnID string, callID string) {
+	privacy := privacyFromOptions(options)
 	tool := firstString(payload, "name", "tool")
 	args := argumentsMap(payload["arguments"])
 	command := firstString(args, "cmd", "command")
@@ -272,8 +285,8 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 		Tool:       tool,
 		ToolType:   stringField(payload, "type"),
 		CallID:     callID,
-		Arguments:  redactMap(args, options.MaxOutputBytes),
-		Command:    redact(command, options.MaxOutputBytes),
+		Arguments:  redactMap(args, privacy),
+		Command:    redact(command, privacy),
 		Source:     "session_jsonl",
 	}
 	r.ToolCalls = append(r.ToolCalls, toolCall)
@@ -287,7 +300,7 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 			TurnID:     turnID,
 			Tool:       tool,
 			Time:       ts,
-			Command:    redact(command, options.MaxOutputBytes),
+			Command:    redact(command, privacy),
 			Status:     "unknown",
 			Source:     "session_jsonl",
 		})
@@ -313,9 +326,14 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 }
 
 func (r *ParseResult) consumeCommandOutput(options ParseOptions, payload map[string]any, ts string, turnID string, callID string) {
-	output := redact(firstString(payload, "output", "content"), options.MaxOutputBytes)
-	status, exitCode, failedReason := commandStatus(output)
-	truncated := len(firstString(payload, "output", "content")) > options.MaxOutputBytes
+	privacy := privacyFromOptions(options)
+	rawOutput := firstString(payload, "output", "content")
+	status, exitCode, failedReason := commandStatus(rawOutput)
+	output := redact(rawOutput, privacy)
+	truncated := len(rawOutput) > privacy.maxBytes
+	if !privacy.storeRawToolOutputs {
+		output = ""
+	}
 	commandEvent := CommandEvent{
 		SessionID:       options.SessionID,
 		LineNumber:      r.LineCount,
@@ -379,13 +397,14 @@ func (r *ParseResult) consumeTokenCount(options ParseOptions, payload map[string
 }
 
 func (r *ParseResult) addRiskSignals(options ParseOptions, command string) {
+	privacy := privacyFromOptions(options)
 	for _, classification := range commandrisk.Classify(command) {
 		r.RiskSignals = append(r.RiskSignals, RiskSignal{
 			SessionID:  options.SessionID,
 			Level:      classification.Level,
 			Signal:     classification.Signal,
 			Category:   classification.Category,
-			Command:    redact(command, options.MaxOutputBytes),
+			Command:    redact(command, privacy),
 			Details:    classification.Reason,
 			LineNumber: r.LineCount,
 			Confidence: model.ConfidenceHigh,
@@ -476,6 +495,21 @@ func Inspect(home string) InspectResult {
 }
 
 func providerEvent(options ParseOptions, lineNumber int, ts string, recordType string, payloadType string, raw map[string]any) model.Event {
+	privacy := privacyFromOptions(options)
+	payload := map[string]any{
+		"line_no":      lineNumber,
+		"record_type":  recordType,
+		"payload_type": payloadType,
+	}
+	if shouldStoreRawProviderRecord(payloadType, privacy) {
+		payload["raw"] = redactMap(raw, privacy)
+	}
+	if payloadType == "token_count" {
+		if tokenUsage := tokenUsagePayload(raw); len(tokenUsage) > 0 {
+			payload["token_usage"] = tokenUsage
+		}
+	}
+
 	return model.Event{
 		EventID:   fmt.Sprintf("evt_codex_%d", lineNumber),
 		SessionID: options.SessionID,
@@ -484,13 +518,28 @@ func providerEvent(options ParseOptions, lineNumber int, ts string, recordType s
 		Type:      "provider.event",
 		Provider:  "codex",
 		CWD:       options.CWD,
-		Payload: map[string]any{
-			"line_no":      lineNumber,
-			"record_type":  recordType,
-			"payload_type": payloadType,
-			"raw":          redactMap(raw, options.MaxOutputBytes),
-		},
+		Payload:   payload,
 	}
+}
+
+func tokenUsagePayload(raw map[string]any) map[string]any {
+	payload := mapField(raw, "payload")
+	if payload == nil {
+		payload = raw
+	}
+	info := mapField(payload, "info")
+	usage := mapField(info, "last_token_usage")
+	if usage == nil {
+		return nil
+	}
+	out := map[string]any{}
+	for _, key := range []string{"input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"} {
+		if total, ok := intValue(usage[key]); ok {
+			out[key] = total
+		}
+	}
+
+	return out
 }
 
 func warningEvent(options ParseOptions, lineNumber int, code string, message string) model.Event {
@@ -510,9 +559,9 @@ func warningEvent(options ParseOptions, lineNumber int, code string, message str
 	}
 }
 
-func summarize(recordType string, payloadType string, payload map[string]any) string {
+func summarize(recordType string, payloadType string, payload map[string]any, privacy parsePrivacy) string {
 	if command := firstString(argumentsMap(payload["arguments"]), "cmd", "command"); command != "" {
-		return "command: " + command
+		return "command: " + redact(command, privacy)
 	}
 	if payloadType != "" {
 		return payloadType
@@ -588,16 +637,25 @@ func stringField(raw map[string]any, key string) string {
 }
 
 func intField(raw map[string]any, key string) int {
-	switch value := raw[key].(type) {
+	value, _ := intValue(raw[key])
+
+	return value
+}
+
+func intValue(value any) (int, bool) {
+	switch value := value.(type) {
 	case float64:
-		return int(value)
+		return int(value), true
 	case int:
-		return value
+		return value, true
 	case json.Number:
-		parsed, _ := value.Int64()
-		return int(parsed)
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
 	default:
-		return 0
+		return 0, false
 	}
 }
 
@@ -612,28 +670,79 @@ func parseTime(value string) time.Time {
 	return time.Now().UTC()
 }
 
-func redact(value string, maxBytes int) string {
-	redacted := value
-	for _, pattern := range secretPatterns {
-		redacted = pattern.ReplaceAllString(redacted, "[REDACTED]")
+func privacyFromOptions(options ParseOptions) parsePrivacy {
+	maxBytes := options.MaxOutputBytes
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBytes
 	}
-	if maxBytes > 0 && len(redacted) > maxBytes {
-		return redacted[:maxBytes]
+	redactSecrets := true
+	if options.RedactSecretsSet {
+		redactSecrets = options.RedactSecrets
+	}
+
+	return parsePrivacy{
+		maxBytes:            maxBytes,
+		redactSecrets:       redactSecrets,
+		storePrompts:        options.StorePrompts,
+		storeRawToolOutputs: options.StoreRawToolOutputs,
+	}
+}
+
+func shouldStoreRawProviderRecord(payloadType string, privacy parsePrivacy) bool {
+	switch payloadType {
+	case "user_message", "agent_message", "assistant", "assistant_message", "developer", "developer_message", "system", "system_message", "reasoning":
+		return privacy.storePrompts
+	case "function_call_output", "custom_tool_call_output":
+		return privacy.storeRawToolOutputs
+	default:
+		return false
+	}
+}
+
+func redact(value string, privacy parsePrivacy) string {
+	redacted := value
+	if privacy.redactSecrets {
+		for _, pattern := range secretPatterns {
+			redacted = pattern.ReplaceAllString(redacted, "[REDACTED]")
+		}
+	}
+	if privacy.maxBytes > 0 && len(redacted) > privacy.maxBytes {
+		return redacted[:privacy.maxBytes]
 	}
 
 	return redacted
 }
 
-func redactMap(raw map[string]any, maxBytes int) map[string]any {
+func redactMap(raw map[string]any, privacy parsePrivacy) map[string]any {
 	out := make(map[string]any, len(raw))
 	for key, value := range raw {
 		switch typed := value.(type) {
 		case string:
-			out[key] = redact(typed, maxBytes)
+			out[key] = redact(typed, privacy)
 		case map[string]any:
-			out[key] = redactMap(typed, maxBytes)
+			out[key] = redactMap(typed, privacy)
+		case []any:
+			out[key] = redactSlice(typed, privacy)
 		default:
 			out[key] = value
+		}
+	}
+
+	return out
+}
+
+func redactSlice(raw []any, privacy parsePrivacy) []any {
+	out := make([]any, 0, len(raw))
+	for _, value := range raw {
+		switch typed := value.(type) {
+		case string:
+			out = append(out, redact(typed, privacy))
+		case map[string]any:
+			out = append(out, redactMap(typed, privacy))
+		case []any:
+			out = append(out, redactSlice(typed, privacy))
+		default:
+			out = append(out, value)
 		}
 	}
 

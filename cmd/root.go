@@ -365,12 +365,7 @@ func watchCodex(ctx context.Context, cmd *cobra.Command, manager session.Manager
 					return err
 				}
 			}
-			tail, err := codex.TailFile(candidate.Path, codex.TailOptions{
-				SessionID:  state.SessionID,
-				CWD:        state.RepoRoot,
-				Offset:     tracked.offset,
-				LineOffset: tracked.lineOffset,
-			})
+			tail, err := codex.TailFile(candidate.Path, codexTailOptions(state.SessionID, state.RepoRoot, manager.Config, tracked.offset, tracked.lineOffset))
 			if err != nil {
 				if writeErr := renderer.PrintEvent(watchWarningEvent("tail_failed", err.Error(), candidate.Path)); writeErr != nil {
 					return writeErr
@@ -440,6 +435,9 @@ func codexTokenTotal(event model.Event) (int, bool) {
 	}
 	if stringPayload(event.Payload, "payload_type") != "token_count" {
 		return 0, false
+	}
+	if usage := mapPayload(event.Payload, "token_usage"); usage != nil {
+		return intPayload(usage, "total_tokens")
 	}
 	raw := mapPayload(event.Payload, "raw")
 	payload := mapPayload(raw, "payload")
@@ -779,7 +777,7 @@ func newCodexJSONLCommand() *cobra.Command {
 				sessionID = state.SessionID
 				cwd = state.RepoRoot
 			}
-			result, err := codex.ParseFile(args[0], codex.ParseOptions{SessionID: sessionID, CWD: cwd})
+			result, err := codex.ParseFile(args[0], codexParseOptions(sessionID, cwd, manager.Config))
 			if err != nil {
 				return err
 			}
@@ -1013,6 +1011,32 @@ func codexWarnings(warnings []codex.ParseWarning) []model.Warning {
 	return converted
 }
 
+func codexParseOptions(sessionID string, cwd string, cfg config.Config) codex.ParseOptions {
+	return codex.ParseOptions{
+		SessionID:           sessionID,
+		CWD:                 cwd,
+		MaxOutputBytes:      cfg.Privacy.MaxBlobBytes,
+		RedactSecrets:       cfg.Privacy.RedactSecrets,
+		RedactSecretsSet:    true,
+		StorePrompts:        cfg.Privacy.StorePrompts,
+		StoreRawToolOutputs: cfg.Privacy.StoreRawToolOutputs,
+	}
+}
+
+func codexTailOptions(sessionID string, cwd string, cfg config.Config, offset int64, lineOffset int) codex.TailOptions {
+	return codex.TailOptions{
+		SessionID:           sessionID,
+		CWD:                 cwd,
+		Offset:              offset,
+		LineOffset:          lineOffset,
+		MaxOutputBytes:      cfg.Privacy.MaxBlobBytes,
+		RedactSecrets:       cfg.Privacy.RedactSecrets,
+		RedactSecretsSet:    true,
+		StorePrompts:        cfg.Privacy.StorePrompts,
+		StoreRawToolOutputs: cfg.Privacy.StoreRawToolOutputs,
+	}
+}
+
 func importCodexJSONLForReview(ctx context.Context, cmd *cobra.Command, path string) error {
 	manager, err := managerFromCommand(cmd)
 	if err != nil {
@@ -1025,7 +1049,7 @@ func importCodexJSONLForReview(ctx context.Context, cmd *cobra.Command, path str
 	if !active {
 		return fmt.Errorf("review --codex-jsonl requires an active AgentReceipt session")
 	}
-	result, err := codex.ParseFile(path, codex.ParseOptions{SessionID: state.SessionID, CWD: state.RepoRoot})
+	result, err := codex.ParseFile(path, codexParseOptions(state.SessionID, state.RepoRoot, manager.Config))
 	if err != nil {
 		return err
 	}

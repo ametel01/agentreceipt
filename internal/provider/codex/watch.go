@@ -11,12 +11,16 @@ import (
 )
 
 type TailOptions struct {
-	SessionID      string
-	CWD            string
-	Offset         int64
-	LineOffset     int
-	MaxOutputBytes int
-	MaxTailBytes   int
+	SessionID           string
+	CWD                 string
+	Offset              int64
+	LineOffset          int
+	MaxOutputBytes      int
+	MaxTailBytes        int
+	RedactSecrets       bool
+	RedactSecretsSet    bool
+	StorePrompts        bool
+	StoreRawToolOutputs bool
 }
 
 type TailResult struct {
@@ -137,11 +141,15 @@ func TailFile(path string, options TailOptions) (TailResult, error) {
 	tail.NextOffset = offset + int64(len(complete))
 	tail.NextLineOffset = lineOffset + tail.CompleteLines
 	tail.ParseResult = ParseJSONL(bytes.NewReader(complete), ParseOptions{
-		SessionID:      options.SessionID,
-		CWD:            options.CWD,
-		SourcePath:     path,
-		MaxOutputBytes: options.MaxOutputBytes,
-		LineOffset:     lineOffset,
+		SessionID:           options.SessionID,
+		CWD:                 options.CWD,
+		SourcePath:          path,
+		MaxOutputBytes:      options.MaxOutputBytes,
+		LineOffset:          lineOffset,
+		RedactSecrets:       options.RedactSecrets,
+		RedactSecretsSet:    options.RedactSecretsSet,
+		StorePrompts:        options.StorePrompts,
+		StoreRawToolOutputs: options.StoreRawToolOutputs,
 	})
 
 	return tail, nil

@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,8 +39,99 @@ func TestParseJSONLExtractsCommandsWarningsAndRisk(t *testing.T) {
 	if strings.Contains(result.Commands[0].Command, "secret") || strings.Contains(result.Commands[1].Stdout, "sk-secret") {
 		t.Fatalf("secrets were not redacted: %+v", result.Commands)
 	}
+	if result.Commands[1].Stdout != "" {
+		t.Fatalf("default parser stored raw command stdout: %+v", result.Commands[1])
+	}
+	if result.Commands[1].Status != "failed" || result.Commands[1].ExitCode == nil || *result.Commands[1].ExitCode != 1 {
+		t.Fatalf("command status metadata was not preserved: %+v", result.Commands[1])
+	}
 	if result.ExecutionErrors[0].ErrorClass != "exec_failed" {
 		t.Fatalf("execution errors = %+v", result.ExecutionErrors)
+	}
+}
+
+func TestParseJSONLOmitsPromptAndRawToolOutputByDefault(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Join([]string{
+		`{"type":"event_msg","timestamp":"2026-06-16T00:00:00Z","payload":{"type":"user_message","message":"deploy with token=visible-secret"}}`,
+		`{"type":"response_item","timestamp":"2026-06-16T00:00:01Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nsk-secret output"}}`,
+	}, "\n")
+
+	result := ParseJSONL(strings.NewReader(input), ParseOptions{SessionID: "ar_ses_test"})
+	rawEvents, err := json.Marshal(result.Events)
+	if err != nil {
+		t.Fatalf("marshal events: %v", err)
+	}
+	if strings.Contains(string(rawEvents), "visible-secret") || strings.Contains(string(rawEvents), "sk-secret") {
+		t.Fatalf("default events retained prompt/output text: %s", rawEvents)
+	}
+	if _, ok := result.Events[0].Payload["raw"]; ok {
+		t.Fatalf("default provider event retained raw payload: %+v", result.Events[0].Payload)
+	}
+	if result.Commands[0].Stdout != "" || result.Commands[0].Status != "success" {
+		t.Fatalf("default command output retention/status = %+v", result.Commands[0])
+	}
+}
+
+func TestParseJSONLStoresConfiguredRawToolOutputsAndPromptsRedacted(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Join([]string{
+		`{"type":"event_msg","timestamp":"2026-06-16T00:00:00Z","payload":{"type":"user_message","message":"use token=visible-secret","parts":["token=nested-secret",{"text":"sk-nested"}]}}`,
+		`{"type":"response_item","timestamp":"2026-06-16T00:00:01Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nsk-secret output"}}`,
+	}, "\n")
+
+	result := ParseJSONL(strings.NewReader(input), ParseOptions{
+		SessionID:           "ar_ses_test",
+		StorePrompts:        true,
+		StoreRawToolOutputs: true,
+	})
+	rawEvents, err := json.Marshal(result.Events)
+	if err != nil {
+		t.Fatalf("marshal events: %v", err)
+	}
+	if strings.Contains(string(rawEvents), "visible-secret") || strings.Contains(string(rawEvents), "nested-secret") || strings.Contains(result.Commands[0].Stdout, "sk-secret") {
+		t.Fatalf("configured raw retention did not redact secrets: events=%s commands=%+v", rawEvents, result.Commands)
+	}
+	if !strings.Contains(string(rawEvents), "[REDACTED]") || !strings.Contains(result.Commands[0].Stdout, "[REDACTED]") {
+		t.Fatalf("configured raw retention missing redacted content: events=%s commands=%+v", rawEvents, result.Commands)
+	}
+}
+
+func TestIntValueParsesSupportedTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   any
+		want int
+		ok   bool
+	}{
+		{name: "int", in: 7, want: 7, ok: true},
+		{name: "float64", in: 8.0, want: 8, ok: true},
+		{name: "json number", in: json.Number("9"), want: 9, ok: true},
+		{name: "invalid json number", in: json.Number("not-a-number"), ok: false},
+		{name: "string", in: "10", ok: false},
+	}
+	for _, test := range tests {
+		got, ok := intValue(test.in)
+		if got != test.want || ok != test.ok {
+			t.Fatalf("%s: intValue() = %d, %v; want %d, %v", test.name, got, ok, test.want, test.ok)
+		}
+	}
+}
+
+func TestParseJSONLCanDisableSecretRedactionExplicitly(t *testing.T) {
+	t.Parallel()
+
+	result := ParseJSONL(strings.NewReader(`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":{"cmd":"curl https://example.test?token=visible-secret"}}}`), ParseOptions{
+		SessionID:        "ar_ses_test",
+		RedactSecrets:    false,
+		RedactSecretsSet: true,
+	})
+	if !strings.Contains(result.Commands[0].Command, "visible-secret") {
+		t.Fatalf("explicitly disabled redaction was not honored: %+v", result.Commands)
 	}
 }
 

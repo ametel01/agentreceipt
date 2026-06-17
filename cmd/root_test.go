@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
@@ -52,6 +53,28 @@ func TestRootHelpListsCommandSurface(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("root help missing %q\nhelp:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestCodexParseOptionsFromConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Privacy.RedactSecrets = false
+	cfg.Privacy.StorePrompts = true
+	cfg.Privacy.StoreRawToolOutputs = true
+	cfg.Privacy.MaxBlobBytes = 42
+
+	options := codexParseOptions("ar_ses_test", "/repo", cfg)
+	if options.SessionID != "ar_ses_test" || options.CWD != "/repo" {
+		t.Fatalf("session/cwd options = %+v", options)
+	}
+	if options.RedactSecrets || !options.RedactSecretsSet || !options.StorePrompts || !options.StoreRawToolOutputs || options.MaxOutputBytes != 42 {
+		t.Fatalf("privacy options did not follow config: %+v", options)
+	}
+	tailOptions := codexTailOptions("ar_ses_test", "/repo", cfg, 10, 2)
+	if tailOptions.Offset != 10 || tailOptions.LineOffset != 2 || tailOptions.RedactSecrets || !tailOptions.RedactSecretsSet || !tailOptions.StorePrompts || !tailOptions.StoreRawToolOutputs || tailOptions.MaxOutputBytes != 42 {
+		t.Fatalf("tail privacy options did not follow config: %+v", tailOptions)
 	}
 }
 
