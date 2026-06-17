@@ -13,11 +13,14 @@ trap 'rm -rf "$tmpdir"' EXIT
 go build -o "$tmpdir/agentreceipt" .
 help_output="$("$tmpdir/agentreceipt" --help)"
 version_output="$("$tmpdir/agentreceipt" version)"
-claude_output="$("$tmpdir/agentreceipt" install claude)"
+claude_settings="$tmpdir/claude-settings.json"
+claude_output="$("$tmpdir/agentreceipt" install claude --dry-run --settings "$claude_settings")"
 
 [[ "$help_output" == *"install codex"* ]]
 [[ "$version_output" == *"agentreceipt"* ]]
-[[ "$claude_output" == *"deferred in the Codex-first MVP"* ]]
+[[ "$claude_output" == *"Hook command:"* ]]
+[[ "$claude_output" == *"__internal-claude-hook"* ]]
+test ! -e "$claude_settings"
 
 repo="$tmpdir/repo"
 keydir="$tmpdir/keys"

@@ -126,7 +126,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		SessionID:     sessionID,
 		GeneratedAt:   time.Now().UTC(),
 		State:         state.State,
-		Provider:      "Codex CLI",
+		Provider:      providerLabel(events),
 		Warnings:      state.Warnings,
 		EventsByType:  make(map[string]int),
 	}
@@ -884,14 +884,44 @@ func confidence(events []model.Event) model.CaptureConfidence {
 			confidence.GitDiff = model.ConfidenceHigh
 		case "fs_watcher":
 			confidence.FilesystemWrites = model.ConfidenceHigh
-		case "codex_session_log":
-			if isProviderToolEvidenceEvent(event) {
-				confidence.ProviderToolEvents = model.ConfidenceMedium
-			}
+		}
+		if isProviderEvidenceSource(event) && isProviderToolEvidenceEvent(event) {
+			confidence.ProviderToolEvents = model.ConfidenceMedium
 		}
 	}
 
 	return confidence
+}
+
+func isProviderEvidenceSource(event model.Event) bool {
+	return event.Provider != "" || event.Source == "codex_session_log" || event.Source == "claude_hook"
+}
+
+func providerLabel(events []model.Event) string {
+	providers := map[string]bool{}
+	for _, event := range events {
+		if !isProviderToolEvidenceEvent(event) {
+			continue
+		}
+		switch {
+		case event.Provider != "":
+			providers[event.Provider] = true
+		case event.Source == "codex_session_log":
+			providers["codex"] = true
+		case event.Source == "claude_hook":
+			providers["claude"] = true
+		}
+	}
+	switch {
+	case providers["codex"] && providers["claude"]:
+		return "Codex CLI + Claude Code"
+	case providers["claude"]:
+		return "Claude Code"
+	case providers["codex"]:
+		return "Codex CLI"
+	default:
+		return "unknown"
+	}
 }
 
 func isProviderToolEvidenceEvent(event model.Event) bool {

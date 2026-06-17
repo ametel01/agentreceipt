@@ -2,7 +2,7 @@
 
 AgentReceipt is a **local-first CLI for watching AI coding sessions as they happen**.
 
-It is built for developers who run agents in permissive "YOLO mode": Codex today, and Claude once hook support lands. Keep your normal terminal workflow, run AgentReceipt beside the agent, and see tool calls, commands, edits, token usage, warnings, and final review evidence without wrapping or proxying the agent.
+It is built for developers who run agents in permissive "YOLO mode": Codex live watching today, plus a Claude hook MVP for local provider evidence. Keep your normal terminal workflow, run AgentReceipt beside the agent, and see tool calls, commands, edits, token usage, warnings, and final review evidence without wrapping or proxying the agent.
 
 Install the latest release:
 
@@ -24,7 +24,8 @@ While it watches, AgentReceipt records observable local evidence from your works
 
 ## Current limitations
 
-- **Live provider capture is Codex-only.** AgentReceipt is intended for high-autonomy Codex/Claude workflows, but `start --watch`, `inspect codex`, and `import codex-jsonl` work with Codex logs today. `agentreceipt install claude` is present for roadmap readiness, but it only reports that Claude hook integration is deferred.
+- **Live watch is Codex-first.** `start --watch`, `inspect codex`, and `import codex-jsonl` work with Codex logs today. `agentreceipt install claude` installs an MVP Claude hook target, but Claude coverage is hook-driven rather than a full live watch/transcript importer.
+- **Claude privacy defaults are conservative.** Claude hook ingestion stores normalized command/tool metadata by default. Prompt text, transcripts, and raw tool output are not retained unless config explicitly opts in.
 - **Codex log parsing is best effort.** Interactive Codex logs are treated as local evidence, not a stable provider API. Missing, incomplete, malformed, or format-changed logs reduce provider confidence but do not stop receipt generation.
 - **AgentReceipt observes; it does not gate.** It does not launch, wrap, sandbox, approve, deny, or proxy agent actions. This is intentional for the sidecar model, but permission enforcement is outside the current release.
 - **Risk classification is heuristic.** Command risk badges use built-in rules for high/medium/low signals. They help reviewers focus attention, but they are not a policy engine and do not replace review.
@@ -54,7 +55,8 @@ The final review answers the merge-time questions:
 
 AgentReceipt MVP focuses on:
 
-- **Codex-first support** as the primary provider path
+- **Codex-first support** as the primary live provider path
+- Claude hook installation and active-session hook ingestion as an MVP provider path
 - live `start --watch` visibility for the active Codex session
 - compact command/edit/token/warning output designed for repeated terminal use
 - explicit session recording with `start` / `stop`
@@ -67,7 +69,7 @@ AgentReceipt MVP focuses on:
 
 Planned for later:
 
-- Claude hook integration as a first-class provider path
+- broader Claude transcript/import coverage and richer hook schemas
 - GitHub App and wider team workflow enforcement
 
 ## Core workflow
@@ -310,13 +312,14 @@ agentreceipt export --session <id> --json
 # Parsers
 agentreceipt inspect codex --last
 agentreceipt import codex-jsonl ./codex-run.jsonl
+agentreceipt install claude --dry-run --settings ~/.claude/settings.json
 
 # Human context and PRs
 agentreceipt mark "Manually reviewed generated auth changes"
 agentreceipt pr comment
 ```
 
-> Note: `agentreceipt install claude` exists for roadmap readiness, while Codex is the MVP primary path.
+> Note: Codex remains the primary live-watch path. Claude support currently installs a local hook command that imports normalized hook JSON into the active session without retaining prompts or raw tool output by default.
 
 ## Example review output (what to look for)
 

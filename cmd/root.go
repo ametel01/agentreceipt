@@ -10,12 +10,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/provider/claude"
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
 	"github.com/ametel01/agentreceipt/internal/receipt"
 	"github.com/ametel01/agentreceipt/internal/review"
@@ -77,6 +79,7 @@ func NewRootCommand(version string) *cobra.Command {
 		newMarkCommand(),
 		newPRCommand(),
 		newVersionCommand(version),
+		newInternalClaudeHookCommand(),
 		newInternalFilesystemWatcherCommand(),
 	)
 
@@ -217,14 +220,256 @@ func newInstallCodexCommand() *cobra.Command {
 }
 
 func newInstallClaudeCommand() *cobra.Command {
-	return &cobra.Command{
+	var dryRun bool
+	var settingsPath string
+	installClaude := &cobra.Command{
 		Use:   "claude",
-		Short: "Show deferred Claude integration status",
+		Short: "Install Claude Code hook integration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "Claude hook installation is deferred in the Codex-first MVP; no runtime hooks were configured.")
+			plan, err := buildClaudeInstallPlan(settingsPath)
+			if err != nil {
+				return err
+			}
+			if dryRun {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Claude settings: %s\nWould create or modify: %s\nHook command: %s __internal-claude-hook\nPrompt retention: disabled\nRaw tool output retention: disabled\n", plan.SettingsPath, plan.SettingsPath, plan.ExecutablePath)
+				return err
+			}
+			result, err := applyClaudeInstallPlan(plan)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if _, err := fmt.Fprintln(out, "Claude hook integration installed."); err != nil {
+				return err
+			}
+			if result.Changed {
+				if _, err := fmt.Fprintf(out, "Modified: %s\n", plan.SettingsPath); err != nil {
+					return err
+				}
+				if result.BackupPath != "" {
+					if _, err := fmt.Fprintf(out, "Backup: %s\n", result.BackupPath); err != nil {
+						return err
+					}
+				}
+			} else if _, err := fmt.Fprintf(out, "Unchanged: %s\n", plan.SettingsPath); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(out, "Hook command: %s __internal-claude-hook\nPrompt retention: disabled\nRaw tool output retention: disabled\n", plan.ExecutablePath)
 			return err
 		},
 	}
+	installClaude.Flags().BoolVar(&dryRun, "dry-run", false, "Show Claude hook settings changes without writing")
+	installClaude.Flags().StringVar(&settingsPath, "settings", "", "Claude settings JSON path; defaults to CLAUDE_HOME/settings.json or ~/.claude/settings.json")
+
+	return installClaude
+}
+
+type claudeInstallPlan struct {
+	SettingsPath   string
+	ExecutablePath string
+	Settings       map[string]any
+	Changed        bool
+	ExistingData   []byte
+}
+
+type claudeInstallResult struct {
+	Changed    bool
+	BackupPath string
+}
+
+func buildClaudeInstallPlan(settingsPath string) (claudeInstallPlan, error) {
+	if settingsPath == "" {
+		defaultPath, err := defaultClaudeSettingsPath()
+		if err != nil {
+			return claudeInstallPlan{}, err
+		}
+		settingsPath = defaultPath
+	}
+	absSettingsPath, err := filepath.Abs(settingsPath)
+	if err != nil {
+		return claudeInstallPlan{}, err
+	}
+	executablePath, err := currentExecutablePath()
+	if err != nil {
+		return claudeInstallPlan{}, err
+	}
+	existingData, settings, err := readClaudeSettings(absSettingsPath)
+	if err != nil {
+		return claudeInstallPlan{}, err
+	}
+	changed, err := mergeClaudeSettings(settings, executablePath)
+	if err != nil {
+		return claudeInstallPlan{}, err
+	}
+
+	return claudeInstallPlan{
+		SettingsPath:   absSettingsPath,
+		ExecutablePath: executablePath,
+		Settings:       settings,
+		Changed:        changed,
+		ExistingData:   existingData,
+	}, nil
+}
+
+func applyClaudeInstallPlan(plan claudeInstallPlan) (claudeInstallResult, error) {
+	if !plan.Changed {
+		return claudeInstallResult{}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(plan.SettingsPath), 0o750); err != nil {
+		return claudeInstallResult{}, fmt.Errorf("create Claude settings directory: %w", err)
+	}
+	result := claudeInstallResult{Changed: true}
+	if len(plan.ExistingData) > 0 {
+		result.BackupPath = plan.SettingsPath + ".agentreceipt.bak"
+		if err := os.WriteFile(result.BackupPath, plan.ExistingData, 0o600); err != nil {
+			return claudeInstallResult{}, fmt.Errorf("write Claude settings backup: %w", err)
+		}
+	}
+	if err := writeClaudeSettings(plan.SettingsPath, plan.Settings); err != nil {
+		return claudeInstallResult{}, err
+	}
+
+	return result, nil
+}
+
+func defaultClaudeSettingsPath() (string, error) {
+	if home := os.Getenv("CLAUDE_HOME"); home != "" {
+		return filepath.Join(home, "settings.json"), nil
+	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve Claude settings path: %w", err)
+	}
+
+	return filepath.Join(userHome, ".claude", "settings.json"), nil
+}
+
+func currentExecutablePath() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve current executable: %w", err)
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("validate current executable: %w", err)
+	}
+
+	return path, nil
+}
+
+func readClaudeSettings(path string) ([]byte, map[string]any, error) {
+	data, err := readFileAtPath(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, map[string]any{}, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("read Claude settings: %w", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, nil, fmt.Errorf("decode Claude settings: %w", err)
+	}
+	if settings == nil {
+		settings = map[string]any{}
+	}
+
+	return data, settings, nil
+}
+
+func mergeClaudeSettings(settings map[string]any, executablePath string) (bool, error) {
+	hooks := map[string]any{}
+	if existing, ok := settings["hooks"]; ok {
+		typed, ok := existing.(map[string]any)
+		if !ok {
+			return false, fmt.Errorf("claude settings hooks field is not an object; refusing to overwrite")
+		}
+		hooks = typed
+	}
+	hook := claudeHookSettings(executablePath)
+	if reflect.DeepEqual(hooks["agentreceipt"], hook) {
+		return false, nil
+	}
+	hooks["agentreceipt"] = hook
+	settings["hooks"] = hooks
+
+	return true, nil
+}
+
+func claudeHookSettings(executablePath string) map[string]any {
+	return map[string]any{
+		"command":     executablePath,
+		"args":        []any{"__internal-claude-hook"},
+		"description": "Import Claude hook evidence into the active AgentReceipt session.",
+		"privacy": map[string]any{
+			"store_prompts":          false,
+			"store_raw_tool_outputs": false,
+		},
+	}
+}
+
+func writeClaudeSettings(path string, settings map[string]any) error {
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal Claude settings: %w", err)
+	}
+	data = append(data, '\n')
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".agentreceipt-claude-settings-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create Claude settings temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write Claude settings temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close Claude settings temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("chmod Claude settings temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace Claude settings: %w", err)
+	}
+
+	return nil
+}
+
+func readFileAtPath(path string) ([]byte, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	return root.ReadFile(filepath.Base(path))
+}
+
+func openFileAtPath(path string) (*os.File, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	file, openErr := root.Open(filepath.Base(path))
+	closeErr := root.Close()
+	if openErr != nil {
+		return nil, openErr
+	}
+	if closeErr != nil {
+		_ = file.Close()
+		return nil, closeErr
+	}
+
+	return file, nil
 }
 
 func codexHomeSource(home string) string {
@@ -993,6 +1238,51 @@ func newVersionCommand(version string) *cobra.Command {
 	}
 }
 
+func newInternalClaudeHookCommand() *cobra.Command {
+	internalCmd := &cobra.Command{
+		Use:    "__internal-claude-hook",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			manager, err := managerFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			state, active, err := manager.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !active {
+				return fmt.Errorf("no active AgentReceipt session")
+			}
+			filePath, err := cmd.Flags().GetString("file")
+			if err != nil {
+				return err
+			}
+			reader := cmd.InOrStdin()
+			if filePath != "" {
+				file, err := openFileAtPath(filePath)
+				if err != nil {
+					return fmt.Errorf("open Claude hook record: %w", err)
+				}
+				defer func() {
+					_ = file.Close()
+				}()
+				reader = file
+			}
+			result := claude.ParseReader(reader, claudeParseOptions(state.SessionID, state.RepoRoot, manager.Config))
+			if _, _, err := manager.AppendProviderEvents(cmd.Context(), result.Events, result.Warnings); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Imported Claude hook: events=%d commands=%d warnings=%d\n", result.EventCount, result.CommandCount, result.WarningCount)
+
+			return err
+		},
+	}
+	internalCmd.Flags().String("file", "", "Read Claude hook JSON from a file instead of stdin")
+
+	return internalCmd
+}
+
 func newInternalFilesystemWatcherCommand() *cobra.Command {
 	internalCmd := &cobra.Command{
 		Use:    "__internal-fswatcher",
@@ -1100,6 +1390,18 @@ func codexTailOptions(sessionID string, cwd string, cfg config.Config, offset in
 		CWD:                 cwd,
 		Offset:              offset,
 		LineOffset:          lineOffset,
+		MaxOutputBytes:      cfg.Privacy.MaxBlobBytes,
+		RedactSecrets:       cfg.Privacy.RedactSecrets,
+		RedactSecretsSet:    true,
+		StorePrompts:        cfg.Privacy.StorePrompts,
+		StoreRawToolOutputs: cfg.Privacy.StoreRawToolOutputs,
+	}
+}
+
+func claudeParseOptions(sessionID string, cwd string, cfg config.Config) claude.ParseOptions {
+	return claude.ParseOptions{
+		SessionID:           sessionID,
+		CWD:                 cwd,
 		MaxOutputBytes:      cfg.Privacy.MaxBlobBytes,
 		RedactSecrets:       cfg.Privacy.RedactSecrets,
 		RedactSecretsSet:    true,

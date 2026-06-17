@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the deferred Claude Code provider integration for AgentReceipt. It is a design contract only; the current CLI still reports `agentreceipt install claude` as deferred and does not install runtime hooks.
+This document defines the Claude Code provider integration contract for AgentReceipt. The current implementation includes an MVP `agentreceipt install claude` settings merge and hidden hook-ingestion command; full transcript import and richer hook schemas remain future work.
 
 The design keeps Claude support aligned with the current Codex evidence model:
 
@@ -96,7 +96,7 @@ Privacy rules:
 
 ## Install Command Contract
 
-Future `agentreceipt install claude` behavior must be explicit and auditable.
+`agentreceipt install claude` behavior must be explicit and auditable.
 
 The command must:
 
@@ -114,7 +114,7 @@ The command must not:
 - enable prompt or transcript retention without clear output;
 - make Claude support appear active when hook installation failed validation.
 
-The current deferred output remains correct until these behaviors are implemented.
+The MVP installer writes an `agentreceipt` hook entry into a target Claude settings JSON file, supports `--dry-run`, preserves unrelated settings and hooks, backs up changed settings, and points the hook at the current `agentreceipt __internal-claude-hook` command.
 
 ## MVP Acceptance Criteria
 
@@ -130,7 +130,7 @@ Claude provider MVP is complete when:
 
 ## Open Questions
 
-- Which Claude Code hook payload fields are stable enough to treat as a local contract?
+- Which additional Claude Code hook payload fields are stable enough to treat as a local contract?
 - Are command result records guaranteed to include the same call identifier as command attempt records?
 - Which Claude settings paths need platform-specific handling?
 - Can hook installation validate permissions without triggering Claude permission prompts?

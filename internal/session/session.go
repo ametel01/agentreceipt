@@ -224,6 +224,7 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 		if err != nil {
 			return err
 		}
+		providerPresent := providerEventsPresent(events)
 		codexPresent := codexEventsPresent(events)
 		prevHash, err := eventlog.Replay(events)
 		if err != nil {
@@ -259,8 +260,9 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 			Type:      "receipt.finalize",
 			CWD:       state.RepoRoot,
 			Payload: map[string]any{
-				"final_diff_hash":      finalSnapshot.PatchHash,
-				"codex_events_present": codexPresent,
+				"provider_events_present": providerPresent,
+				"final_diff_hash":         finalSnapshot.PatchHash,
+				"codex_events_present":    codexPresent,
 			},
 		}
 		appended, err = writer.Append(finalize)
@@ -281,15 +283,15 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 		state.CaptureSources.Filesystem = "stopped"
 		state.CaptureSources.CodexLogs = "imported"
 		state.RiskSummary = RiskSummary{Level: model.RiskInfo}
-		if !codexPresent {
+		if !providerPresent {
 			warning := model.Warning{
 				Code:    "codex_events_missing",
-				Message: "No Codex provider events were observed; provider evidence remains unavailable for this session.",
+				Message: "No provider tool events were observed; provider evidence remains unavailable for this session.",
 			}
 			state.CaptureSources.CodexLogs = "missing"
 			state.RiskSummary = RiskSummary{
 				Level:   model.RiskLow,
-				Reasons: []string{"No Codex provider events were observed."},
+				Reasons: []string{"No provider tool events were observed."},
 			}
 			state.Warnings = appendWarning(state.Warnings, warning)
 		}
@@ -367,7 +369,7 @@ func (m Manager) AppendProviderEvents(ctx context.Context, providerEvents []mode
 			state.EventCount = appended.Seq
 			state.ChainHash = appended.EventHash
 		}
-		if codexEventsPresent(providerEvents) {
+		if providerEventsPresent(providerEvents) {
 			state.CaptureSources.CodexLogs = "imported"
 		}
 		for _, warning := range warnings {
@@ -675,11 +677,33 @@ func codexEventsPresent(events []model.Event) bool {
 	return false
 }
 
+func providerEventsPresent(events []model.Event) bool {
+	for _, event := range events {
+		if isProviderEvidenceEvent(event) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func isCodexProviderEvidenceEvent(event model.Event) bool {
 	if event.Provider != "codex" && event.Source != "codex_session_log" {
 		return false
 	}
 
+	return isProviderToolEvidenceEvent(event)
+}
+
+func isProviderEvidenceEvent(event model.Event) bool {
+	if event.Provider == "" && event.Source != "codex_session_log" && event.Source != "claude_hook" {
+		return false
+	}
+
+	return isProviderToolEvidenceEvent(event)
+}
+
+func isProviderToolEvidenceEvent(event model.Event) bool {
 	switch event.Type {
 	case "provider.command", "provider.command_result", "provider.event":
 		return true

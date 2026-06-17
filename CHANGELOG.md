@@ -7,6 +7,10 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added Claude hook MVP support with dry-run hook installation, guarded settings merges, active-session hook ingestion, and provider-neutral review confidence.
+
 ### Fixed
 
 - Serialized AgentReceipt event-log appenders so concurrent provider, marker, and filesystem watcher writes preserve a replayable hash chain.

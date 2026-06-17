@@ -419,6 +419,7 @@ func TestConfidenceInvariants(t *testing.T) {
 	gitEvent := model.Event{Source: "git_monitor", Type: "git.snapshot"}
 	fsEvent := model.Event{Source: "fs_watcher", Type: "fs.change"}
 	providerEvent := model.Event{Source: "codex_session_log", Provider: "codex", Type: "provider.command"}
+	claudeProviderEvent := model.Event{Source: "claude_hook", Provider: "claude", Type: "provider.command"}
 	warningEvent := model.Event{Source: "codex_session_log", Provider: "codex", Type: "provider.parse_warning"}
 
 	for _, tc := range []struct {
@@ -464,6 +465,17 @@ func TestConfidenceInvariants(t *testing.T) {
 			events: []model.Event{gitEvent, providerEvent},
 			want: model.CaptureConfidence{
 				GitDiff:            model.ConfidenceHigh,
+				FilesystemWrites:   model.ConfidenceNone,
+				ProviderToolEvents: model.ConfidenceMedium,
+				FileReads:          model.ConfidenceNone,
+				NetworkCalls:       model.ConfidenceLow,
+			},
+		},
+		{
+			name:   "claude provider",
+			events: []model.Event{claudeProviderEvent},
+			want: model.CaptureConfidence{
+				GitDiff:            model.ConfidenceNone,
 				FilesystemWrites:   model.ConfidenceNone,
 				ProviderToolEvents: model.ConfidenceMedium,
 				FileReads:          model.ConfidenceNone,

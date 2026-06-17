@@ -523,15 +523,78 @@ func TestWatchCodexReportsMissingLogsOnce(t *testing.T) {
 	}
 }
 
-func TestInstallClaudeIsDeferredNoOp(t *testing.T) {
+func TestInstallClaudeDryRunDoesNotWriteSettings(t *testing.T) {
 	t.Parallel()
 
-	stdout, _, err := executeCommand(t, "install", "claude")
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	stdout, _, err := executeCommand(t, "install", "claude", "--dry-run", "--settings", settingsPath)
 	if err != nil {
 		t.Fatalf("install claude returned error: %v", err)
 	}
-	if !strings.Contains(stdout, "deferred in the Codex-first MVP") {
-		t.Fatalf("install claude output did not explain deferred status: %q", stdout)
+	for _, want := range []string{
+		"Claude settings: " + settingsPath,
+		"Would create or modify: " + settingsPath,
+		"Hook command:",
+		"__internal-claude-hook",
+		"Prompt retention: disabled",
+		"Raw tool output retention: disabled",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, stdout)
+		}
+	}
+	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote settings file: %v", err)
+	}
+}
+
+func TestInstallClaudeMergesSettingsAndIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"theme":"dark","hooks":{"other":{"command":"echo"}}}`), 0o600); err != nil {
+		t.Fatalf("write existing settings: %v", err)
+	}
+	stdout, _, err := executeCommand(t, "install", "claude", "--settings", settingsPath)
+	if err != nil {
+		t.Fatalf("install claude returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "Modified: "+settingsPath) || !strings.Contains(stdout, "Backup: "+settingsPath+".agentreceipt.bak") {
+		t.Fatalf("install output missing modified/backup paths:\n%s", stdout)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	if settings["theme"] != "dark" {
+		t.Fatalf("unrelated setting was not preserved: %+v", settings)
+	}
+	hooks := settings["hooks"].(map[string]any)
+	if hooks["other"] == nil || hooks["agentreceipt"] == nil {
+		t.Fatalf("hooks were not merged: %+v", hooks)
+	}
+	agentreceiptHook := hooks["agentreceipt"].(map[string]any)
+	if agentreceiptHook["command"] == "" {
+		t.Fatalf("hook command missing: %+v", agentreceiptHook)
+	}
+	args := agentreceiptHook["args"].([]any)
+	if len(args) != 1 || args[0] != "__internal-claude-hook" {
+		t.Fatalf("hook args = %+v", args)
+	}
+	privacy := agentreceiptHook["privacy"].(map[string]any)
+	if privacy["store_prompts"] != false || privacy["store_raw_tool_outputs"] != false {
+		t.Fatalf("privacy defaults = %+v", privacy)
+	}
+	stdout, _, err = executeCommand(t, "install", "claude", "--settings", settingsPath)
+	if err != nil {
+		t.Fatalf("second install claude returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "Unchanged: "+settingsPath) {
+		t.Fatalf("second install was not idempotent:\n%s", stdout)
 	}
 }
 
@@ -837,6 +900,54 @@ func TestImportCodexJSONLActiveSession(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "\x1b[") || !strings.Contains(stdout, "AgentReceipt Review") {
 		t.Fatalf("review color output = %q", stdout)
+	}
+}
+
+func TestInternalClaudeHookImportsIntoActiveSessionReview(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	repo := newCommandGitRepo(t)
+
+	if _, _, err := executeCommand(t, "--repo", repo, "start"); err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	attemptPath := filepath.Join(t.TempDir(), "claude-attempt.json")
+	if err := os.WriteFile(attemptPath, []byte(`{"type":"pre_tool_use","payload":{"tool":"Bash","call_id":"call_1","arguments":{"cmd":"go test ./..."}}}`), 0o600); err != nil {
+		t.Fatalf("write attempt hook: %v", err)
+	}
+	stdout, _, err := executeCommand(t, "--repo", repo, "__internal-claude-hook", "--file", attemptPath)
+	if err != nil {
+		t.Fatalf("claude hook attempt returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "events=1") || !strings.Contains(stdout, "warnings=0") {
+		t.Fatalf("attempt output = %q", stdout)
+	}
+	resultPath := filepath.Join(t.TempDir(), "claude-result.json")
+	if err := os.WriteFile(resultPath, []byte(`{"type":"post_tool_use","payload":{"tool":"Bash","call_id":"call_1","exit_code":0,"stdout":"ok"}}`), 0o600); err != nil {
+		t.Fatalf("write result hook: %v", err)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "__internal-claude-hook", "--file", resultPath)
+	if err != nil {
+		t.Fatalf("claude hook result returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "events=1") {
+		t.Fatalf("result output = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--repo", repo, "review", "--json")
+	if err != nil {
+		t.Fatalf("review returned error: %v\n%s", err, stdout)
+	}
+	for _, want := range []string{
+		`"provider": "Claude Code"`,
+		`"command": "go test ./..."`,
+		`"status": "success"`,
+		`"provider_tool_events": "medium"`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("review output missing %q:\n%s", want, stdout)
+		}
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
 	}
 }
 
