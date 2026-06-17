@@ -55,6 +55,7 @@ Structured logging is a runtime stream concern, not the default rendering mechan
   - `--md`
   - `--pr`
 - PR workflow support through generated Markdown and a GitHub CLI convenience command.
+- Future GitHub PR check variants are documented in [GitHub PR Workflow Design](GITHUB_PR_WORKFLOW_DESIGN.md); they are not active CI gates in the Codex-first MVP.
 - Codex provider research/diagnostic command for validating local log evidence before full capture.
 - Policy-driven redaction for export/review payloads
 

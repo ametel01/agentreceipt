@@ -10,6 +10,7 @@ and this project follows semantic versioning.
 ### Added
 
 - Added a Claude provider design covering hook event normalization, storage and privacy behavior, install command requirements, and MVP acceptance criteria.
+- Added a GitHub PR workflow design covering local-only PR comments, future CI-assisted receipt checks, artifact contracts, and deterministic policy boundaries.
 
 ### Fixed
 

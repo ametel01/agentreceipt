@@ -1428,6 +1428,8 @@ Reviewer focus:
 
 ## 20. GitHub Workflow
 
+The future CI-assisted and GitHub Check contract is specified in [GitHub PR Workflow Design](GITHUB_PR_WORKFLOW_DESIGN.md). The current product remains local-first and CLI-driven.
+
 ## 20.1 MVP: CLI-generated PR comment
 
 Use GitHub CLI:
