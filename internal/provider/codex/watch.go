@@ -16,6 +16,7 @@ type TailOptions struct {
 	Offset         int64
 	LineOffset     int
 	MaxOutputBytes int
+	MaxTailBytes   int
 }
 
 type TailResult struct {
@@ -24,6 +25,8 @@ type TailResult struct {
 	NextLineOffset int
 	CompleteLines  int
 }
+
+const defaultMaxTailBytes = 1024 * 1024
 
 func SessionCWD(path string) (string, bool, error) {
 	root, name, err := openRootForPath(path)
@@ -94,16 +97,39 @@ func TailFile(path string, options TailOptions) (TailResult, error) {
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return TailResult{}, err
 	}
-	chunk, err := io.ReadAll(file)
-	if err != nil {
+	maxTailBytes := options.MaxTailBytes
+	if maxTailBytes <= 0 {
+		maxTailBytes = defaultMaxTailBytes
+	}
+	chunk := make([]byte, maxTailBytes)
+	n, err := file.Read(chunk)
+	if err != nil && err != io.EOF {
 		return TailResult{}, err
 	}
+	chunk = chunk[:n]
 	tail := TailResult{NextOffset: offset, NextLineOffset: lineOffset}
 	if len(chunk) == 0 {
 		return tail, nil
 	}
 	lastNewline := bytes.LastIndexByte(chunk, '\n')
 	if lastNewline < 0 {
+		if len(chunk) == maxTailBytes {
+			nextOffset, foundNewline, err := discardOversizedLine(file, offset+int64(len(chunk)), info.Size(), maxTailBytes)
+			if err != nil {
+				return TailResult{}, err
+			}
+			tail.Warnings = append(tail.Warnings, ParseWarning{
+				LineNumber: lineOffset + 1,
+				Code:       "tail_line_too_large",
+				Message:    fmt.Sprintf("Codex JSONL line exceeded max tail read size of %d bytes", maxTailBytes),
+			})
+			tail.WarningCount = len(tail.Warnings)
+			if foundNewline {
+				tail.CompleteLines = 1
+				tail.NextOffset = nextOffset
+				tail.NextLineOffset = lineOffset + 1
+			}
+		}
 		return tail, nil
 	}
 	complete := chunk[:lastNewline+1]
@@ -119,4 +145,29 @@ func TailFile(path string, options TailOptions) (TailResult, error) {
 	})
 
 	return tail, nil
+}
+
+func discardOversizedLine(file interface {
+	Read([]byte) (int, error)
+}, startOffset int64, size int64, maxTailBytes int) (int64, bool, error) {
+	buffer := make([]byte, maxTailBytes)
+	offset := startOffset
+	for offset < size {
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			return offset, false, err
+		}
+		if n == 0 {
+			return offset, false, nil
+		}
+		if newline := bytes.IndexByte(buffer[:n], '\n'); newline >= 0 {
+			return offset + int64(newline) + 1, true, nil
+		}
+		offset += int64(n)
+		if err == io.EOF {
+			return offset, false, nil
+		}
+	}
+
+	return offset, false, nil
 }

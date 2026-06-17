@@ -13,6 +13,7 @@ and this project follows semantic versioning.
 - Fixed review summaries so Codex command results update detected command status to `success` or `failed` when matching result evidence is present, while attempt-only commands remain `unknown`.
 - Fixed review flag behavior by making `review --codex-jsonl` import a Codex trace into the active session before review and removing inactive `--full` and `--provider` flags.
 - Fixed receipt verification portability by embedding the signer public key and key ID in new receipts while preserving legacy local-key verification.
+- Fixed Codex watch tailing so large appended logs are read in bounded chunks while preserving complete-line offsets and partial-line safety.
 
 ## [0.2.0] - 2026-06-17
 
