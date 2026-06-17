@@ -21,6 +21,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/providerevidence"
 	"github.com/ametel01/agentreceipt/internal/signing"
 	"github.com/ametel01/agentreceipt/internal/storage"
 )
@@ -690,28 +691,15 @@ func providerEventsPresent(events []model.Event) bool {
 }
 
 func isCodexProviderEvidenceEvent(event model.Event) bool {
-	if event.Provider != "codex" && event.Source != "codex_session_log" {
+	if event.Provider != providerevidence.ProviderCodex && event.Source != providerevidence.SourceCodex {
 		return false
 	}
 
-	return isProviderToolEvidenceEvent(event)
+	return providerevidence.IsToolEvidenceEvent(event)
 }
 
 func isProviderEvidenceEvent(event model.Event) bool {
-	if event.Provider == "" && event.Source != "codex_session_log" && event.Source != "claude_hook" {
-		return false
-	}
-
-	return isProviderToolEvidenceEvent(event)
-}
-
-func isProviderToolEvidenceEvent(event model.Event) bool {
-	switch event.Type {
-	case "provider.command", "provider.command_result", "provider.event":
-		return true
-	default:
-		return false
-	}
+	return providerevidence.IsProviderEvidenceSource(event) && providerevidence.IsToolEvidenceEvent(event)
 }
 
 func repoPathOrCWD(path string) string {

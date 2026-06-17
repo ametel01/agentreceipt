@@ -22,6 +22,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/providerevidence"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/storage"
 )
@@ -130,7 +131,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		SessionID:     sessionID,
 		GeneratedAt:   time.Now().UTC(),
 		State:         state.State,
-		Provider:      providerLabel(events),
+		Provider:      providerevidence.ProviderLabel(events),
 		Warnings:      state.Warnings,
 		EventsByType:  make(map[string]int),
 	}
@@ -805,31 +806,25 @@ func summarize(events []model.Event, cfg config.Config) model.Summary {
 				}
 			}
 		}
-		if event.Type == "provider.command" {
-			command := commandFromPayload(event.Payload)
-			if command != "" {
-				kind := commandKind(command, cfg)
-				commandAttempts = append(commandAttempts, commandAttempt{
-					command: model.DetectedCommand{
-						Command:    command,
-						Kind:       kind,
-						Status:     "unknown",
-						Source:     event.Source,
-						Confidence: model.ConfidenceMedium,
-					},
-					callID: callIDFromCommandPayload(event.Payload),
-				})
-			}
+		if attempt, ok := providerevidence.CommandAttemptFromEvent(event); ok {
+			kind := commandKind(attempt.Command, cfg)
+			commandAttempts = append(commandAttempts, commandAttempt{
+				command: model.DetectedCommand{
+					Command:    attempt.Command,
+					Kind:       kind,
+					Status:     "unknown",
+					Source:     attempt.Source,
+					Confidence: model.ConfidenceMedium,
+				},
+				callID: attempt.CallID,
+			})
 		}
-		if event.Type == "provider.command_result" {
-			result := commandResultFromPayload(event.Payload)
-			if result.status != "" {
-				if result.callID != "" {
-					resultsByCallID[result.callID] = result.status
-				}
-				if result.command != "" {
-					resultsByCommand[result.command] = result.status
-				}
+		if result, ok := providerevidence.CommandResultFromEvent(event); ok {
+			if result.CallID != "" {
+				resultsByCallID[result.CallID] = result.Status
+			}
+			if result.Command != "" {
+				resultsByCommand[result.Command] = result.Status
 			}
 		}
 	}
@@ -915,12 +910,6 @@ type commandAttempt struct {
 	callID  string
 }
 
-type commandResult struct {
-	callID  string
-	command string
-	status  string
-}
-
 func confidence(events []model.Event) model.CaptureConfidence {
 	confidence := model.CaptureConfidence{
 		GitDiff:            model.ConfidenceNone,
@@ -936,52 +925,12 @@ func confidence(events []model.Event) model.CaptureConfidence {
 		case "fs_watcher":
 			confidence.FilesystemWrites = model.ConfidenceHigh
 		}
-		if isProviderEvidenceSource(event) && isProviderToolEvidenceEvent(event) {
+		if providerevidence.IsProviderEvidenceSource(event) && providerevidence.IsToolEvidenceEvent(event) {
 			confidence.ProviderToolEvents = model.ConfidenceMedium
 		}
 	}
 
 	return confidence
-}
-
-func isProviderEvidenceSource(event model.Event) bool {
-	return event.Provider != "" || event.Source == "codex_session_log" || event.Source == "claude_hook"
-}
-
-func providerLabel(events []model.Event) string {
-	providers := map[string]bool{}
-	for _, event := range events {
-		if !isProviderToolEvidenceEvent(event) {
-			continue
-		}
-		switch {
-		case event.Provider != "":
-			providers[event.Provider] = true
-		case event.Source == "codex_session_log":
-			providers["codex"] = true
-		case event.Source == "claude_hook":
-			providers["claude"] = true
-		}
-	}
-	switch {
-	case providers["codex"] && providers["claude"]:
-		return "Codex CLI + Claude Code"
-	case providers["claude"]:
-		return "Claude Code"
-	case providers["codex"]:
-		return "Codex CLI"
-	default:
-		return "unknown"
-	}
-}
-
-func isProviderToolEvidenceEvent(event model.Event) bool {
-	switch event.Type {
-	case "provider.command", "provider.command_result", "provider.event":
-		return true
-	default:
-		return false
-	}
 }
 
 func risk(summary model.Summary, warnings []model.Warning, events []model.Event, cfg config.Config) model.Risk {
@@ -1084,15 +1033,11 @@ func providerRiskReasons(events []model.Event) []model.RiskReason {
 	reasons := make([]model.RiskReason, 0)
 	seen := map[string]bool{}
 	for _, event := range events {
-		if event.Type != "provider.command" {
-			continue
-		}
-		fallbackCommand := commandFromPayload(event.Payload)
-		for _, signal := range providerRiskSignals(event.Payload, fallbackCommand) {
-			if signal.level == model.RiskLow || signal.level == model.RiskInfo || signal.level == "" {
+		for _, signal := range providerevidence.RiskSignalsFromEvent(event) {
+			if signal.Level == model.RiskLow || signal.Level == model.RiskInfo || signal.Level == "" {
 				continue
 			}
-			code := "provider_risk_" + riskCodeFragment(signal.signal)
+			code := "provider_risk_" + riskCodeFragment(signal.Signal)
 			message := providerRiskMessage(signal)
 			key := code + ":" + message
 			if seen[key] {
@@ -1102,8 +1047,8 @@ func providerRiskReasons(events []model.Event) []model.RiskReason {
 			reasons = append(reasons, model.RiskReason{
 				Code:       code,
 				Message:    message,
-				Level:      signal.level,
-				Confidence: signal.confidence,
+				Level:      signal.Level,
+				Confidence: signal.Confidence,
 			})
 		}
 	}
@@ -1111,58 +1056,18 @@ func providerRiskReasons(events []model.Event) []model.RiskReason {
 	return reasons
 }
 
-type providerRiskSignal struct {
-	level      model.RiskLevel
-	signal     string
-	details    string
-	command    string
-	confidence model.Confidence
-}
-
-func providerRiskSignals(payload map[string]any, fallbackCommand string) []providerRiskSignal {
-	rawSignals := arrayPayload(payload, "risk_signals")
-	signals := make([]providerRiskSignal, 0, len(rawSignals))
-	for _, raw := range rawSignals {
-		signalPayload, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		level := model.RiskLevel(stringPayload(signalPayload, "level"))
-		if riskRank(level) == 0 {
-			continue
-		}
-		confidence := model.Confidence(stringPayload(signalPayload, "confidence"))
-		if confidence == "" {
-			confidence = model.ConfidenceMedium
-		}
-		command := stringPayload(signalPayload, "command")
-		if command == "" {
-			command = fallbackCommand
-		}
-		signals = append(signals, providerRiskSignal{
-			level:      level,
-			signal:     stringPayload(signalPayload, "signal"),
-			details:    stringPayload(signalPayload, "details"),
-			command:    command,
-			confidence: confidence,
-		})
-	}
-
-	return signals
-}
-
-func providerRiskMessage(signal providerRiskSignal) string {
-	label := signal.signal
+func providerRiskMessage(signal providerevidence.RiskSignal) string {
+	label := signal.Signal
 	if label == "" {
 		label = "provider"
 	}
-	details := signal.details
+	details := signal.Details
 	if details == "" {
 		details = "provider classified the command as risky"
 	}
 	message := "Provider risk detected (" + label + "): " + details
-	if signal.command != "" {
-		message += " in command: " + commandSummary(signal.command)
+	if signal.Command != "" {
+		message += " in command: " + commandSummary(signal.Command)
 	}
 
 	return message
@@ -1303,47 +1208,6 @@ func normalizedCommand(command string) string {
 	return strings.Join(strings.Fields(command), " ")
 }
 
-func commandFromPayload(payload map[string]any) string {
-	toolCall, ok := payload["tool_call"].(map[string]any)
-	if !ok {
-		return stringPayload(payload, "command")
-	}
-	if command := stringPayload(toolCall, "command"); command != "" {
-		return command
-	}
-
-	return stringPayload(mapPayload(toolCall, "arguments"), "cmd")
-}
-
-func callIDFromCommandPayload(payload map[string]any) string {
-	if callID := stringPayload(payload, "call_id"); callID != "" {
-		return callID
-	}
-	return stringPayload(mapPayload(payload, "tool_call"), "call_id")
-}
-
-func commandResultFromPayload(payload map[string]any) commandResult {
-	resultPayload := mapPayload(payload, "command_result")
-	if resultPayload == nil {
-		resultPayload = payload
-	}
-
-	return commandResult{
-		callID:  stringPayload(resultPayload, "call_id"),
-		command: stringPayload(resultPayload, "command"),
-		status:  normalizeCommandStatus(stringPayload(resultPayload, "status")),
-	}
-}
-
-func normalizeCommandStatus(status string) string {
-	switch status {
-	case "success", "failed", "unknown":
-		return status
-	default:
-		return ""
-	}
-}
-
 func readState(layout storage.Layout) (session.State, error) {
 	root, err := os.OpenRoot(layout.Session)
 	if err != nil {
@@ -1378,22 +1242,6 @@ func boolPayload(payload map[string]any, key string) bool {
 	}
 
 	return false
-}
-
-func mapPayload(payload map[string]any, key string) map[string]any {
-	if value, ok := payload[key].(map[string]any); ok {
-		return value
-	}
-
-	return map[string]any{}
-}
-
-func arrayPayload(payload map[string]any, key string) []any {
-	if value, ok := payload[key].([]any); ok {
-		return value
-	}
-
-	return nil
 }
 
 func maxRisk(left model.RiskLevel, right model.RiskLevel) model.RiskLevel {

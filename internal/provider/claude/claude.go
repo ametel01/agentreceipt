@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/providerevidence"
 )
 
 const (
@@ -116,25 +117,19 @@ func (r *ParseResult) consumeRecord(options ParseOptions, raw map[string]any) {
 }
 
 func (r *ParseResult) consumeCommandAttempt(options ParseOptions, payload map[string]any, ts string, rawType string, callID string, tool string, command string, arguments map[string]any, privacy parsePrivacy) {
-	toolCall := map[string]any{
-		"call_id":   callID,
-		"tool":      tool,
-		"command":   command,
-		"arguments": redactMap(arguments, privacy),
-	}
-	r.Events = append(r.Events, model.Event{
+	r.Events = append(r.Events, providerevidence.NewCommandEvent(providerevidence.EventMeta{
 		EventID:   fmt.Sprintf("evt_claude_%d", len(r.Events)+1),
 		SessionID: options.SessionID,
 		Timestamp: parseTime(ts),
 		Source:    Source,
-		Type:      "provider.command",
 		Provider:  "claude",
 		CWD:       options.CWD,
-		Payload: map[string]any{
-			"raw_type":  rawType,
-			"tool_call": toolCall,
-		},
-	})
+	}, providerevidence.ToolCall{
+		CallID:    callID,
+		Tool:      tool,
+		Command:   command,
+		Arguments: redactMap(arguments, privacy),
+	}, nil, map[string]any{"raw_type": rawType}))
 	r.CommandCount++
 	if callID == "" {
 		r.addWarning("claude_missing_call_id", "Claude command hook record is missing call_id.")
@@ -158,35 +153,27 @@ func (r *ParseResult) consumeCommandResult(options ParseOptions, payload map[str
 	if privacy.storeRawToolOutputs {
 		storedOutput = redact(rawOutput, privacy)
 	}
-	commandResult := map[string]any{
-		"call_id":          callID,
-		"tool":             tool,
-		"command":          command,
-		"status":           status,
-		"stdout_truncated": truncated,
-	}
+	var exitCodePtr *int
 	if hasExitCode {
-		commandResult["exit_code"] = exitCode
+		exitCodePtr = &exitCode
 	}
-	if failedReason != "" {
-		commandResult["failed_reason"] = redact(failedReason, privacy)
-	}
-	if storedOutput != "" {
-		commandResult["stdout"] = storedOutput
-	}
-	r.Events = append(r.Events, model.Event{
+	r.Events = append(r.Events, providerevidence.NewCommandResultEvent(providerevidence.EventMeta{
 		EventID:   fmt.Sprintf("evt_claude_%d", len(r.Events)+1),
 		SessionID: options.SessionID,
 		Timestamp: parseTime(ts),
 		Source:    Source,
-		Type:      "provider.command_result",
 		Provider:  "claude",
 		CWD:       options.CWD,
-		Payload: map[string]any{
-			"raw_type":       rawType,
-			"command_result": commandResult,
-		},
-	})
+	}, providerevidence.CommandResult{
+		CallID:          callID,
+		Tool:            tool,
+		Command:         command,
+		Status:          status,
+		StdoutTruncated: truncated,
+		FailedReason:    redact(failedReason, privacy),
+		Stdout:          storedOutput,
+		ExitCode:        exitCodePtr,
+	}, map[string]any{"raw_type": rawType}))
 	r.CommandCount++
 	if callID == "" {
 		r.addWarning("claude_missing_call_id", "Claude command-result hook record is missing call_id.")
@@ -194,31 +181,28 @@ func (r *ParseResult) consumeCommandResult(options ParseOptions, payload map[str
 }
 
 func (r *ParseResult) consumeProviderEvent(options ParseOptions, ts string, rawType string, callID string, tool string, arguments map[string]any, category string, privacy parsePrivacy) {
-	toolCall := map[string]any{
-		"call_id": callID,
-		"tool":    tool,
-	}
-	if len(arguments) > 0 {
-		toolCall["arguments"] = redactMap(arguments, privacy)
-	}
 	payload := map[string]any{
-		"raw_type":  rawType,
-		"category":  category,
-		"tool_call": toolCall,
+		"raw_type": rawType,
+		"category": category,
 	}
 	if privacy.storePrompts && isPromptRecord(rawType) {
 		payload["prompt_retained"] = true
 	}
-	r.Events = append(r.Events, model.Event{
+	toolCall := providerevidence.ToolCall{
+		CallID: callID,
+		Tool:   tool,
+	}
+	if len(arguments) > 0 {
+		toolCall.Arguments = redactMap(arguments, privacy)
+	}
+	r.Events = append(r.Events, providerevidence.NewToolEvent(providerevidence.EventMeta{
 		EventID:   fmt.Sprintf("evt_claude_%d", len(r.Events)+1),
 		SessionID: options.SessionID,
 		Timestamp: parseTime(ts),
 		Source:    Source,
-		Type:      "provider.event",
 		Provider:  "claude",
 		CWD:       options.CWD,
-		Payload:   payload,
-	})
+	}, toolCall, payload))
 }
 
 func (r *ParseResult) addWarning(code string, message string) {

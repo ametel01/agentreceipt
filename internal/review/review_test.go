@@ -11,6 +11,7 @@ import (
 
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/providerevidence"
 	"github.com/ametel01/agentreceipt/internal/session"
 )
 
@@ -21,20 +22,16 @@ func TestBuildReviewFromSessionEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	providerEvent := model.Event{
+	providerEvent := providerevidence.NewCommandEvent(providerevidence.EventMeta{
 		EventID:   "evt_codex_review",
 		SessionID: state.SessionID,
 		Timestamp: fixedReviewNow(),
-		Source:    "codex_session_log",
-		Type:      "provider.command",
-		Provider:  "codex",
+		Source:    providerevidence.SourceCodex,
+		Provider:  providerevidence.ProviderCodex,
 		CWD:       repo,
-		Payload: map[string]any{
-			"tool_call": map[string]any{
-				"command": "curl https://example.com",
-			},
-		},
-	}
+	}, providerevidence.ToolCall{
+		Command: "curl https://example.com",
+	}, nil, nil)
 	if _, _, err := manager.AppendProviderEvents(context.Background(), []model.Event{providerEvent}, nil); err != nil {
 		t.Fatalf("AppendProviderEvents() error = %v", err)
 	}
@@ -667,7 +664,7 @@ func TestProviderLabel(t *testing.T) {
 		want   string
 	}{
 		{name: "none", want: "unknown"},
-		{name: "codex", events: []model.Event{{Source: "codex_session_log", Type: "provider.command"}}, want: "Codex CLI"},
+		{name: "codex", events: []model.Event{{Source: "codex_session_log", Type: "provider.command", Provider: "unknown"}}, want: "Codex CLI"},
 		{name: "claude", events: []model.Event{{Source: "claude_hook", Type: "provider.command", Provider: "claude"}}, want: "Claude Code"},
 		{name: "both", events: []model.Event{
 			{Source: "codex_session_log", Type: "provider.command", Provider: "codex"},
@@ -676,8 +673,8 @@ func TestProviderLabel(t *testing.T) {
 		{name: "warning only", events: []model.Event{{Source: "claude_hook", Type: "provider.parse_warning", Provider: "claude"}}, want: "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := providerLabel(tc.events); got != tc.want {
-				t.Fatalf("providerLabel() = %q, want %q", got, tc.want)
+			if got := providerevidence.ProviderLabel(tc.events); got != tc.want {
+				t.Fatalf("ProviderLabel() = %q, want %q", got, tc.want)
 			}
 		})
 	}

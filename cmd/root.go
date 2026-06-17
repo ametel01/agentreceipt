@@ -20,6 +20,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/provider/claude"
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
+	"github.com/ametel01/agentreceipt/internal/providerevidence"
 	"github.com/ametel01/agentreceipt/internal/receipt"
 	"github.com/ametel01/agentreceipt/internal/review"
 	"github.com/ametel01/agentreceipt/internal/session"
@@ -719,71 +720,13 @@ func seedCodexWatchTokenBaseline(ctx context.Context, manager session.Manager, r
 
 func lastCodexTokenTotal(events []model.Event) (int, bool) {
 	for index := len(events) - 1; index >= 0; index-- {
-		total, ok := codexTokenTotal(events[index])
+		total, ok := providerevidence.TokenTotal(events[index])
 		if ok {
 			return total, true
 		}
 	}
 
 	return 0, false
-}
-
-func codexTokenTotal(event model.Event) (int, bool) {
-	if event.Source != codex.Source && event.Provider != "codex" {
-		return 0, false
-	}
-	if stringPayload(event.Payload, "payload_type") != "token_count" {
-		return 0, false
-	}
-	if usage := mapPayload(event.Payload, "token_usage"); usage != nil {
-		return intPayload(usage, "total_tokens")
-	}
-	raw := mapPayload(event.Payload, "raw")
-	payload := mapPayload(raw, "payload")
-	if payload == nil {
-		payload = raw
-	}
-	info := mapPayload(payload, "info")
-	usage := mapPayload(info, "last_token_usage")
-
-	return intPayload(usage, "total_tokens")
-}
-
-func stringPayload(payload map[string]any, key string) string {
-	if value, ok := payload[key].(string); ok {
-		return value
-	}
-
-	return ""
-}
-
-func mapPayload(payload map[string]any, key string) map[string]any {
-	if payload == nil {
-		return nil
-	}
-	if value, ok := payload[key].(map[string]any); ok {
-		return value
-	}
-
-	return nil
-}
-
-func intPayload(payload map[string]any, key string) (int, bool) {
-	switch value := payload[key].(type) {
-	case int:
-		return value, true
-	case float64:
-		return int(value), true
-	case json.Number:
-		parsed, err := value.Int64()
-		if err != nil {
-			return 0, false
-		}
-
-		return int(parsed), true
-	default:
-		return 0, false
-	}
 }
 
 func codexCandidateMatches(candidate codex.Candidate, repoRoot string, watchStarted time.Time) (bool, string) {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/ametel01/agentreceipt/internal/commandrisk"
 	"github.com/ametel01/agentreceipt/internal/model"
+	"github.com/ametel01/agentreceipt/internal/providerevidence"
 	"github.com/ametel01/agentreceipt/internal/storage"
 )
 
@@ -132,16 +133,7 @@ type TokenUsageEvent struct {
 	Source                string `json:"source"`
 }
 
-type RiskSignal struct {
-	SessionID  string           `json:"session_id"`
-	Level      model.RiskLevel  `json:"level"`
-	Signal     string           `json:"signal"`
-	Category   string           `json:"category,omitempty"`
-	Command    string           `json:"command,omitempty"`
-	Details    string           `json:"details"`
-	LineNumber int              `json:"line_no"`
-	Confidence model.Confidence `json:"confidence"`
-}
+type RiskSignal = providerevidence.RiskSignal
 
 type ConfidenceRecord struct {
 	Source     string           `json:"source"`
@@ -290,10 +282,8 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 		Source:     "session_jsonl",
 	}
 	r.ToolCalls = append(r.ToolCalls, toolCall)
-	eventType := "provider.event"
 	var riskSignals []RiskSignal
 	if command != "" {
-		eventType = "provider.command"
 		r.Commands = append(r.Commands, CommandEvent{
 			SessionID:  options.SessionID,
 			LineNumber: r.LineCount,
@@ -307,24 +297,35 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 		})
 		riskSignals = r.addRiskSignals(options, command)
 	}
-	eventPayload := map[string]any{
-		"line_no":   r.LineCount,
-		"tool_call": toolCall,
-		"raw_type":  stringField(raw, "type"),
-	}
-	if len(riskSignals) > 0 {
-		eventPayload["risk_signals"] = riskSignals
-	}
-	r.Events = append(r.Events, model.Event{
+	meta := providerevidence.EventMeta{
 		EventID:   fmt.Sprintf("evt_codex_%d", r.LineCount),
 		SessionID: options.SessionID,
 		Timestamp: parseTime(ts),
 		Source:    Source,
-		Type:      eventType,
 		Provider:  "codex",
 		CWD:       options.CWD,
-		Payload:   eventPayload,
-	})
+	}
+	fields := map[string]any{
+		"line_no":  r.LineCount,
+		"raw_type": stringField(raw, "type"),
+	}
+	providerToolCall := providerevidence.ToolCall{
+		SessionID:  toolCall.SessionID,
+		LineNumber: toolCall.LineNumber,
+		Time:       toolCall.Time,
+		TurnID:     toolCall.TurnID,
+		Tool:       toolCall.Tool,
+		ToolType:   toolCall.ToolType,
+		CallID:     toolCall.CallID,
+		Arguments:  toolCall.Arguments,
+		Command:    toolCall.Command,
+		Source:     toolCall.Source,
+	}
+	if command != "" {
+		r.Events = append(r.Events, providerevidence.NewCommandEvent(meta, providerToolCall, riskSignals, fields))
+	} else {
+		r.Events = append(r.Events, providerevidence.NewToolEvent(meta, providerToolCall, fields))
+	}
 	if tool == "" {
 		r.addWarning(r.LineCount, "missing_tool_name", "function call record is missing tool name")
 	}
@@ -364,19 +365,27 @@ func (r *ParseResult) consumeCommandOutput(options ParseOptions, payload map[str
 			Time:       ts,
 		})
 	}
-	r.Events = append(r.Events, model.Event{
+	r.Events = append(r.Events, providerevidence.NewCommandResultEvent(providerevidence.EventMeta{
 		EventID:   fmt.Sprintf("evt_codex_%d", r.LineCount),
 		SessionID: options.SessionID,
 		Timestamp: parseTime(ts),
 		Source:    Source,
-		Type:      "provider.command_result",
 		Provider:  "codex",
 		CWD:       options.CWD,
-		Payload: map[string]any{
-			"line_no":        r.LineCount,
-			"command_result": commandEvent,
-		},
-	})
+	}, providerevidence.CommandResult{
+		SessionID:       commandEvent.SessionID,
+		LineNumber:      commandEvent.LineNumber,
+		CallID:          commandEvent.CallID,
+		TurnID:          commandEvent.TurnID,
+		Tool:            commandEvent.Tool,
+		Time:            commandEvent.Time,
+		Status:          commandEvent.Status,
+		ExitCode:        commandEvent.ExitCode,
+		Stdout:          commandEvent.Stdout,
+		StdoutTruncated: commandEvent.StdoutTruncated,
+		FailedReason:    commandEvent.FailedReason,
+		Source:          commandEvent.Source,
+	}, map[string]any{"line_no": r.LineCount}))
 }
 
 func (r *ParseResult) consumeTokenCount(options ParseOptions, payload map[string]any, turnID string) {
@@ -520,16 +529,14 @@ func providerEvent(options ParseOptions, lineNumber int, ts string, recordType s
 		}
 	}
 
-	return model.Event{
+	return providerevidence.NewProviderEvent(providerevidence.EventMeta{
 		EventID:   fmt.Sprintf("evt_codex_%d", lineNumber),
 		SessionID: options.SessionID,
 		Timestamp: parseTime(ts),
 		Source:    Source,
-		Type:      "provider.event",
 		Provider:  "codex",
 		CWD:       options.CWD,
-		Payload:   payload,
-	}
+	}, payload)
 }
 
 func tokenUsagePayload(raw map[string]any) map[string]any {
@@ -553,20 +560,14 @@ func tokenUsagePayload(raw map[string]any) map[string]any {
 }
 
 func warningEvent(options ParseOptions, lineNumber int, code string, message string) model.Event {
-	return model.Event{
+	return providerevidence.NewParseWarningEvent(providerevidence.EventMeta{
 		EventID:   fmt.Sprintf("evt_codex_warning_%d", lineNumber),
 		SessionID: options.SessionID,
 		Timestamp: time.Now().UTC(),
 		Source:    Source,
-		Type:      "provider.parse_warning",
 		Provider:  "codex",
 		CWD:       options.CWD,
-		Payload: map[string]any{
-			"line_no": lineNumber,
-			"code":    code,
-			"message": message,
-		},
-	}
+	}, lineNumber, code, message)
 }
 
 func summarize(recordType string, payloadType string, payload map[string]any, privacy parsePrivacy) string {

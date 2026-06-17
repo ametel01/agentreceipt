@@ -34,7 +34,7 @@ func TestNormalizeCommandResultOmitsRawOutputByDefault(t *testing.T) {
 		t.Fatalf("result counts = %+v", result)
 	}
 	commandResult := result.Events[0].Payload["command_result"].(map[string]any)
-	if commandResult["status"] != "failed" || commandResult["exit_code"] != 7 {
+	if commandResult["status"] != "failed" || commandResult["exit_code"] != float64(7) {
 		t.Fatalf("command_result status = %+v", commandResult)
 	}
 	if _, ok := commandResult["stdout"]; ok {

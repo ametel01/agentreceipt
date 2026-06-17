@@ -682,45 +682,6 @@ func TestInternalFilesystemWatcherCommandValidatesConfig(t *testing.T) {
 	}
 }
 
-func TestCommandPayloadHelpers(t *testing.T) {
-	t.Parallel()
-
-	payload := map[string]any{
-		"string": "value",
-		"map":    map[string]any{"nested": "ok"},
-		"int":    7,
-		"float":  8.0,
-		"number": json.Number("9"),
-	}
-	if got := stringPayload(payload, "string"); got != "value" {
-		t.Fatalf("stringPayload() = %q", got)
-	}
-	if got := stringPayload(payload, "missing"); got != "" {
-		t.Fatalf("missing stringPayload() = %q", got)
-	}
-	if got := mapPayload(payload, "map"); got["nested"] != "ok" {
-		t.Fatalf("mapPayload() = %+v", got)
-	}
-	if got := mapPayload(payload, "string"); got != nil {
-		t.Fatalf("non-map mapPayload() = %+v", got)
-	}
-	for key, want := range map[string]int{"int": 7, "float": 8, "number": 9} {
-		got, ok := intPayload(payload, key)
-		if !ok || got != want {
-			t.Fatalf("intPayload(%q) = %d, %v, want %d true", key, got, ok, want)
-		}
-	}
-	if got, ok := intPayload(payload, "missing"); ok || got != 0 {
-		t.Fatalf("missing intPayload() = %d, %v", got, ok)
-	}
-	if got := emptyDefault("", "fallback"); got != "fallback" {
-		t.Fatalf("emptyDefault empty = %q", got)
-	}
-	if got := emptyDefault("value", "fallback"); got != "value" {
-		t.Fatalf("emptyDefault value = %q", got)
-	}
-}
-
 func TestInitCommandCreatesConfigPolicyStorageAndKeys(t *testing.T) {
 	repo := newCommandGitRepo(t)
 	homeDir := filepath.Join(t.TempDir(), "home")
