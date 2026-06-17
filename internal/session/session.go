@@ -60,6 +60,16 @@ type RiskSummary struct {
 	Reasons []string        `json:"reasons"`
 }
 
+type SessionSummary struct {
+	SessionID  string             `json:"session_id"`
+	State      model.SessionState `json:"state"`
+	Active     bool               `json:"active"`
+	StartedAt  time.Time          `json:"started_at"`
+	UpdatedAt  time.Time          `json:"updated_at"`
+	EventCount int64              `json:"event_count"`
+	Warnings   int                `json:"warnings"`
+}
+
 func (m Manager) Start(ctx context.Context) (State, error) {
 	repoRoot, err := gitmonitor.DiscoverRoot(ctx, repoPathOrCWD(m.RepoPath))
 	if err != nil {
@@ -171,6 +181,67 @@ func (m Manager) Status(ctx context.Context) (State, bool, error) {
 	}
 
 	return m.activeSession(repoRoot)
+}
+
+func (m Manager) List(ctx context.Context) ([]SessionSummary, error) {
+	repoRoot, err := gitmonitor.DiscoverRoot(ctx, repoPathOrCWD(m.RepoPath))
+	if err != nil {
+		return nil, err
+	}
+	sessionsPath, err := storage.SessionsPath(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(sessionsPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	activeID, active, err := readActiveSession(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]SessionSummary, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sessionID := entry.Name()
+		if err := storage.ValidateSessionID(sessionID); err != nil {
+			continue
+		}
+		layout, err := storage.NewLayout(repoRoot, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		state, err := readState(layout)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, SessionSummary{
+			SessionID:  state.SessionID,
+			State:      state.State,
+			Active:     active && state.SessionID == activeID,
+			StartedAt:  state.StartedAt,
+			UpdatedAt:  state.UpdatedAt,
+			EventCount: state.EventCount,
+			Warnings:   len(state.Warnings),
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].UpdatedAt.Equal(summaries[j].UpdatedAt) {
+			return summaries[i].SessionID > summaries[j].SessionID
+		}
+
+		return summaries[i].UpdatedAt.After(summaries[j].UpdatedAt)
+	})
+
+	return summaries, nil
 }
 
 func (m Manager) Live(ctx context.Context, limit int) ([]model.Event, error) {

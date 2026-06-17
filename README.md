@@ -129,19 +129,35 @@ agentreceipt --color always start --watch
 
 When multiple Codex sessions exist, AgentReceipt prefers logs whose Codex `cwd` metadata matches the current git repository. Newly created Codex logs without `cwd` metadata are followed briefly so early tool calls are not missed.
 
-### 3) End session and finalize
+### 3) Find recorded sessions
+
+```bash
+agentreceipt sessions
+```
+
+`sessions` lists AgentReceipt sessions for the current repository, newest first. Use it when you need a session ID for `review --session`, `verify --session`, or `export --session`.
+
+```text
+SESSION                                  STATE      ACTIVE  UPDATED              EVENTS  WARNINGS
+ar_ses_...                               active     *       2026-06-18 03:06:15  450     0
+ar_ses_...                               finalized          2026-06-17 16:37:57  7141    0
+```
+
+The `ACTIVE` column marks the current open session with `*`.
+
+### 4) End session and finalize
 
 ```bash
 agentreceipt stop
 ```
 
-### 4) Review the receipt
+### 5) Review the receipt
 
 ```bash
 agentreceipt review
 ```
 
-### 5) Verify integrity
+### 6) Verify integrity
 
 ```bash
 agentreceipt verify
@@ -151,7 +167,7 @@ agentreceipt verify bundle ./agentreceipt
 Receipts embed the signer public key and key ID, so verification works from shared artifacts without the signer's local key directory.
 `verify bundle` checks a local artifact bundle and does not contact GitHub or enforce CI policy.
 
-### 6) Export for PRs
+### 7) Export for PRs
 
 ```bash
 agentreceipt review --pr
@@ -277,6 +293,33 @@ Explicit `--config` files control local review policy, including configured qual
 
 ## Quick command reference
 
+The visible CLI surface is:
+
+| Command | Purpose |
+| --- | --- |
+| `agentreceipt init` | Bootstrap global AgentReceipt storage and signing keys. |
+| `agentreceipt install codex` | Detect local Codex log availability. |
+| `agentreceipt install claude` | Install or update the Claude Code hook integration. |
+| `agentreceipt start` | Start a local receipt capture session. |
+| `agentreceipt start --watch` | Start or resume a session while tailing matching Codex logs. |
+| `agentreceipt status` | Show active session health and event counts. |
+| `agentreceipt sessions` | List sessions available for the current repository. |
+| `agentreceipt events` | Show recent session events as a readable timeline. |
+| `agentreceipt stop` | Finalize the active capture session. |
+| `agentreceipt review` | Build a reviewer-focused receipt summary. |
+| `agentreceipt verify` | Verify receipt integrity and signatures. |
+| `agentreceipt verify bundle <path>` | Verify a local AgentReceipt artifact bundle. |
+| `agentreceipt export` | Export finalized receipt artifacts. |
+| `agentreceipt import codex-jsonl <path>` | Import a Codex JSONL trace into the active session. |
+| `agentreceipt inspect codex` | Inspect local Codex evidence availability. |
+| `agentreceipt mark <message>` | Add a human context marker to the active session. |
+| `agentreceipt pr comment` | Post receipt Markdown to the current pull request. |
+| `agentreceipt version` | Print the AgentReceipt version. |
+| `agentreceipt completion <shell>` | Generate shell completion for `bash`, `fish`, `powershell`, or `zsh`. |
+| `agentreceipt help [command]` | Show command help. |
+
+The deprecated hidden `agentreceipt live` alias remains for compatibility, but `agentreceipt events` is the documented command.
+
 ```bash
 # Setup
 agentreceipt init # optional global storage/key setup
@@ -286,7 +329,10 @@ agentreceipt install codex # optional read-only Codex log detection
 agentreceipt start
 agentreceipt start --watch
 agentreceipt status
-agentreceipt live
+agentreceipt sessions
+agentreceipt events
+agentreceipt events --format json # indented JSON array
+agentreceipt events --format jsonl # compact JSON lines for scripts
 agentreceipt stop
 
 # Review & checks
@@ -317,6 +363,11 @@ agentreceipt install claude --dry-run --settings ~/.claude/settings.json
 # Human context and PRs
 agentreceipt mark "Manually reviewed generated auth changes"
 agentreceipt pr comment
+
+# Utility
+agentreceipt version
+agentreceipt completion zsh
+agentreceipt help events
 ```
 
 > Note: Codex remains the primary live-watch path. Claude support currently installs a local hook command that imports normalized hook JSON into the active session without retaining prompts or raw tool output by default.

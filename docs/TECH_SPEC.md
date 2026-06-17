@@ -109,7 +109,8 @@ fs events + git signals + codex logs
 | `agentreceipt install claude` | Deferred roadmap path; command may explain that Claude hook installation is not active in Codex-first MVP. |
 | `agentreceipt start` | Fail-fast if git monitor or filesystem watcher cannot initialize. Create session, persist `manifest.json`, begin capture. |
 | `agentreceipt status` | Show current session health and event summary counts. |
-| `agentreceipt live` | Stream recent canonicalized events from current session. |
+| `agentreceipt sessions` | List known sessions for the current repository, ordered by most recently updated. |
+| `agentreceipt events` | Show recent canonicalized events from current session as a readable timeline; `--format json` prints an indented JSON array and `--format jsonl` prints compact JSON lines. |
 | `agentreceipt stop` | Finalize session, compute diff/hash/signature/manifest summary, emit warning if Codex provider evidence missing, exit success (non-blocking). |
 | `agentreceipt review` | Produce concise summary in terminal (`--last`, `--session <id>`, `--security`, `--diff`, `--codex-jsonl <path>`, `--json`, `--md`, `--pr`). |
 | `agentreceipt verify` | Validate chain, manifest, diff hash, signature. |
@@ -338,7 +339,8 @@ idle -> starting -> active -> finalizing -> finalized -> verified(optional)
 Transitions:
 
 - `start`: validate repo + watchers, create global session directories keyed by repo path, seed manifest
-- `status/live`: readable only if active
+- `status/events`: readable only if active
+- `sessions`: readable whenever repository storage exists; empty list is non-fatal
 - `stop`: snapshot final state -> build diffs -> compute hashes -> sign -> write artifacts
 - On corruption, emit explicit warning and mark `receipt_verification=invalid` only for verify/report output.
 

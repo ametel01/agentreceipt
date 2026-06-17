@@ -189,17 +189,24 @@ agentreceipt start
 
 This starts a local capture session with Git and filesystem evidence. Provider events can still be appended later by Codex import, Codex review import, or Claude hooks while the session is active.
 
-### Status And Live Events
+### Status And Event Log
 
 ```bash
 agentreceipt status
-agentreceipt live
-agentreceipt live --limit 50
+agentreceipt sessions
+agentreceipt events
+agentreceipt events --limit 50
+agentreceipt events --format json
+agentreceipt events --format jsonl
 ```
 
 `status` renders the active session state, capture sources, event count, chain hash, and warnings.
 
-`live` streams recent canonical session events as JSON, not as a narrative terminal timeline.
+`sessions` lists AgentReceipt sessions available for the current repository, including state, active marker, updated time, event count, and warning count.
+
+`events` renders recent canonical session events as a readable terminal timeline by default, with color controlled by `--color`.
+
+`events --format json` prints an indented JSON array. `events --format jsonl` prints compact newline-delimited JSON for scripts.
 
 ### Human Markers
 
@@ -291,7 +298,8 @@ All commands inherit:
 | `agentreceipt start` | Starts a capture session. Fails if an active session already exists. |
 | `agentreceipt start --watch` | Starts or resumes a session and tails matching Codex logs into the active receipt. |
 | `agentreceipt status` | Shows the active session state. Prints no-active-session text when none exists. |
-| `agentreceipt live` | Emits recent active-session events as JSON lines. |
+| `agentreceipt sessions` | Lists sessions for the current repository. |
+| `agentreceipt events` | Shows recent active-session events as a readable timeline. Supports `--format json` and `--format jsonl`. |
 | `agentreceipt stop` | Finalizes the active session and signs receipt artifacts. |
 | `agentreceipt review` | Builds a reviewer-focused report from a finalized or selected session. |
 | `agentreceipt verify` | Verifies local receipt integrity and exits non-zero when invalid. |

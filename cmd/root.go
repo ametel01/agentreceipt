@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
@@ -33,6 +34,12 @@ const (
 	colorModeAuto   = "auto"
 	colorModeAlways = "always"
 	colorModeNever  = "never"
+)
+
+const (
+	eventsFormatText  = "text"
+	eventsFormatJSON  = "json"
+	eventsFormatJSONL = "jsonl"
 )
 
 // Execute runs the AgentReceipt CLI.
@@ -69,7 +76,9 @@ func NewRootCommand(version string) *cobra.Command {
 		newInstallCommand(),
 		newStartCommand(),
 		newStatusCommand(),
-		newLiveCommand(),
+		newSessionsCommand(),
+		newEventsCommand(),
+		newDeprecatedLiveCommand(),
 		newStopCommand(),
 		newReviewCommand(),
 		newVerifyCommand(),
@@ -139,7 +148,8 @@ Core commands:
   install claude
   start
   status
-  live
+  sessions
+  events
   stop
   review
   verify
@@ -849,41 +859,123 @@ func newStatusCommand() *cobra.Command {
 	}
 }
 
-func newLiveCommand() *cobra.Command {
-	live := &cobra.Command{
-		Use:   "live",
-		Short: "Stream recent canonical session events",
+func newSessionsCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sessions",
+		Short: "List sessions for the current repository",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			manager, err := managerFromCommand(cmd)
 			if err != nil {
 				return err
 			}
-			limit, err := cmd.Flags().GetInt("limit")
+			summaries, err := manager.List(cmd.Context())
 			if err != nil {
 				return err
 			}
-			events, err := manager.Live(cmd.Context(), limit)
-			if err != nil {
+			if len(summaries) == 0 {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No AgentReceipt sessions found for this repository.")
 				return err
-			}
-			if len(events) == 0 {
-				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
-				return err
-			}
-			encoder := json.NewEncoder(cmd.OutOrStdout())
-			encoder.SetEscapeHTML(false)
-			for _, event := range events {
-				if err := encoder.Encode(event); err != nil {
-					return err
-				}
 			}
 
-			return nil
+			return printSessionSummaries(cmd.OutOrStdout(), summaries)
 		},
 	}
-	live.Flags().Int("limit", 20, "Maximum number of recent events to print")
+}
+
+func printSessionSummaries(out io.Writer, summaries []session.SessionSummary) error {
+	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, "SESSION\tSTATE\tACTIVE\tUPDATED\tEVENTS\tWARNINGS"); err != nil {
+		return err
+	}
+	for _, summary := range summaries {
+		active := ""
+		if summary.Active {
+			active = "*"
+		}
+		updated := "unknown"
+		if !summary.UpdatedAt.IsZero() {
+			updated = summary.UpdatedAt.Local().Format("2006-01-02 15:04:05")
+		}
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%d\t%d\n", summary.SessionID, summary.State, active, updated, summary.EventCount, summary.Warnings); err != nil {
+			return err
+		}
+	}
+
+	return writer.Flush()
+}
+
+func newEventsCommand() *cobra.Command {
+	events := &cobra.Command{
+		Use:   "events",
+		Short: "Show recent session events",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runEventsCommand(cmd)
+		},
+	}
+	addEventsFlags(events)
+
+	return events
+}
+
+func newDeprecatedLiveCommand() *cobra.Command {
+	live := &cobra.Command{
+		Use:    "live",
+		Short:  "Deprecated alias for events",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning: `agentreceipt live` is deprecated; use `agentreceipt events` instead."); err != nil {
+				return err
+			}
+			return runEventsCommand(cmd)
+		},
+	}
+	addEventsFlags(live)
 
 	return live
+}
+
+func addEventsFlags(cmd *cobra.Command) {
+	cmd.Flags().Int("limit", 20, "Maximum number of recent events to print")
+	cmd.Flags().String("format", eventsFormatText, "Output format: text, json, or jsonl")
+}
+
+func runEventsCommand(cmd *cobra.Command) error {
+	manager, err := managerFromCommand(cmd)
+	if err != nil {
+		return err
+	}
+	limit, err := cmd.Flags().GetInt("limit")
+	if err != nil {
+		return err
+	}
+	events, err := manager.Live(cmd.Context(), limit)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
+		return err
+	}
+	format, err := cmd.Flags().GetString("format")
+	if err != nil {
+		return err
+	}
+	switch format {
+	case eventsFormatText:
+		colorMode, err := colorModeFromCommand(cmd)
+		if err != nil {
+			return err
+		}
+		out := cmd.OutOrStdout()
+		_, err = fmt.Fprint(out, renderEventsTerminal(events, colorOutputEnabled(colorMode, out)))
+		return err
+	case eventsFormatJSON:
+		return printEventsJSON(cmd.OutOrStdout(), events)
+	case eventsFormatJSONL:
+		return printEventsJSONL(cmd.OutOrStdout(), events)
+	default:
+		return fmt.Errorf("--format must be one of text, json, or jsonl")
+	}
 }
 
 func newStopCommand() *cobra.Command {

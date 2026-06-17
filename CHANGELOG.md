@@ -7,6 +7,16 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added `agentreceipt sessions` to list sessions available for the current repository.
+
+### Changed
+
+- Renamed the JSON event-log viewer command from `agentreceipt live` to `agentreceipt events`; `live` remains as a hidden deprecated alias for compatibility.
+- Changed `agentreceipt events` to render a colorized readable timeline by default, with `--format json` for indented JSON and `--format jsonl` for compact JSON lines.
+- Documented the current visible command surface in the README, including utility commands such as `version`, `completion`, and `help`.
+
 ## [0.5.0] - 2026-06-17
 
 ### Changed

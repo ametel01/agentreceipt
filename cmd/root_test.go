@@ -35,7 +35,8 @@ func TestRootHelpListsCommandSurface(t *testing.T) {
 		"install claude",
 		"start",
 		"status",
-		"live",
+		"sessions",
+		"events",
 		"stop",
 		"review",
 		"verify",
@@ -53,6 +54,9 @@ func TestRootHelpListsCommandSurface(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("root help missing %q\nhelp:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "  live") {
+		t.Fatalf("root help still lists deprecated live command:\n%s", stdout)
 	}
 }
 
@@ -88,6 +92,8 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		{"install", "claude"},
 		{"start"},
 		{"status"},
+		{"sessions"},
+		{"events"},
 		{"live"},
 		{"stop"},
 		{"review"},
@@ -104,6 +110,13 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		if found, _, err := root.Find(path); err != nil || found == nil {
 			t.Fatalf("command %q not found: %v", strings.Join(path, " "), err)
 		}
+	}
+	live, _, err := root.Find([]string{"live"})
+	if err != nil {
+		t.Fatalf("find deprecated live command: %v", err)
+	}
+	if !live.Hidden {
+		t.Fatalf("live command should be a hidden compatibility alias")
 	}
 }
 
@@ -742,7 +755,15 @@ func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
 	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
 	repo := newCommandGitRepo(t)
 
-	stdout, _, err := executeCommand(t, "--repo", repo, "start")
+	stdout, _, err := executeCommand(t, "--repo", repo, "sessions")
+	if err != nil {
+		t.Fatalf("empty sessions returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "No AgentReceipt sessions found for this repository.") {
+		t.Fatalf("empty sessions output = %q", stdout)
+	}
+
+	stdout, _, err = executeCommand(t, "--repo", repo, "start")
 	if err != nil {
 		t.Fatalf("start returned error: %v", err)
 	}
@@ -758,12 +779,73 @@ func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
 		t.Fatalf("status output did not reflect active session: %q", stdout)
 	}
 
-	stdout, _, err = executeCommand(t, "--repo", repo, "live", "--limit", "1")
+	stdout, _, err = executeCommand(t, "--repo", repo, "sessions")
 	if err != nil {
-		t.Fatalf("live returned error: %v", err)
+		t.Fatalf("sessions returned error: %v", err)
 	}
-	if !strings.Contains(stdout, `"type":"git.snapshot"`) {
-		t.Fatalf("live output missing git snapshot: %q", stdout)
+	if !strings.Contains(stdout, "SESSION") || !strings.Contains(stdout, "STATE") || !strings.Contains(stdout, "ACTIVE") {
+		t.Fatalf("sessions output missing header: %q", stdout)
+	}
+	if !strings.Contains(stdout, "ar_ses_") || !strings.Contains(stdout, "active") || !strings.Contains(stdout, "*") {
+		t.Fatalf("sessions output missing active session: %q", stdout)
+	}
+
+	stdout, _, err = executeCommand(t, "--repo", repo, "events", "--limit", "1")
+	if err != nil {
+		t.Fatalf("events returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "AgentReceipt Events (1)") || !strings.Contains(stdout, "git.snapshot") || !strings.Contains(stdout, "payload:") {
+		t.Fatalf("events output missing readable event details: %q", stdout)
+	}
+	if strings.Contains(stdout, `{"event_id"`) {
+		t.Fatalf("events default output should not be compact JSONL: %q", stdout)
+	}
+
+	stdout, _, err = executeCommand(t, "--repo", repo, "events", "--limit", "1", "--format", "json")
+	if err != nil {
+		t.Fatalf("events --format json returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "[\n  {") || !strings.Contains(stdout, `"type": "git.snapshot"`) {
+		t.Fatalf("events --format json did not pretty-print JSON: %q", stdout)
+	}
+
+	stdout, _, err = executeCommand(t, "--repo", repo, "events", "--limit", "1", "--format", "jsonl")
+	if err != nil {
+		t.Fatalf("events --format jsonl returned error: %v", err)
+	}
+	if !strings.Contains(stdout, `"type":"git.snapshot"`) || strings.Contains(stdout, `"type": "git.snapshot"`) {
+		t.Fatalf("events --format jsonl did not preserve compact JSONL: %q", stdout)
+	}
+
+	stdout, _, err = executeCommand(t, "--color", "always", "--repo", repo, "events", "--limit", "1")
+	if err != nil {
+		t.Fatalf("colored events returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "\x1b[") {
+		t.Fatalf("colored events output missing ANSI highlights: %q", stdout)
+	}
+
+	stdout, _, err = executeCommand(t, "--color", "always", "--repo", repo, "events", "--limit", "1", "--format", "json")
+	if err != nil {
+		t.Fatalf("colored events json returned error: %v", err)
+	}
+	if strings.Contains(stdout, "\x1b[") {
+		t.Fatalf("events json output should not be colorized: %q", stdout)
+	}
+
+	stdout, stderr, err := executeCommand(t, "--repo", repo, "live", "--limit", "1")
+	if err != nil {
+		t.Fatalf("deprecated live alias returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "git.snapshot") {
+		t.Fatalf("deprecated live alias output missing event details: %q", stdout)
+	}
+	if !strings.Contains(stderr, "deprecated") || !strings.Contains(stderr, "agentreceipt events") {
+		t.Fatalf("deprecated live alias did not warn callers: %q", stderr)
+	}
+
+	if _, _, err := executeCommand(t, "--repo", repo, "events", "--format", "xml"); err == nil || !strings.Contains(err.Error(), "--format must be one of text, json, or jsonl") {
+		t.Fatalf("expected events format validation error, got %v", err)
 	}
 
 	stdout, _, err = executeCommand(t, "--repo", repo, "stop")
@@ -774,6 +856,13 @@ func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
 		t.Fatalf("stop output = %q", stdout)
 	}
 	sessionID := strings.TrimSpace(strings.TrimPrefix(stdout, "Finalized AgentReceipt session "))
+	stdout, _, err = executeCommand(t, "--repo", repo, "sessions")
+	if err != nil {
+		t.Fatalf("sessions after stop returned error: %v", err)
+	}
+	if !strings.Contains(stdout, sessionID) || !strings.Contains(stdout, "finalized") || strings.Contains(stdout, "*") {
+		t.Fatalf("sessions output did not show finalized inactive session: %q", stdout)
+	}
 	layout, err := storage.NewLayout(repo, sessionID)
 	if err != nil {
 		t.Fatalf("NewLayout() error = %v", err)
@@ -1061,7 +1150,7 @@ func TestStartWatchImportsMatchingCodexLog(t *testing.T) {
 		t.Fatalf("start --watch returned error: %v\n%s", err, stdout)
 	}
 	if !strings.Contains(stdout, "Watching Codex logs") || !strings.Contains(stdout, "codex  watch") || !strings.Contains(stdout, "codex  ok      run go test ./...") {
-		t.Fatalf("watch output missing live command details: %q", stdout)
+		t.Fatalf("watch output missing command details: %q", stdout)
 	}
 	stdout, _, err = executeCommand(t, "--repo", repo, "status")
 	if err != nil {
@@ -1116,7 +1205,7 @@ func TestStartWatchResumesActiveSession(t *testing.T) {
 		t.Fatalf("resume output did not reuse active session:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "codex  ok      run go test ./...") {
-		t.Fatalf("resume output missing live command details:\n%s", stdout)
+		t.Fatalf("resume output missing command details:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "codex  tokens  35 (135 session) after run go test ./...") || strings.Contains(stdout, "codex  tokens  135 (135 session)") {
 		t.Fatalf("resume output did not use existing token baseline:\n%s", stdout)
