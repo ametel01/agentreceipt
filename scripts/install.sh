@@ -23,6 +23,31 @@ die() {
 	exit 1
 }
 
+print_banner() {
+	cat <<'BANNER'
+
+    _    ____ _____ _   _ _____
+   / \  / ___| ____| \ | |_   _|
+  / _ \| |  _|  _| |  \| | | |
+ / ___ \ |_| | |___| |\  | | |
+/_/   \_\____|_____|_| \_| |_|
+
+ ____  _____ ____ _____ ___ ____ _____
+|  _ \| ____/ ___| ____|_ _|  _ \_   _|
+| |_) |  _|| |   |  _|  | || |_) || |
+|  _ <| |__| |___| |___ | ||  __/ | |
+|_| \_\_____\____|_____|___|_|    |_|
+BANNER
+}
+
+print_step() {
+	label="$1"
+	percent="$2"
+	fill="$3"
+	empty="$4"
+	printf '  [%s%s] %3s%%  %s\n' "$fill" "$empty" "$percent" "$label"
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--version)
@@ -100,24 +125,36 @@ asset="agentreceipt_${os}_${arch}.tar.gz"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
 
+print_banner
+print_step "resolving ${os}/${arch}" 20 "####" "................"
 curl -fsSL "$base_url/$asset" -o "$tmpdir/$asset"
 curl -fsSL "$base_url/SHA256SUMS" -o "$tmpdir/SHA256SUMS"
+print_step "downloaded ${asset}" 45 "#########" "..........."
 
 (
 	cd "$tmpdir"
 	grep "  $asset\$" SHA256SUMS > SHA256SUM
 	if command -v sha256sum >/dev/null 2>&1; then
-		sha256sum -c SHA256SUM
+		if ! sha256sum -c SHA256SUM > "$tmpdir/checksum.log"; then
+			cat "$tmpdir/checksum.log" >&2
+			exit 1
+		fi
 	elif command -v shasum >/dev/null 2>&1; then
-		shasum -a 256 -c SHA256SUM
+		if ! shasum -a 256 -c SHA256SUM > "$tmpdir/checksum.log"; then
+			cat "$tmpdir/checksum.log" >&2
+			exit 1
+		fi
 	else
 		die "sha256sum or shasum is required to verify downloads"
 	fi
 )
+print_step "verified checksum" 70 "##############" "......"
 
 mkdir -p "$bin_dir"
+print_step "extracting archive" 85 "#################" "..."
 tar -C "$tmpdir" -xzf "$tmpdir/$asset" agentreceipt
 install -m 0755 "$tmpdir/agentreceipt" "$bin_dir/agentreceipt"
+print_step "installed binary" 100 "####################" ""
 
-printf 'Installed agentreceipt to %s/agentreceipt\n' "$bin_dir"
+printf '\nInstalled agentreceipt to %s/agentreceipt\n' "$bin_dir"
 printf 'Run: agentreceipt version\n'

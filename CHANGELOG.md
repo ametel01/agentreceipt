@@ -7,6 +7,12 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-17
+
+### Changed
+
+- Improved the curl installer output with a clear `AGENT RECEIPT` ASCII banner and step-by-step progress bar while preserving checksum failure diagnostics.
+
 ## [0.4.0] - 2026-06-17
 
 ### Added
