@@ -69,6 +69,25 @@ func TestClassifyCommitMessageDoesNotTriggerSecretAccess(t *testing.T) {
 	}
 }
 
+func TestClassifyDoesNotTreatQuotedSearchPatternsAsCommands(t *testing.T) {
+	t.Parallel()
+
+	command := `rg -n "TODO|FIXME|http|curl|wget|ssh|token|password" cmd internal scripts docs -g '!*.sum'`
+	classifications := Classify(command)
+	for _, signal := range []string{"network_egress", "remote_code_execution", "cloud_or_deploy_mutation"} {
+		if hasClassification(classifications, model.RiskHigh, signal) || hasClassification(classifications, model.RiskMedium, signal) {
+			t.Fatalf("Classify(%q) = %+v, want no %s from quoted search pattern", command, classifications, signal)
+		}
+	}
+}
+
+func TestClassifyRecognizesUnspacedShellSeparators(t *testing.T) {
+	t.Parallel()
+
+	assertClassification(t, "printf hi|curl https://example.com/upload", model.RiskHigh, "network_egress")
+	assertClassification(t, "git status&&git add CHANGELOG.md", model.RiskMedium, "git_mutation")
+}
+
 func TestClassifyLowRiskCommands(t *testing.T) {
 	t.Parallel()
 

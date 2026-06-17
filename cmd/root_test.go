@@ -820,6 +820,20 @@ func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
 	if !strings.Contains(stdout, `"signature_algorithm": "ed25519"`) {
 		t.Fatalf("export json output = %q", stdout)
 	}
+	stdout, _, err = executeCommand(t, "--color", "always", "--repo", repo, "export", "--md")
+	if err != nil {
+		t.Fatalf("colored export md returned error: %v", err)
+	}
+	if !strings.Contains(stdout, "\x1b[1;37m# AgentReceipt Receipt\x1b[0m") || !strings.Contains(stdout, "\x1b[32mvalid\x1b[0m") {
+		t.Fatalf("colored export md output missing ANSI highlights = %q", stdout)
+	}
+	stdout, _, err = executeCommand(t, "--color", "always", "--repo", repo, "export", "--json")
+	if err != nil {
+		t.Fatalf("colored export json returned error: %v", err)
+	}
+	if strings.Contains(stdout, "\x1b[") {
+		t.Fatalf("export json should not be colorized = %q", stdout)
+	}
 	stdout, _, err = executeCommand(t, "--repo", repo, "export", "--pr")
 	if err != nil {
 		t.Fatalf("export pr returned error: %v", err)

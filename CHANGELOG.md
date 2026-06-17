@@ -7,6 +7,16 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Improved receipt Markdown export readability with colorized terminal output for human-facing exports, concise risk bullets, capped risk lists, and dynamic rendering from signed receipt JSON instead of stale cached Markdown.
+- Replaced generic `risky_command` review reasons with specific command-risk codes such as `command_risk_network_egress`, `command_risk_git_mutation`, and `command_risk_destructive_filesystem`.
+
+### Fixed
+
+- Reduced command-risk false positives by ignoring quoted search patterns such as `rg "curl|wget|token"` when classifying executable commands.
+- Normalized legacy receipt Markdown output so previously finalized receipts with stored `risky_command` or stale provider-risk reasons render with current classifier labels without mutating signed JSON.
+
 ## [0.4.2] - 2026-06-17
 
 ### Fixed

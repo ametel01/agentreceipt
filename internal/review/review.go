@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
+	"github.com/ametel01/agentreceipt/internal/commandrisk"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
@@ -104,6 +105,7 @@ var shortStatPatterns = map[string]*regexp.Regexp{
 }
 
 const baseNotFoundText = "not found (looked for upstream, origin/HEAD, main/master/trunk/develop)"
+const maxRiskCommandSummaryRunes = 100
 
 func Build(ctx context.Context, options Options) (Report, error) {
 	repoRoot, sessionID, err := resolveSession(ctx, options)
@@ -1013,16 +1015,9 @@ func risk(summary model.Summary, warnings []model.Warning, events []model.Event,
 			})
 		}
 	}
-	for _, command := range summary.DetectedCommands {
-		if command.Kind == "network" || command.Kind == "destructive" {
-			result.Level = maxRisk(result.Level, model.RiskHigh)
-			result.Reasons = append(result.Reasons, model.RiskReason{
-				Code:       "risky_command",
-				Message:    "Risky command detected: " + command.Command,
-				Level:      model.RiskHigh,
-				Confidence: command.Confidence,
-			})
-		}
+	for _, reason := range commandRiskReasons(summary.DetectedCommands) {
+		result.Level = maxRisk(result.Level, reason.Level)
+		result.Reasons = append(result.Reasons, reason)
 	}
 	for _, reason := range providerRiskReasons(events) {
 		result.Level = maxRisk(result.Level, reason.Level)
@@ -1039,6 +1034,50 @@ func risk(summary model.Summary, warnings []model.Warning, events []model.Event,
 	}
 
 	return result
+}
+
+func commandRiskReasons(commands []model.DetectedCommand) []model.RiskReason {
+	reasons := make([]model.RiskReason, 0)
+	seen := map[string]bool{}
+	for _, command := range commands {
+		for _, classification := range commandrisk.Classify(command.Command) {
+			if classification.Level == model.RiskLow || classification.Level == model.RiskInfo || classification.Level == "" {
+				continue
+			}
+			code := "command_risk_" + riskCodeFragment(classification.Signal)
+			message := commandRiskMessage(classification, command.Command)
+			key := code + ":" + message
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			confidence := command.Confidence
+			if confidence == "" {
+				confidence = model.ConfidenceMedium
+			}
+			reasons = append(reasons, model.RiskReason{
+				Code:       code,
+				Message:    message,
+				Level:      classification.Level,
+				Confidence: confidence,
+			})
+		}
+	}
+
+	return reasons
+}
+
+func commandRiskMessage(classification commandrisk.Classification, command string) string {
+	label := classification.Signal
+	if label == "" {
+		label = "command"
+	}
+	details := classification.Reason
+	if details == "" {
+		details = "command matched a risk rule"
+	}
+
+	return "Command risk detected (" + label + "): " + details + " in command: " + commandSummary(command)
 }
 
 func providerRiskReasons(events []model.Event) []model.RiskReason {
@@ -1123,10 +1162,29 @@ func providerRiskMessage(signal providerRiskSignal) string {
 	}
 	message := "Provider risk detected (" + label + "): " + details
 	if signal.command != "" {
-		message += " in command: " + signal.command
+		message += " in command: " + commandSummary(signal.command)
 	}
 
 	return message
+}
+
+func commandSummary(command string) string {
+	return truncateRunes(normalizedCommand(command), maxRiskCommandSummaryRunes)
+}
+
+func truncateRunes(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 func riskCodeFragment(value string) string {

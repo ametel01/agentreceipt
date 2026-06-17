@@ -21,6 +21,7 @@ type Rule struct {
 	Category string
 	Reason   string
 	Pattern  *regexp.Regexp
+	MatchRaw bool
 }
 
 var defaultRules = []Rule{
@@ -51,6 +52,7 @@ var defaultRules = []Rule{
 		Category: "credentials",
 		Reason:   "command appears to read or expose credential material",
 		Pattern:  regexp.MustCompile(`(?i)\b(cat|less|more|tail|head|grep|rg)\b.*(\.env\b|\.ssh/|\.aws/credentials|id_rsa|id_ed25519|\.npmrc|\.pypirc|\.netrc)|(^|[;&|]\s*)(printenv|env)\b|(\$|--|[A-Za-z_])(?:TOKEN|API_KEY|SECRET|PRIVATE_KEY|PASSWORD)(=|\b)`),
+		MatchRaw: true,
 	},
 	{
 		Level:    model.RiskHigh,
@@ -150,10 +152,15 @@ func Classify(command string) []Classification {
 	if command == "" {
 		return nil
 	}
+	executableText := normalizeSeparators(stripQuotedSegments(command))
 	classifications := make([]Classification, 0)
 	seen := map[string]bool{}
 	for _, rule := range defaultRules {
-		if !rule.Pattern.MatchString(command) {
+		text := executableText
+		if rule.MatchRaw {
+			text = command
+		}
+		if !rule.Pattern.MatchString(text) {
 			continue
 		}
 		key := string(rule.Level) + ":" + rule.Signal
@@ -173,6 +180,51 @@ func Classify(command string) []Classification {
 	})
 
 	return classifications
+}
+
+func normalizeSeparators(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", ";")
+	value = strings.ReplaceAll(value, "\n", ";")
+	value = strings.ReplaceAll(value, "\r", ";")
+
+	return value
+}
+
+func stripQuotedSegments(value string) string {
+	var builder strings.Builder
+	var quote rune
+	escaped := false
+	for _, char := range value {
+		if escaped {
+			escaped = false
+			if quote == 0 {
+				builder.WriteRune(' ')
+			}
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			if quote == 0 {
+				builder.WriteRune(char)
+			}
+			continue
+		}
+		if quote != 0 {
+			if char == quote {
+				quote = 0
+			}
+			builder.WriteRune(' ')
+			continue
+		}
+		if char == '\'' || char == '"' {
+			quote = char
+			builder.WriteRune(' ')
+			continue
+		}
+		builder.WriteRune(char)
+	}
+
+	return builder.String()
 }
 
 func riskRank(level model.RiskLevel) int {

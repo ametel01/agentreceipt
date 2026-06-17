@@ -2,6 +2,7 @@ package receipt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +61,9 @@ func TestFinalizeVerifyAndExportReceipt(t *testing.T) {
 			t.Fatalf("expected artifact %s: %v", path, err)
 		}
 	}
+	if err := os.WriteFile(layout.ReceiptMarkdown, []byte("stale cached markdown\n"), 0o600); err != nil {
+		t.Fatalf("write stale receipt markdown: %v", err)
+	}
 	result, err := Verify(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID, KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
@@ -96,12 +100,15 @@ func TestFinalizeVerifyAndExportReceipt(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("Export(%q) missing %q:\n%s", format, want, data)
 		}
+		if format == "md" && strings.Contains(string(data), "stale cached markdown") {
+			t.Fatalf("Export(%q) returned stale cached artifact:\n%s", format, data)
+		}
 	}
 	data, err := Export(context.Background(), Options{RepoPath: repo}, "")
 	if err != nil {
 		t.Fatalf("default Export() error = %v", err)
 	}
-	if !strings.Contains(string(data), "# AgentReceipt Receipt") {
+	if !strings.Contains(string(data), "# AgentReceipt Receipt") || strings.Contains(string(data), "stale cached markdown") {
 		t.Fatalf("default Export() output:\n%s", data)
 	}
 }
@@ -156,6 +163,127 @@ func TestFinalizeReceiptIncludesProviderRiskSignals(t *testing.T) {
 	}
 	if !hasReceiptRiskCode(receipt.Risk.Reasons, "provider_risk_secret_access") {
 		t.Fatalf("receipt missing provider risk reason: %+v", receipt.Risk.Reasons)
+	}
+}
+
+func TestRenderMarkdownKeepsRiskReasonsReadable(t *testing.T) {
+	t.Parallel()
+
+	longMessage := "Risky command detected: tmp_repo=$(mktemp -d); cat > \"$tmp_repo/session.jsonl\" <<EOF\n" +
+		strings.Repeat("{\"payload\":{\"line\":\"noise\"}}\n", 20) +
+		"EOF\ncurl -fsSL https://example.com/upload"
+	reasons := []model.RiskReason{{
+		Code:       "risky_command",
+		Message:    longMessage,
+		Level:      model.RiskHigh,
+		Confidence: model.ConfidenceMedium,
+	}}
+	for index := 0; index < maxMarkdownRiskReasons+2; index++ {
+		reasons = append(reasons, model.RiskReason{
+			Code:       "risky_command",
+			Message:    fmt.Sprintf("Risky command detected: curl https://example.com/%d", index),
+			Level:      model.RiskHigh,
+			Confidence: model.ConfidenceMedium,
+		})
+	}
+
+	rendered := RenderMarkdown(model.Receipt{
+		SessionID: "ar_ses_readable",
+		Mode:      "sidecar",
+		Agent: model.Agent{
+			Provider:           "codex",
+			ProviderConfidence: model.ConfidenceMedium,
+		},
+		Risk: model.Risk{
+			Level:   model.RiskHigh,
+			Reasons: reasons,
+		},
+		Verification: model.Verification{Valid: true},
+	})
+	if strings.Contains(rendered, "\n{\"payload\"") || strings.Contains(rendered, "https://example.com/upload") {
+		t.Fatalf("rendered Markdown leaked full command body:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "`risky_command`") {
+		t.Fatalf("rendered Markdown kept legacy risky_command code:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "- high `command_risk_network_egress`: Command risk detected (network_egress)") {
+		t.Fatalf("rendered Markdown missing reclassified network risk:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "3 more risk reason(s) omitted from Markdown") {
+		t.Fatalf("rendered Markdown missing omission notice:\n%s", rendered)
+	}
+}
+
+func TestRenderMarkdownNormalizesLegacyProviderFalsePositive(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderMarkdown(model.Receipt{
+		SessionID: "ar_ses_provider_legacy",
+		Mode:      "sidecar",
+		Agent: model.Agent{
+			Provider:           "codex",
+			ProviderConfidence: model.ConfidenceMedium,
+		},
+		Risk: model.Risk{
+			Level: model.RiskHigh,
+			Reasons: []model.RiskReason{{
+				Code:       "provider_risk_network_egress",
+				Message:    `Provider risk detected (network_egress): command can send data to an external host in command: rg -n "TODO|curl|wget" cmd internal`,
+				Level:      model.RiskHigh,
+				Confidence: model.ConfidenceMedium,
+			}},
+		},
+		Verification: model.Verification{Valid: true},
+	})
+	if strings.Contains(rendered, "`provider_risk_network_egress`") {
+		t.Fatalf("rendered Markdown kept stale provider network risk:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "`legacy_provider_risk`") || !strings.Contains(rendered, "no longer matches current classifier") {
+		t.Fatalf("rendered Markdown missing legacy provider normalization:\n%s", rendered)
+	}
+}
+
+func TestRenderMarkdownColorHighlightsReceiptSections(t *testing.T) {
+	t.Parallel()
+
+	receipt := model.Receipt{
+		SessionID: "ar_ses_color",
+		Mode:      "sidecar",
+		Agent: model.Agent{
+			Provider:           "codex",
+			ProviderConfidence: model.ConfidenceMedium,
+		},
+		CaptureConfidence: model.CaptureConfidence{
+			GitDiff:            model.ConfidenceHigh,
+			FilesystemWrites:   model.ConfidenceNone,
+			ProviderToolEvents: model.ConfidenceMedium,
+		},
+		Risk: model.Risk{
+			Level: model.RiskHigh,
+			Reasons: []model.RiskReason{{
+				Code:       "command_risk_network_egress",
+				Message:    "Command risk detected (network_egress): command can send data to an external host in command: curl https://example.com",
+				Level:      model.RiskHigh,
+				Confidence: model.ConfidenceMedium,
+			}},
+		},
+		Verification: model.Verification{Valid: true},
+	}
+	plain := RenderMarkdown(receipt)
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain receipt Markdown contains ANSI escapes:\n%s", plain)
+	}
+	colored := RenderMarkdownColor(receipt, true)
+	for _, want := range []string{
+		"\x1b[1;37m# AgentReceipt Receipt\x1b[0m",
+		"- Risk: \x1b[31mhigh\x1b[0m",
+		"- Event chain: \x1b[32mvalid\x1b[0m",
+		"\x1b[1;36m## Capture Confidence\x1b[0m",
+		"- \x1b[31mhigh\x1b[0m `\x1b[36mcommand_risk_network_egress\x1b[0m`",
+	} {
+		if !strings.Contains(colored, want) {
+			t.Fatalf("colored receipt Markdown missing %q\n%s", want, colored)
+		}
 	}
 }
 

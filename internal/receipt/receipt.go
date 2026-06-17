@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
+	"github.com/ametel01/agentreceipt/internal/commandrisk"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
@@ -50,6 +51,12 @@ type decodedReceipt struct {
 	Receipt       model.Receipt
 	UnknownFields []string
 }
+
+const (
+	maxMarkdownRiskReasons      = 12
+	maxMarkdownRiskMessageRunes = 180
+	maxMarkdownCommandRunes     = 100
+)
 
 func Finalize(ctx context.Context, options Options) (model.Receipt, error) {
 	repoRoot, sessionID, err := resolveSession(ctx, options)
@@ -255,8 +262,33 @@ func Export(ctx context.Context, options Options, format string) ([]byte, error)
 	case "pr":
 		return readFile(layout.ReviewMarkdown)
 	default:
-		return readFile(layout.ReceiptMarkdown)
+		receipt, err := readReceiptPath(layout.ReceiptJSON)
+		if err != nil {
+			return nil, err
+		}
+
+		return []byte(RenderMarkdown(receipt)), nil
 	}
+}
+
+func ExportWithColor(ctx context.Context, options Options, format string, color bool) ([]byte, error) {
+	if format == "json" || format == "pr" {
+		return Export(ctx, options, format)
+	}
+	repoRoot, sessionID, err := resolveSession(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	layout, err := storage.NewLayout(repoRoot, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := readReceiptPath(layout.ReceiptJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	return []byte(RenderMarkdownColor(receipt, color)), nil
 }
 
 func Read(layout storage.Layout) (model.Receipt, error) {
@@ -301,30 +333,261 @@ func rejectUnknownReceiptFields(result *VerifyResult, fields []string) {
 }
 
 func RenderMarkdown(receipt model.Receipt) string {
+	return RenderMarkdownColor(receipt, false)
+}
+
+func RenderMarkdownColor(receipt model.Receipt, color bool) string {
 	var builder bytes.Buffer
-	fmt.Fprintf(&builder, "# AgentReceipt Receipt\n\n")
+	fmt.Fprintf(&builder, "%s\n\n", receiptColorize("# AgentReceipt Receipt", receiptColorBoldWhite, color))
 	fmt.Fprintf(&builder, "- Session: `%s`\n", receipt.SessionID)
 	fmt.Fprintf(&builder, "- Mode: %s\n", receipt.Mode)
 	fmt.Fprintf(&builder, "- Provider: %s (%s confidence)\n", receipt.Agent.Provider, receipt.Agent.ProviderConfidence)
-	fmt.Fprintf(&builder, "- Risk: %s\n", receipt.Risk.Level)
-	fmt.Fprintf(&builder, "- Event chain: %s\n", validText(receipt.Verification.Valid))
+	fmt.Fprintf(&builder, "- Risk: %s\n", receiptColorize(string(receipt.Risk.Level), receiptColorForRisk(receipt.Risk.Level), color))
+	fmt.Fprintf(&builder, "- Event chain: %s\n", receiptColorize(validText(receipt.Verification.Valid), receiptColorForValid(receipt.Verification.Valid), color))
 	fmt.Fprintf(&builder, "- Final diff hash: `%s`\n", receipt.Verification.DiffHash)
 	fmt.Fprintf(&builder, "- Manifest hash: `%s`\n", receipt.Verification.ManifestHash)
 	fmt.Fprintf(&builder, "- Receipt hash: `%s`\n", receipt.Verification.ReceiptHash)
 	fmt.Fprintf(&builder, "- Signature: %s\n\n", receipt.Verification.SignatureAlgorithm)
-	builder.WriteString("## Capture Confidence\n\n")
-	fmt.Fprintf(&builder, "- Git diff: %s\n", receipt.CaptureConfidence.GitDiff)
-	fmt.Fprintf(&builder, "- Filesystem writes: %s\n", receipt.CaptureConfidence.FilesystemWrites)
-	fmt.Fprintf(&builder, "- Provider tool events: %s\n\n", receipt.CaptureConfidence.ProviderToolEvents)
-	builder.WriteString("## Risk Reasons\n\n")
+	fmt.Fprintf(&builder, "%s\n\n", receiptColorize("## Capture Confidence", receiptColorBoldCyan, color))
+	fmt.Fprintf(&builder, "- Git diff: %s\n", receiptColorize(string(receipt.CaptureConfidence.GitDiff), receiptColorForConfidence(receipt.CaptureConfidence.GitDiff), color))
+	fmt.Fprintf(&builder, "- Filesystem writes: %s\n", receiptColorize(string(receipt.CaptureConfidence.FilesystemWrites), receiptColorForConfidence(receipt.CaptureConfidence.FilesystemWrites), color))
+	fmt.Fprintf(&builder, "- Provider tool events: %s\n\n", receiptColorize(string(receipt.CaptureConfidence.ProviderToolEvents), receiptColorForConfidence(receipt.CaptureConfidence.ProviderToolEvents), color))
+	fmt.Fprintf(&builder, "%s\n\n", receiptColorize("## Risk Reasons", receiptColorBoldCyan, color))
 	if len(receipt.Risk.Reasons) == 0 {
-		builder.WriteString("- none\n")
+		fmt.Fprintf(&builder, "- %s\n", receiptColorize("none", receiptColorGreen, color))
 	}
-	for _, reason := range receipt.Risk.Reasons {
-		fmt.Fprintf(&builder, "- %s: %s\n", reason.Level, reason.Message)
+	riskReasons := markdownRiskReasons(receipt.Risk.Reasons)
+	for index, reason := range riskReasons {
+		if index >= maxMarkdownRiskReasons {
+			fmt.Fprintf(&builder, "- %s\n", receiptColorize(fmt.Sprintf("%d more risk reason(s) omitted from Markdown; use `agentreceipt export --json` for full details.", len(riskReasons)-index), receiptColorDim, color))
+			break
+		}
+		code := strings.TrimSpace(reason.Code)
+		if code == "" {
+			code = "risk"
+		}
+		fmt.Fprintf(&builder, "- %s `%s`: %s\n", receiptColorize(string(reason.Level), receiptColorForRisk(reason.Level), color), receiptColorize(code, receiptColorCyan, color), markdownRiskMessage(reason.Message))
 	}
 
 	return builder.String()
+}
+
+func markdownRiskReasons(reasons []model.RiskReason) []model.RiskReason {
+	normalized := make([]model.RiskReason, 0, len(reasons))
+	seen := map[string]bool{}
+	for _, reason := range reasons {
+		for _, displayReason := range markdownRiskReason(reason) {
+			key := string(displayReason.Level) + ":" + displayReason.Code + ":" + displayReason.Message
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			normalized = append(normalized, displayReason)
+		}
+	}
+
+	return normalized
+}
+
+func markdownRiskReason(reason model.RiskReason) []model.RiskReason {
+	if reason.Code == "risky_command" {
+		return classifyLegacyCommandRisk(reason)
+	}
+	if strings.HasPrefix(reason.Code, "provider_risk_") {
+		return normalizeProviderRiskForMarkdown(reason)
+	}
+
+	return []model.RiskReason{reason}
+}
+
+func classifyLegacyCommandRisk(reason model.RiskReason) []model.RiskReason {
+	command, ok := legacyRiskCommand(reason.Message)
+	if !ok {
+		reason.Code = "legacy_command_risk"
+		return []model.RiskReason{reason}
+	}
+	classifications := commandrisk.Classify(command)
+	if len(classifications) == 0 {
+		return []model.RiskReason{legacyUnclassifiedRisk(reason, "legacy_command_risk", "Legacy command risk no longer matches current classifier", command)}
+	}
+	displayReasons := make([]model.RiskReason, 0, len(classifications))
+	for _, classification := range classifications {
+		if classification.Level == model.RiskLow || classification.Level == model.RiskInfo || classification.Level == "" {
+			continue
+		}
+		displayReasons = append(displayReasons, model.RiskReason{
+			Code:       "command_risk_" + markdownRiskCodeFragment(classification.Signal),
+			Message:    markdownCommandRiskMessage(classification, command),
+			Level:      classification.Level,
+			Confidence: reason.Confidence,
+		})
+	}
+	if len(displayReasons) == 0 {
+		return []model.RiskReason{legacyUnclassifiedRisk(reason, "legacy_command_risk", "Legacy command risk no longer matches current classifier", command)}
+	}
+
+	return displayReasons
+}
+
+func normalizeProviderRiskForMarkdown(reason model.RiskReason) []model.RiskReason {
+	command, ok := providerRiskCommand(reason.Message)
+	if !ok {
+		return []model.RiskReason{reason}
+	}
+	signal := strings.TrimPrefix(reason.Code, "provider_risk_")
+	for _, classification := range commandrisk.Classify(command) {
+		if markdownRiskCodeFragment(classification.Signal) == signal {
+			return []model.RiskReason{reason}
+		}
+	}
+
+	return []model.RiskReason{legacyUnclassifiedRisk(reason, "legacy_provider_risk", "Legacy provider risk no longer matches current classifier", command)}
+}
+
+func legacyUnclassifiedRisk(reason model.RiskReason, code string, prefix string, command string) model.RiskReason {
+	return model.RiskReason{
+		Code:       code,
+		Message:    prefix + ": " + markdownCommandSummary(command),
+		Level:      model.RiskInfo,
+		Confidence: reason.Confidence,
+	}
+}
+
+func markdownCommandRiskMessage(classification commandrisk.Classification, command string) string {
+	label := classification.Signal
+	if label == "" {
+		label = "command"
+	}
+	details := classification.Reason
+	if details == "" {
+		details = "command matched a risk rule"
+	}
+
+	return "Command risk detected (" + label + "): " + details + " in command: " + markdownCommandSummary(command)
+}
+
+func legacyRiskCommand(message string) (string, bool) {
+	command := strings.TrimSpace(strings.TrimPrefix(message, "Risky command detected:"))
+	if command == message || command == "" {
+		return "", false
+	}
+
+	return command, true
+}
+
+func providerRiskCommand(message string) (string, bool) {
+	const marker = " in command: "
+	index := strings.LastIndex(message, marker)
+	if index < 0 {
+		return "", false
+	}
+	command := strings.TrimSpace(message[index+len(marker):])
+	if command == "" {
+		return "", false
+	}
+
+	return command, true
+}
+
+func markdownCommandSummary(command string) string {
+	return truncateMarkdownRunes(strings.Join(strings.Fields(command), " "), maxMarkdownCommandRunes)
+}
+
+func markdownRiskCodeFragment(value string) string {
+	value = strings.ToLower(value)
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			builder.WriteRune(char)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	fragment := strings.Trim(builder.String(), "_")
+	if fragment == "" {
+		return "unknown"
+	}
+
+	return fragment
+}
+
+const (
+	receiptColorBoldCyan  = "1;36"
+	receiptColorBoldRed   = "1;31"
+	receiptColorBoldWhite = "1;37"
+	receiptColorCyan      = "36"
+	receiptColorDim       = "2;37"
+	receiptColorGreen     = "32"
+	receiptColorRed       = "31"
+	receiptColorYellow    = "33"
+)
+
+func receiptColorForRisk(level model.RiskLevel) string {
+	switch level {
+	case model.RiskInfo, model.RiskLow:
+		return receiptColorGreen
+	case model.RiskMedium:
+		return receiptColorYellow
+	case model.RiskHigh:
+		return receiptColorRed
+	case model.RiskCritical:
+		return receiptColorBoldRed
+	default:
+		return receiptColorDim
+	}
+}
+
+func receiptColorForConfidence(confidence model.Confidence) string {
+	switch confidence {
+	case model.ConfidenceHigh:
+		return receiptColorGreen
+	case model.ConfidenceMedium, model.ConfidenceLowMedium:
+		return receiptColorYellow
+	case model.ConfidenceLow:
+		return receiptColorRed
+	default:
+		return receiptColorDim
+	}
+}
+
+func receiptColorForValid(valid bool) string {
+	if valid {
+		return receiptColorGreen
+	}
+
+	return receiptColorRed
+}
+
+func receiptColorize(value string, code string, enabled bool) string {
+	if !enabled || value == "" {
+		return value
+	}
+
+	return "\x1b[" + code + "m" + value + "\x1b[0m"
+}
+
+func markdownRiskMessage(message string) string {
+	return truncateMarkdownRunes(strings.Join(strings.Fields(message), " "), maxMarkdownRiskMessageRunes)
+}
+
+func truncateMarkdownRunes(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 func RenderVerify(result VerifyResult) string {

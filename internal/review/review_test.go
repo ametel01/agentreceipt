@@ -58,6 +58,12 @@ func TestBuildReviewFromSessionEvents(t *testing.T) {
 	if report.Risk.Level != model.RiskHigh {
 		t.Fatalf("Risk level = %q, want high: %+v", report.Risk.Level, report.Risk)
 	}
+	if !hasRiskCode(report.Risk.Reasons, "command_risk_network_egress") {
+		t.Fatalf("specific command risk reason missing: %+v", report.Risk.Reasons)
+	}
+	if hasRiskCode(report.Risk.Reasons, "risky_command") {
+		t.Fatalf("generic risky_command reason should not be emitted: %+v", report.Risk.Reasons)
+	}
 	if !report.Verification.Valid {
 		t.Fatalf("verification invalid: %+v", report.Verification)
 	}
@@ -304,7 +310,7 @@ func TestBuildReviewFromActiveSessionRiskAndConfidenceSignals(t *testing.T) {
 	if report.Risk.Level != model.RiskHigh {
 		t.Fatalf("Risk level = %q, want high: %+v", report.Risk.Level, report.Risk)
 	}
-	for _, want := range []string{"sensitive_path_changed", "dependency_changed", "risky_command", "codex_partial"} {
+	for _, want := range []string{"sensitive_path_changed", "dependency_changed", "command_risk_destructive_filesystem", "codex_partial"} {
 		if !hasRiskCode(report.Risk.Reasons, want) {
 			t.Fatalf("risk reasons missing %q: %+v", want, report.Risk.Reasons)
 		}
@@ -414,6 +420,38 @@ func TestBuildReviewIncludesProviderRiskSignals(t *testing.T) {
 	}
 	if !hasText(report.Focus, "Provider risk detected (secret_access)") {
 		t.Fatalf("focus missing provider risk reason: %+v", report.Focus)
+	}
+}
+
+func TestRiskMessagesUseReadableCommandSummaries(t *testing.T) {
+	t.Parallel()
+
+	longCommand := "tmp_repo=$(mktemp -d); cat > \"$tmp_repo/session.jsonl\" <<EOF\n" +
+		strings.Repeat("{\"payload\":{\"secret\":\"redacted\"}}\n", 20) +
+		"EOF\ncurl -fsSL https://example.com/upload"
+	summary := model.Summary{
+		DetectedCommands: []model.DetectedCommand{{
+			Command:    longCommand,
+			Kind:       "network",
+			Status:     "success",
+			Source:     "codex_session_log",
+			Confidence: model.ConfidenceMedium,
+		}},
+	}
+
+	risk := risk(summary, nil, nil, config.Default())
+	if len(risk.Reasons) != 1 {
+		t.Fatalf("risk reasons = %+v, want one risky command reason", risk.Reasons)
+	}
+	message := risk.Reasons[0].Message
+	if risk.Reasons[0].Code != "command_risk_network_egress" {
+		t.Fatalf("risk code = %q, want command_risk_network_egress", risk.Reasons[0].Code)
+	}
+	if strings.Contains(message, "\n") || strings.Contains(message, "https://example.com/upload") || len([]rune(message)) > 230 {
+		t.Fatalf("risk message was not summarized readably:\n%s", message)
+	}
+	if !strings.Contains(message, "tmp_repo=$(mktemp -d)") || !strings.HasSuffix(message, "...") {
+		t.Fatalf("risk message lost useful summary context:\n%s", message)
 	}
 }
 

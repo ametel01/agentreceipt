@@ -1042,11 +1042,16 @@ func newExportCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := receipt.Export(cmd.Context(), options, format)
+			out := cmd.OutOrStdout()
+			colorMode, err := colorModeFromCommand(cmd)
 			if err != nil {
 				return err
 			}
-			_, err = cmd.OutOrStdout().Write(data)
+			data, err := receipt.ExportWithColor(cmd.Context(), options, format, exportColorEnabled(format, colorMode, out))
+			if err != nil {
+				return err
+			}
+			_, err = out.Write(data)
 
 			return err
 		},
@@ -1057,6 +1062,14 @@ func newExportCommand() *cobra.Command {
 	export.Flags().String("session", "", "Export a specific session ID")
 
 	return export
+}
+
+func exportColorEnabled(format string, mode string, out io.Writer) bool {
+	if format == "json" || format == "pr" {
+		return false
+	}
+
+	return colorOutputEnabled(mode, out)
 }
 
 func newImportCommand() *cobra.Command {
