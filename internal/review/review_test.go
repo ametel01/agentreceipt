@@ -503,6 +503,38 @@ func TestReviewPolicyToggles(t *testing.T) {
 	}
 }
 
+func TestReviewTestPromptsRequireCodeChanges(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	docsSummary := model.Summary{ChangedFiles: []model.ChangedFile{{Path: "README.md"}}}
+	docsRisk := risk(docsSummary, nil, nil, cfg)
+	if hasText(focus(docsSummary, docsRisk, cfg), "tests were run") {
+		t.Fatalf("docs-only focus prompted for tests")
+	}
+	if hasText(gaps(docsSummary, model.CaptureConfidence{ProviderToolEvents: model.ConfidenceMedium}, nil, cfg), "No test command") {
+		t.Fatalf("docs-only gaps prompted for tests")
+	}
+
+	goSummary := model.Summary{ChangedFiles: []model.ChangedFile{{Path: "internal/review/review.go"}}}
+	goRisk := risk(goSummary, nil, nil, cfg)
+	if !hasText(focus(goSummary, goRisk, cfg), "tests were run") {
+		t.Fatalf("Go-code focus did not prompt for tests")
+	}
+	if !hasText(gaps(goSummary, model.CaptureConfidence{ProviderToolEvents: model.ConfidenceMedium}, nil, cfg), "No test command") {
+		t.Fatalf("Go-code gaps did not prompt for tests")
+	}
+
+	tsSummary := model.Summary{ChangedFiles: []model.ChangedFile{{Path: "src/app/main.ts"}}}
+	tsRisk := risk(tsSummary, nil, nil, cfg)
+	if !hasText(focus(tsSummary, tsRisk, cfg), "typecheck coverage") {
+		t.Fatalf("TypeScript focus did not prompt for typecheck")
+	}
+	if !hasText(gaps(tsSummary, model.CaptureConfidence{ProviderToolEvents: model.ConfidenceMedium}, nil, cfg), "No typecheck command") {
+		t.Fatalf("TypeScript gaps did not prompt for typecheck")
+	}
+}
+
 func TestConfidenceInvariants(t *testing.T) {
 	gitEvent := model.Event{Source: "git_monitor", Type: "git.snapshot"}
 	fsEvent := model.Event{Source: "fs_watcher", Type: "fs.change"}

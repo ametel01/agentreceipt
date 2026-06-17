@@ -877,6 +877,26 @@ func hasTypeScriptChanges(summary model.Summary) bool {
 	return false
 }
 
+func hasCodeChanges(summary model.Summary) bool {
+	for _, changed := range summary.ChangedFiles {
+		path := strings.ToLower(changed.Path)
+		switch filepath.Ext(path) {
+		case ".go",
+			".ts", ".tsx", ".mts", ".cts",
+			".js", ".jsx", ".mjs", ".cjs",
+			".py",
+			".rs",
+			".java", ".kt", ".kts", ".scala",
+			".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".m", ".mm",
+			".sh", ".bash", ".zsh",
+			".rb", ".php", ".swift":
+			return true
+		}
+	}
+
+	return false
+}
+
 func isAuthPath(path string) bool {
 	path = strings.ToLower(filepath.ToSlash(path))
 	for _, marker := range []string{"/auth/", "/authentication/", "/oauth/", "/jwt/"} {
@@ -1140,7 +1160,7 @@ func focus(summary model.Summary, risk model.Risk, cfg config.Config) []string {
 	for _, reason := range risk.Reasons {
 		items = append(items, reason.Message)
 	}
-	if cfg.Review.RequireTestsForCodeChanges && !summary.TestDetected {
+	if cfg.Review.RequireTestsForCodeChanges && hasCodeChanges(summary) && !summary.TestDetected {
 		items = append(items, "Confirm appropriate tests were run for code changes.")
 	}
 	if cfg.Review.RequireTypecheckForTS && hasTypeScriptChanges(summary) && !summary.TypecheckDetected {
@@ -1155,7 +1175,7 @@ func gaps(summary model.Summary, confidence model.CaptureConfidence, warnings []
 	if confidence.ProviderToolEvents == model.ConfidenceNone {
 		gaps = append(gaps, "No provider tool events were observed.")
 	}
-	if cfg.Review.RequireTestsForCodeChanges && !summary.TestDetected {
+	if cfg.Review.RequireTestsForCodeChanges && hasCodeChanges(summary) && !summary.TestDetected {
 		gaps = append(gaps, "No test command detected.")
 	}
 	if !summary.LintDetected {

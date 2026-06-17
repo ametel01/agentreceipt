@@ -13,6 +13,7 @@ and this project follows semantic versioning.
 - Recorded the actual detected provider label in signed receipts instead of hard-coding Codex.
 - Recognized `make verify` as default test evidence in review command detection.
 - Detected review git bases from configured upstreams, `origin/HEAD`, and non-main default branch names such as `trunk` and `develop`.
+- Limited missing-test review prompts to sessions with code file changes, avoiding docs-only noise.
 
 ## [0.4.1] - 2026-06-17
 
