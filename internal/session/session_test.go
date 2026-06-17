@@ -179,6 +179,42 @@ func TestAppendProviderWarningsOnlyDoesNotClaimCodexImported(t *testing.T) {
 	}
 }
 
+func TestLockedAppendersRejectFinalizedSession(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+	sessionID := "ar_ses_finalized_append"
+	layout := writeStoredSessionForState(t, repo, sessionID, model.SessionStateFinalized)
+	if err := writeActiveSession(repo, sessionID); err != nil {
+		t.Fatalf("writeActiveSession() error = %v", err)
+	}
+	providerEvent := model.Event{
+		EventID:   "evt_codex_after_finalize",
+		SessionID: sessionID,
+		Timestamp: fixedNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.command",
+		Provider:  "codex",
+		CWD:       repo,
+		Payload:   map[string]any{"command": "go test ./..."},
+	}
+	if _, _, err := manager.AppendProviderEvents(context.Background(), []model.Event{providerEvent}, nil); err == nil || !strings.Contains(err.Error(), "session is not active") {
+		t.Fatalf("AppendProviderEvents() err = %v, want inactive session error", err)
+	}
+	if _, _, err := manager.Mark(context.Background(), "after finalize", filepath.Join(t.TempDir(), "keys")); err == nil || !strings.Contains(err.Error(), "session is not active") {
+		t.Fatalf("Mark() err = %v, want inactive session error", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err == nil || !strings.Contains(err.Error(), "session is not active") {
+		t.Fatalf("Stop() err = %v, want inactive session error", err)
+	}
+	events, err := eventlog.ReadFile(layout.EventsJSONL)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("event count = %d, want only initial event", len(events))
+	}
+}
+
 func TestSessionCapturesFilesystemChanges(t *testing.T) {
 	repo := newSessionGitRepo(t)
 	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
@@ -590,6 +626,64 @@ func readManifest(t *testing.T, path string) model.Manifest {
 	}
 
 	return manifest
+}
+
+func writeStoredSessionForState(t *testing.T, repo string, sessionID string, stateValue model.SessionState) storage.Layout {
+	t.Helper()
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	writer, err := eventlog.NewWriter(layout.EventsJSONL, "", 1)
+	if err != nil {
+		t.Fatalf("NewWriter() error = %v", err)
+	}
+	appended, err := writer.Append(model.Event{
+		EventID:   "evt_git_start_" + sessionID,
+		SessionID: sessionID,
+		Timestamp: fixedNow(),
+		Source:    "git_monitor",
+		Type:      "git.snapshot",
+		CWD:       repo,
+		Payload:   map[string]any{"phase": "start"},
+	})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	state := State{
+		SchemaVersion: model.SchemaVersion,
+		SessionID:     sessionID,
+		RepoRoot:      repo,
+		State:         stateValue,
+		PID:           os.Getpid(),
+		StartedAt:     fixedNow(),
+		UpdatedAt:     fixedNow(),
+		EventCount:    appended.Seq,
+		ChainHash:     appended.EventHash,
+		CaptureSources: CaptureSources{
+			Git:        "active",
+			Filesystem: "stopped",
+			CodexLogs:  "not_observed",
+		},
+		RiskSummary: RiskSummary{Level: model.RiskInfo},
+	}
+	if err := writeState(layout, state); err != nil {
+		t.Fatalf("writeState() error = %v", err)
+	}
+	manifest := model.NewManifest(sessionID, fixedNow(), storage.ManifestArtifacts(layout))
+	manifest.State = stateValue
+	manifest.EventCount = appended.Seq
+	if err := writeManifest(layout, manifest); err != nil {
+		t.Fatalf("writeManifest() error = %v", err)
+	}
+
+	return layout
 }
 
 func newSessionGitRepo(t *testing.T) string {

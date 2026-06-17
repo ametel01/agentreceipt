@@ -1,7 +1,9 @@
 package eventlog
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,6 +133,73 @@ func TestWriterRejectsAppendAfterClose(t *testing.T) {
 	}
 	if _, err := writer.Append(testEvent("evt_1", "git.snapshot")); err == nil {
 		t.Fatal("Append() returned nil error after Close()")
+	}
+}
+
+func TestWithAppendLockSerializesReplayAppend(t *testing.T) {
+	t.Parallel()
+
+	path := t.TempDir() + "/events.jsonl"
+	writer, err := NewWriter(path, "", 1)
+	if err != nil {
+		t.Fatalf("NewWriter() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	const workers = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for index := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := WithAppendLock(path, func() error {
+				events, err := ReadFile(path)
+				if err != nil {
+					return err
+				}
+				prevHash, err := Replay(events)
+				if err != nil {
+					return err
+				}
+				writer, err := NewWriter(path, prevHash, int64(len(events)+1))
+				if err != nil {
+					return err
+				}
+				_, appendErr := writer.Append(testEvent(fmt.Sprintf("evt_%02d", index), "fs.change"))
+				closeErr := writer.Close()
+				if appendErr != nil {
+					return appendErr
+				}
+
+				return closeErr
+			})
+			if err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("locked append failed: %v", err)
+	}
+	events, err := ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if len(events) != workers {
+		t.Fatalf("event count = %d, want %d", len(events), workers)
+	}
+	if _, err := Replay(events); err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	for index, event := range events {
+		if event.Seq != int64(index+1) {
+			t.Fatalf("event %d seq = %d, want %d", index, event.Seq, index+1)
+		}
 	}
 }
 
