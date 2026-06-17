@@ -103,6 +103,8 @@ var shortStatPatterns = map[string]*regexp.Regexp{
 	"deletions":  regexp.MustCompile(`(\d+) deletions?\(-\)`),
 }
 
+const baseNotFoundText = "not found (looked for upstream, origin/HEAD, main/master/trunk/develop)"
+
 func Build(ctx context.Context, options Options) (Report, error) {
 	repoRoot, sessionID, err := resolveSession(ctx, options)
 	if err != nil {
@@ -190,7 +192,7 @@ func RenderTerminalColor(report Report, color bool) string {
 		fmt.Fprintf(&builder, "- Base: %s\n", report.Git.Base)
 		fmt.Fprintf(&builder, "- Ahead/behind: %d ahead, %d behind\n", report.Git.Ahead, report.Git.Behind)
 	} else {
-		fmt.Fprintf(&builder, "- Base: %s\n", reviewColorize("not found (looked for main/master)", reviewColorYellow, color))
+		fmt.Fprintf(&builder, "- Base: %s\n", reviewColorize(baseNotFoundText, reviewColorYellow, color))
 	}
 	fmt.Fprintf(&builder, "- Working tree: %s (%d staged, %d unstaged, %d untracked)\n", reviewColorize(dirtyText(report.Git.Dirty), reviewColorForDirty(report.Git.Dirty), color), report.Git.Staged, report.Git.Unstaged, report.Git.Untracked)
 	fmt.Fprintf(&builder, "- Receipt diff: %s\n", reviewColorize(receiptDiffText(report.Git.ReceiptDiffStatus), reviewColorForReceiptDiff(report.Git.ReceiptDiffStatus), color))
@@ -227,7 +229,7 @@ func RenderMarkdown(report Report) string {
 	if report.Git.BaseFound {
 		fmt.Fprintf(&builder, "- Base: `%s`, %d ahead / %d behind\n", report.Git.Base, report.Git.Ahead, report.Git.Behind)
 	} else {
-		builder.WriteString("- Base: not found (looked for main/master)\n")
+		fmt.Fprintf(&builder, "- Base: %s\n", baseNotFoundText)
 	}
 	fmt.Fprintf(&builder, "- Working tree: %s (%d staged, %d unstaged, %d untracked)\n", dirtyText(report.Git.Dirty), report.Git.Staged, report.Git.Unstaged, report.Git.Untracked)
 	fmt.Fprintf(&builder, "- Branch diff: %s\n", diffShortStat(report.Git.BranchDiff))
@@ -315,7 +317,21 @@ func buildGitSummary(ctx context.Context, repoRoot string, finalDiffHash string)
 }
 
 func detectBaseRef(ctx context.Context, repoRoot string) (string, bool) {
-	for _, candidate := range []string{"main", "master", "origin/main", "origin/master"} {
+	candidates := make([]string, 0, 10)
+	if upstream, err := gitCurrentUpstream(ctx, repoRoot); err == nil {
+		candidates = append(candidates, strings.TrimSpace(upstream))
+	}
+	if originHead, err := gitOriginHead(ctx, repoRoot); err == nil {
+		candidates = append(candidates, strings.TrimSpace(originHead))
+	}
+	candidates = append(candidates, "main", "master", "trunk", "develop", "origin/main", "origin/master", "origin/trunk", "origin/develop")
+
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
 		if _, err := gitVerifyBase(ctx, repoRoot, candidate); err == nil {
 			return candidate, true
 		}
@@ -587,6 +603,20 @@ func gitStatus(ctx context.Context, dir string) (string, error) {
 	return gitCommandOutput(cmd, "git status --porcelain=v1")
 }
 
+func gitCurrentUpstream(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git rev-parse --abbrev-ref --symbolic-full-name @{upstream}")
+}
+
+func gitOriginHead(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	cmd.Dir = dir
+
+	return gitCommandOutput(cmd, "git symbolic-ref --quiet --short refs/remotes/origin/HEAD")
+}
+
 func gitWorkspacePatch(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "diff", "--binary", "HEAD")
 	cmd.Dir = dir
@@ -595,83 +625,82 @@ func gitWorkspacePatch(ctx context.Context, dir string) (string, error) {
 }
 
 func gitVerifyBase(ctx context.Context, dir string, base string) (string, error) {
-	var cmd *exec.Cmd
-	switch base {
-	case "main":
-		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "main^{commit}")
-	case "master":
-		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "master^{commit}")
-	case "origin/main":
-		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "origin/main^{commit}")
-	case "origin/master":
-		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "origin/master^{commit}")
-	default:
+	if !isSafeGitBaseRef(base) {
 		return "", fmt.Errorf("unsupported base ref %q", base)
 	}
+	commitRef := base + "^{commit}"
+	// #nosec G204 -- commitRef is built from a validated git ref and passed without a shell.
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", commitRef)
 	cmd.Dir = dir
 
-	return gitCommandOutput(cmd, "git rev-parse --verify --quiet "+base+"^{commit}")
+	return gitCommandOutput(cmd, "git rev-parse --verify --quiet "+commitRef)
 }
 
 func gitAheadBehind(ctx context.Context, dir string, base string) (string, error) {
-	var cmd *exec.Cmd
-	switch base {
-	case "main":
-		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "main...HEAD")
-	case "master":
-		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "master...HEAD")
-	case "origin/main":
-		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "origin/main...HEAD")
-	case "origin/master":
-		cmd = exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", "origin/master...HEAD")
-	default:
+	if !isSafeGitBaseRef(base) {
 		return "", fmt.Errorf("unsupported base ref %q", base)
 	}
+	revision := base + "...HEAD"
+	// #nosec G204 -- revision is built from a validated git ref and passed without a shell.
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--left-right", "--count", revision)
 	cmd.Dir = dir
 
-	return gitCommandOutput(cmd, "git rev-list --left-right --count "+base+"...HEAD")
+	return gitCommandOutput(cmd, "git rev-list --left-right --count "+revision)
 }
 
 func gitDiffShortStat(ctx context.Context, dir string, revision string) (string, error) {
-	var cmd *exec.Cmd
-	switch revision {
-	case "HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "HEAD")
-	case "main...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "main...HEAD")
-	case "master...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "master...HEAD")
-	case "origin/main...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "origin/main...HEAD")
-	case "origin/master...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", "origin/master...HEAD")
-	default:
+	if !isSafeGitDiffRevision(revision) {
 		return "", fmt.Errorf("unsupported diff revision %q", revision)
 	}
+	// #nosec G204 -- revision is validated and passed as a single git argument without a shell.
+	cmd := exec.CommandContext(ctx, "git", "diff", "--shortstat", "--find-renames", revision)
 	cmd.Dir = dir
 
 	return gitCommandOutput(cmd, "git diff --shortstat --find-renames "+revision)
 }
 
 func gitDiffStat(ctx context.Context, dir string, revision string) (string, error) {
-	var cmd *exec.Cmd
-	switch revision {
-	case "HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "HEAD")
-	case "main...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "main...HEAD")
-	case "master...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "master...HEAD")
-	case "origin/main...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "origin/main...HEAD")
-	case "origin/master...HEAD":
-		cmd = exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", "origin/master...HEAD")
-	default:
+	if !isSafeGitDiffRevision(revision) {
 		return "", fmt.Errorf("unsupported diff revision %q", revision)
 	}
+	// #nosec G204 -- revision is validated and passed as a single git argument without a shell.
+	cmd := exec.CommandContext(ctx, "git", "diff", "--stat", "--find-renames", revision)
 	cmd.Dir = dir
 
 	return gitCommandOutput(cmd, "git diff --stat --find-renames "+revision)
+}
+
+func isSafeGitDiffRevision(revision string) bool {
+	if revision == "HEAD" {
+		return true
+	}
+	base, ok := strings.CutSuffix(revision, "...HEAD")
+
+	return ok && isSafeGitBaseRef(base)
+}
+
+func isSafeGitBaseRef(ref string) bool {
+	if ref == "" || strings.HasPrefix(ref, "-") {
+		return false
+	}
+	if strings.ContainsAny(ref, " \t\r\n~^:?*[\\") || strings.Contains(ref, "..") || strings.Contains(ref, "//") {
+		return false
+	}
+	if strings.HasSuffix(ref, ".lock") || strings.Contains(ref, "@{") {
+		return false
+	}
+	for _, char := range ref {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
+			continue
+		}
+		switch char {
+		case '/', '.', '_', '-':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func gitCommandOutput(cmd *exec.Cmd, description string) (string, error) {

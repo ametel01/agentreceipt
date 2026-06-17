@@ -141,6 +141,73 @@ func TestBuildReviewIncludesGitBranchAndWorkspaceDiff(t *testing.T) {
 	}
 }
 
+func TestBuildReviewDetectsTrunkBase(t *testing.T) {
+	repo := newReviewGitRepo(t)
+	runReviewGit(t, repo, "branch", "-M", "trunk")
+	runReviewGit(t, repo, "checkout", "-b", "feature/review-diff")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\ntrunk branch\n"), 0o600); err != nil {
+		t.Fatalf("write branch README: %v", err)
+	}
+	runReviewGit(t, repo, "add", "README.md")
+	runReviewGit(t, repo, "commit", "-m", "branch change")
+
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReviewNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !report.Git.BaseFound || report.Git.Base != "trunk" {
+		t.Fatalf("unexpected git base summary: %+v", report.Git)
+	}
+	if report.Git.Ahead != 1 || report.Git.Behind != 0 || report.Git.BranchDiff.Files != 1 {
+		t.Fatalf("unexpected branch comparison: %+v", report.Git)
+	}
+}
+
+func TestBuildReviewPrefersConfiguredUpstreamBase(t *testing.T) {
+	repo := newReviewGitRepo(t)
+	runReviewGit(t, repo, "branch", "-M", "develop")
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runReviewGit(t, repo, "init", "--bare", origin)
+	runReviewGit(t, repo, "remote", "add", "origin", origin)
+	runReviewGit(t, repo, "push", "-u", "origin", "develop")
+	runReviewGit(t, repo, "checkout", "-b", "feature/review-diff")
+	runReviewGit(t, repo, "branch", "--set-upstream-to=origin/develop")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nupstream branch\n"), 0o600); err != nil {
+		t.Fatalf("write branch README: %v", err)
+	}
+	runReviewGit(t, repo, "add", "README.md")
+	runReviewGit(t, repo, "commit", "-m", "branch change")
+
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReviewNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !report.Git.BaseFound || report.Git.Base != "origin/develop" {
+		t.Fatalf("unexpected git base summary: %+v", report.Git)
+	}
+	if report.Git.Ahead != 1 || report.Git.Behind != 0 || report.Git.BranchDiff.Files != 1 {
+		t.Fatalf("unexpected branch comparison: %+v", report.Git)
+	}
+}
+
 func TestBuildReviewFromActiveSessionRiskAndConfidenceSignals(t *testing.T) {
 	repo := newReviewGitRepo(t)
 	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReviewNow}

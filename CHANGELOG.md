@@ -12,6 +12,7 @@ and this project follows semantic versioning.
 - Rejected unknown top-level receipt JSON fields during local and bundle verification so unsigned receipt content cannot pass as authenticated.
 - Recorded the actual detected provider label in signed receipts instead of hard-coding Codex.
 - Recognized `make verify` as default test evidence in review command detection.
+- Detected review git bases from configured upstreams, `origin/HEAD`, and non-main default branch names such as `trunk` and `develop`.
 
 ## [0.4.1] - 2026-06-17
 
