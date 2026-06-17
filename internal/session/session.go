@@ -8,8 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/fswatcher"
@@ -28,19 +32,20 @@ type Manager struct {
 }
 
 type State struct {
-	SchemaVersion  int                `json:"schema_version"`
-	SessionID      string             `json:"session_id"`
-	RepoRoot       string             `json:"repo_root"`
-	State          model.SessionState `json:"state"`
-	PID            int                `json:"pid"`
-	StartedAt      time.Time          `json:"started_at"`
-	UpdatedAt      time.Time          `json:"updated_at"`
-	EventCount     int64              `json:"event_count"`
-	ChainHash      string             `json:"chain_hash"`
-	FinalDiffHash  string             `json:"final_diff_hash,omitempty"`
-	CaptureSources CaptureSources     `json:"capture_sources"`
-	RiskSummary    RiskSummary        `json:"risk_summary"`
-	Warnings       []model.Warning    `json:"warnings,omitempty"`
+	SchemaVersion        int                `json:"schema_version"`
+	SessionID            string             `json:"session_id"`
+	RepoRoot             string             `json:"repo_root"`
+	State                model.SessionState `json:"state"`
+	PID                  int                `json:"pid"`
+	FilesystemWatcherPID int                `json:"filesystem_watcher_pid,omitempty"`
+	StartedAt            time.Time          `json:"started_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+	EventCount           int64              `json:"event_count"`
+	ChainHash            string             `json:"chain_hash"`
+	FinalDiffHash        string             `json:"final_diff_hash,omitempty"`
+	CaptureSources       CaptureSources     `json:"capture_sources"`
+	RiskSummary          RiskSummary        `json:"risk_summary"`
+	Warnings             []model.Warning    `json:"warnings,omitempty"`
 }
 
 type CaptureSources struct {
@@ -123,7 +128,7 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 		ChainHash:     chainHash,
 		CaptureSources: CaptureSources{
 			Git:        "active",
-			Filesystem: "ready",
+			Filesystem: "starting",
 			CodexLogs:  "not_observed",
 		},
 		RiskSummary: RiskSummary{Level: model.RiskInfo},
@@ -136,6 +141,21 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 		return State{}, err
 	}
 	if err := writeActiveSession(repoRoot, sessionID); err != nil {
+		return State{}, err
+	}
+	watcherPID, err := startFilesystemWatcher(ctx, state, layout, m.Config)
+	if err != nil {
+		_ = clearActiveSession(repoRoot)
+		return State{}, err
+	}
+	state.FilesystemWatcherPID = watcherPID
+	state.CaptureSources.Filesystem = "active"
+	state.UpdatedAt = m.now()
+	manifest.UpdatedAt = state.UpdatedAt
+	if err := writeManifest(layout, manifest); err != nil {
+		return State{}, err
+	}
+	if err := writeState(layout, state); err != nil {
 		return State{}, err
 	}
 
@@ -184,6 +204,9 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 	}
 	layout, err := storage.NewLayout(state.RepoRoot, state.SessionID)
 	if err != nil {
+		return State{}, false, err
+	}
+	if err := stopFilesystemWatcher(ctx, state, layout); err != nil {
 		return State{}, false, err
 	}
 	events, err := eventlog.ReadFile(layout.EventsJSONL)
@@ -627,6 +650,238 @@ func (m Manager) now() time.Time {
 	}
 
 	return time.Now().UTC()
+}
+
+type FilesystemWatcherOptions struct {
+	RepoRoot  string
+	SessionID string
+	Config    config.Config
+}
+
+type inProcessWatcher struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+var inProcessWatchers sync.Map
+
+func RunFilesystemWatcher(ctx context.Context, options FilesystemWatcherOptions) error {
+	if err := storage.ValidateSessionID(options.SessionID); err != nil {
+		return err
+	}
+	layout, err := storage.NewLayout(options.RepoRoot, options.SessionID)
+	if err != nil {
+		return err
+	}
+	runCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+	defer cancel()
+	runCtx, stopPolling := context.WithCancel(runCtx)
+	defer stopPolling()
+	go cancelWhenStopFileAppears(runCtx, cancel, layout.FilesystemWatcherStopPath)
+	if err := os.Remove(layout.FilesystemWatcherDonePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove watcher done marker: %w", err)
+	}
+	if err := os.Remove(layout.FilesystemWatcherStopPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove watcher stop marker: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(layout.FilesystemWatcherPIDPath)
+		_ = os.WriteFile(layout.FilesystemWatcherDonePath, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
+	}()
+	watcher, err := BuildFilesystemWatcher(options.RepoRoot, options.SessionID, options.Config)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = watcher.Close()
+	}()
+	if err := watcher.Start(runCtx); err != nil {
+		return err
+	}
+	if err := os.WriteFile(layout.FilesystemWatcherPIDPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		return fmt.Errorf("write filesystem watcher pid: %w", err)
+	}
+	for event := range watcher.Events() {
+		if err := appendFilesystemEvent(layout, event); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func startFilesystemWatcher(ctx context.Context, state State, layout storage.Layout, cfg config.Config) (int, error) {
+	if !cfg.Capture.Filesystem {
+		return 0, errors.New("filesystem capture is disabled")
+	}
+	if strings.HasSuffix(os.Args[0], ".test") {
+		runCtx, cancel := context.WithCancel(context.Background())
+		handle := inProcessWatcher{cancel: cancel, done: make(chan struct{})}
+		key := filesystemWatcherKey(layout)
+		inProcessWatchers.Store(key, handle)
+		go func() {
+			defer close(handle.done)
+			defer inProcessWatchers.Delete(key)
+			_ = RunFilesystemWatcher(runCtx, FilesystemWatcherOptions{
+				RepoRoot:  state.RepoRoot,
+				SessionID: state.SessionID,
+				Config:    cfg,
+			})
+		}()
+
+		return 0, waitForFilesystemWatcherReady(ctx, layout)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return 0, fmt.Errorf("resolve current executable: %w", err)
+	}
+	configJSON, err := json.Marshal(cfg)
+	if err != nil {
+		return 0, fmt.Errorf("marshal filesystem watcher config: %w", err)
+	}
+	// #nosec G204 -- launches this AgentReceipt executable with validated session args for the local watcher sidecar.
+	command := exec.CommandContext(ctx, executable,
+		"--repo", state.RepoRoot,
+		"__internal-fswatcher",
+		"--session", state.SessionID,
+		"--config-json", string(configJSON),
+	)
+	if err := command.Start(); err != nil {
+		return 0, fmt.Errorf("start filesystem watcher: %w", err)
+	}
+	if err := waitForFilesystemWatcherReady(ctx, layout); err != nil {
+		return 0, err
+	}
+
+	return command.Process.Pid, nil
+}
+
+func stopFilesystemWatcher(ctx context.Context, state State, layout storage.Layout) error {
+	if handle, ok := inProcessWatchers.Load(filesystemWatcherKey(layout)); ok {
+		watcher := handle.(inProcessWatcher)
+		watcher.cancel()
+		select {
+		case <-watcher.done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+			return errors.New("timed out stopping filesystem watcher")
+		}
+	}
+	if state.CaptureSources.Filesystem != "active" && state.FilesystemWatcherPID == 0 {
+		return nil
+	}
+	if err := os.WriteFile(layout.FilesystemWatcherStopPath, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write filesystem watcher stop marker: %w", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(layout.FilesystemWatcherDonePath); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	if state.FilesystemWatcherPID <= 0 {
+		return errors.New("filesystem watcher did not acknowledge stop")
+	}
+	process, err := os.FindProcess(state.FilesystemWatcherPID)
+	if err != nil {
+		return fmt.Errorf("find filesystem watcher process: %w", err)
+	}
+	_ = process.Signal(os.Interrupt)
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(layout.FilesystemWatcherDonePath); err == nil {
+		return nil
+	}
+	_ = process.Kill()
+
+	return errors.New("filesystem watcher did not stop cleanly")
+}
+
+func appendFilesystemEvent(layout storage.Layout, event model.Event) error {
+	events, err := eventlog.ReadFile(layout.EventsJSONL)
+	if err != nil {
+		return err
+	}
+	prevHash, err := eventlog.Replay(events)
+	if err != nil {
+		return err
+	}
+	writer, err := eventlog.NewWriter(layout.EventsJSONL, prevHash, int64(len(events)+1))
+	if err != nil {
+		return err
+	}
+	appended, appendErr := writer.Append(event)
+	closeErr := writer.Close()
+	if appendErr != nil {
+		return appendErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	state, err := readState(layout)
+	if err != nil {
+		return err
+	}
+	state.EventCount = appended.Seq
+	state.ChainHash = appended.EventHash
+	state.UpdatedAt = appended.Timestamp
+	state.CaptureSources.Filesystem = "active"
+	manifest := model.NewManifest(state.SessionID, state.StartedAt, storage.ManifestArtifacts(layout))
+	manifest.State = state.State
+	manifest.UpdatedAt = state.UpdatedAt
+	manifest.EventCount = state.EventCount
+	manifest.Warnings = state.Warnings
+	if err := writeManifest(layout, manifest); err != nil {
+		return err
+	}
+
+	return writeState(layout, state)
+}
+
+func cancelWhenStopFileAppears(ctx context.Context, cancel context.CancelFunc, path string) {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(path); err == nil {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func filesystemWatcherKey(layout storage.Layout) string {
+	return filepath.Clean(layout.Session)
+}
+
+func waitForFilesystemWatcherReady(ctx context.Context, layout storage.Layout) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(layout.FilesystemWatcherPIDPath); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("timed out waiting for filesystem watcher startup")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func BuildFilesystemWatcher(repoRoot string, sessionID string, cfg config.Config) (*fswatcher.Watcher, error) {

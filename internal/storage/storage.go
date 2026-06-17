@@ -14,58 +14,64 @@ import (
 )
 
 const (
-	RootDir              = ".agentreceipt"
-	HomeEnv              = "AGENTRECEIPT_HOME"
-	ReposDir             = "repos"
-	SessionsDir          = "sessions"
-	PolicyFile           = "policy.yml"
-	EventsFile           = "events.jsonl"
-	ReceiptJSONFile      = "receipt.json"
-	ReceiptMarkdownFile  = "receipt.md"
-	ReviewMarkdownFile   = "review.md"
-	ManifestFile         = "manifest.json"
-	StateFile            = "state.json"
-	ActiveSessionFile    = "active_session"
-	DiffsDir             = "diffs"
-	FinalPatchFile       = "final.patch"
-	ProviderDir          = "provider"
-	ProviderCodexDir     = "codex"
-	ProviderClaudeDir    = "claude"
-	TracesDir            = "traces"
-	CodexImportedSession = "imported-session.jsonl"
-	ParseReportFile      = "parse-report.json"
-	BlobsDir             = "blobs"
-	SignaturesDir        = "signatures"
-	ReceiptSignatureFile = "receipt.sig"
+	RootDir               = ".agentreceipt"
+	HomeEnv               = "AGENTRECEIPT_HOME"
+	ReposDir              = "repos"
+	SessionsDir           = "sessions"
+	PolicyFile            = "policy.yml"
+	EventsFile            = "events.jsonl"
+	ReceiptJSONFile       = "receipt.json"
+	ReceiptMarkdownFile   = "receipt.md"
+	ReviewMarkdownFile    = "review.md"
+	ManifestFile          = "manifest.json"
+	StateFile             = "state.json"
+	ActiveSessionFile     = "active_session"
+	FilesystemWatcherPID  = "fswatcher.pid"
+	FilesystemWatcherStop = "fswatcher.stop"
+	FilesystemWatcherDone = "fswatcher.done"
+	DiffsDir              = "diffs"
+	FinalPatchFile        = "final.patch"
+	ProviderDir           = "provider"
+	ProviderCodexDir      = "codex"
+	ProviderClaudeDir     = "claude"
+	TracesDir             = "traces"
+	CodexImportedSession  = "imported-session.jsonl"
+	ParseReportFile       = "parse-report.json"
+	BlobsDir              = "blobs"
+	SignaturesDir         = "signatures"
+	ReceiptSignatureFile  = "receipt.sig"
 )
 
 var sessionIDPattern = regexp.MustCompile(`^ar_ses_[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 type Layout struct {
-	RepoRoot             string
-	RepoKey              string
-	Root                 string
-	Repo                 string
-	Sessions             string
-	Session              string
-	EventsJSONL          string
-	ReceiptJSON          string
-	ReceiptMarkdown      string
-	ReviewMarkdown       string
-	ManifestJSON         string
-	StateJSON            string
-	Diffs                string
-	FinalPatch           string
-	Provider             string
-	ProviderCodex        string
-	ProviderCodexTraces  string
-	CodexImportedSession string
-	CodexParseReport     string
-	ProviderClaude       string
-	ClaudeParseReport    string
-	Blobs                string
-	Signatures           string
-	ReceiptSignature     string
+	RepoRoot                  string
+	RepoKey                   string
+	Root                      string
+	Repo                      string
+	Sessions                  string
+	Session                   string
+	EventsJSONL               string
+	ReceiptJSON               string
+	ReceiptMarkdown           string
+	ReviewMarkdown            string
+	ManifestJSON              string
+	StateJSON                 string
+	FilesystemWatcherPIDPath  string
+	FilesystemWatcherStopPath string
+	FilesystemWatcherDonePath string
+	Diffs                     string
+	FinalPatch                string
+	Provider                  string
+	ProviderCodex             string
+	ProviderCodexTraces       string
+	CodexImportedSession      string
+	CodexParseReport          string
+	ProviderClaude            string
+	ClaudeParseReport         string
+	Blobs                     string
+	Signatures                string
+	ReceiptSignature          string
 }
 
 func NewLayout(repoRoot string, sessionID string) (Layout, error) {
@@ -88,30 +94,33 @@ func NewLayout(repoRoot string, sessionID string) (Layout, error) {
 	claude := filepath.Join(provider, ProviderClaudeDir)
 
 	return Layout{
-		RepoRoot:             repoRoot,
-		RepoKey:              repoKey,
-		Root:                 root,
-		Repo:                 repo,
-		Sessions:             filepath.Join(repo, SessionsDir),
-		Session:              session,
-		EventsJSONL:          filepath.Join(session, EventsFile),
-		ReceiptJSON:          filepath.Join(session, ReceiptJSONFile),
-		ReceiptMarkdown:      filepath.Join(session, ReceiptMarkdownFile),
-		ReviewMarkdown:       filepath.Join(session, ReviewMarkdownFile),
-		ManifestJSON:         filepath.Join(session, ManifestFile),
-		StateJSON:            filepath.Join(session, StateFile),
-		Diffs:                filepath.Join(session, DiffsDir),
-		FinalPatch:           filepath.Join(session, DiffsDir, FinalPatchFile),
-		Provider:             provider,
-		ProviderCodex:        codex,
-		ProviderCodexTraces:  filepath.Join(codex, TracesDir),
-		CodexImportedSession: filepath.Join(codex, CodexImportedSession),
-		CodexParseReport:     filepath.Join(codex, ParseReportFile),
-		ProviderClaude:       claude,
-		ClaudeParseReport:    filepath.Join(claude, ParseReportFile),
-		Blobs:                filepath.Join(session, BlobsDir),
-		Signatures:           filepath.Join(session, SignaturesDir),
-		ReceiptSignature:     filepath.Join(session, SignaturesDir, ReceiptSignatureFile),
+		RepoRoot:                  repoRoot,
+		RepoKey:                   repoKey,
+		Root:                      root,
+		Repo:                      repo,
+		Sessions:                  filepath.Join(repo, SessionsDir),
+		Session:                   session,
+		EventsJSONL:               filepath.Join(session, EventsFile),
+		ReceiptJSON:               filepath.Join(session, ReceiptJSONFile),
+		ReceiptMarkdown:           filepath.Join(session, ReceiptMarkdownFile),
+		ReviewMarkdown:            filepath.Join(session, ReviewMarkdownFile),
+		ManifestJSON:              filepath.Join(session, ManifestFile),
+		StateJSON:                 filepath.Join(session, StateFile),
+		FilesystemWatcherPIDPath:  filepath.Join(session, FilesystemWatcherPID),
+		FilesystemWatcherStopPath: filepath.Join(session, FilesystemWatcherStop),
+		FilesystemWatcherDonePath: filepath.Join(session, FilesystemWatcherDone),
+		Diffs:                     filepath.Join(session, DiffsDir),
+		FinalPatch:                filepath.Join(session, DiffsDir, FinalPatchFile),
+		Provider:                  provider,
+		ProviderCodex:             codex,
+		ProviderCodexTraces:       filepath.Join(codex, TracesDir),
+		CodexImportedSession:      filepath.Join(codex, CodexImportedSession),
+		CodexParseReport:          filepath.Join(codex, ParseReportFile),
+		ProviderClaude:            claude,
+		ClaudeParseReport:         filepath.Join(claude, ParseReportFile),
+		Blobs:                     filepath.Join(session, BlobsDir),
+		Signatures:                filepath.Join(session, SignaturesDir),
+		ReceiptSignature:          filepath.Join(session, SignaturesDir, ReceiptSignatureFile),
 	}, nil
 }
 

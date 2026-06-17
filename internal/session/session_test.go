@@ -61,7 +61,7 @@ func TestStartStatusLiveStopLifecycle(t *testing.T) {
 	if !stopped || finalized.State != model.SessionStateFinalized {
 		t.Fatalf("unexpected finalized state stopped=%v state=%+v", stopped, finalized)
 	}
-	if finalized.EventCount != 3 || finalized.CaptureSources.CodexLogs != "missing" {
+	if finalized.EventCount < 3 || finalized.CaptureSources.CodexLogs != "missing" {
 		t.Fatalf("unexpected finalized metadata: %+v", finalized)
 	}
 	if len(finalized.Warnings) != 1 || finalized.Warnings[0].Code != "codex_events_missing" {
@@ -78,7 +78,7 @@ func TestStartStatusLiveStopLifecycle(t *testing.T) {
 		t.Fatalf("Replay() error = %v", err)
 	}
 	manifest := readManifest(t, layout.ManifestJSON)
-	if manifest.State != model.SessionStateFinalized || manifest.EventCount != 3 {
+	if manifest.State != model.SessionStateFinalized || manifest.EventCount != finalized.EventCount {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
 	_, ok, err = manager.Status(context.Background())
@@ -128,6 +128,217 @@ func TestAppendProviderEventsPreventsMissingCodexWarning(t *testing.T) {
 		if warning.Code == "codex_events_missing" {
 			t.Fatalf("unexpected missing Codex warning: %+v", finalized.Warnings)
 		}
+	}
+}
+
+func TestSessionCapturesFilesystemChanges(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	layout, err := storage.NewLayout(repo, state.SessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.test\n"), 0o600); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	event := waitForSessionEvent(t, layout.EventsJSONL, func(event model.Event) bool {
+		return event.Source == "fs_watcher" && event.Type == "fs.change"
+	})
+	if event.Payload["path"] != "go.mod" {
+		t.Fatalf("fs path = %v, want go.mod: %+v", event.Payload["path"], event)
+	}
+	if event.Payload["dependency"] != true {
+		t.Fatalf("dependency classification missing: %+v", event.Payload)
+	}
+	if _, ok := event.Payload["sensitive"].(bool); !ok {
+		t.Fatalf("sensitive classification missing: %+v", event.Payload)
+	}
+	events, err := eventlog.ReadFile(layout.EventsJSONL)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if _, err := eventlog.Replay(events); err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if _, stopped, err := manager.Stop(context.Background()); err != nil || !stopped {
+		t.Fatalf("Stop() stopped=%v err=%v", stopped, err)
+	}
+}
+
+func TestRunFilesystemWatcherStopsOnMarker(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	sessionID := "ar_ses_direct_watcher"
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	writer, err := eventlog.NewWriter(layout.EventsJSONL, "", 1)
+	if err != nil {
+		t.Fatalf("NewWriter() error = %v", err)
+	}
+	appended, err := writer.Append(model.Event{
+		EventID:   "evt_git_start_direct",
+		SessionID: sessionID,
+		Timestamp: fixedNow(),
+		Source:    "git_monitor",
+		Type:      "git.snapshot",
+		CWD:       repo,
+		Payload:   map[string]any{"phase": "start"},
+	})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	state := State{
+		SchemaVersion: model.SchemaVersion,
+		SessionID:     sessionID,
+		RepoRoot:      repo,
+		State:         model.SessionStateActive,
+		PID:           os.Getpid(),
+		StartedAt:     fixedNow(),
+		UpdatedAt:     fixedNow(),
+		EventCount:    appended.Seq,
+		ChainHash:     appended.EventHash,
+		CaptureSources: CaptureSources{
+			Git:        "active",
+			Filesystem: "active",
+			CodexLogs:  "not_observed",
+		},
+		RiskSummary: RiskSummary{Level: model.RiskInfo},
+	}
+	if err := writeState(layout, state); err != nil {
+		t.Fatalf("writeState() error = %v", err)
+	}
+	if err := writeManifest(layout, model.NewManifest(sessionID, fixedNow(), storage.ManifestArtifacts(layout))); err != nil {
+		t.Fatalf("writeManifest() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunFilesystemWatcher(ctx, FilesystemWatcherOptions{
+			RepoRoot:  repo,
+			SessionID: sessionID,
+			Config:    config.Default(),
+		})
+	}()
+	if err := waitForFilesystemWatcherReady(ctx, layout); err != nil {
+		t.Fatalf("waitForFilesystemWatcherReady() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("TOKEN=test\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	event := waitForSessionEvent(t, layout.EventsJSONL, func(event model.Event) bool {
+		return event.Source == "fs_watcher" && event.Type == "fs.change"
+	})
+	if event.Payload["path"] != ".env" || event.Payload["sensitive"] != true {
+		t.Fatalf("unexpected fs event payload: %+v", event.Payload)
+	}
+	if err := os.WriteFile(layout.FilesystemWatcherStopPath, []byte("stop\n"), 0o600); err != nil {
+		t.Fatalf("write stop marker: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("RunFilesystemWatcher() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for RunFilesystemWatcher to stop")
+	}
+	if _, err := os.Stat(layout.FilesystemWatcherDonePath); err != nil {
+		t.Fatalf("done marker was not written: %v", err)
+	}
+}
+
+func TestStartRejectsDisabledFilesystemCapture(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	cfg := config.Default()
+	cfg.Capture.Filesystem = false
+	manager := Manager{RepoPath: repo, Config: cfg, Now: fixedNow}
+
+	if _, err := manager.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "filesystem capture is disabled") {
+		t.Fatalf("Start() err = %v, want filesystem disabled", err)
+	}
+	if _, ok, err := manager.Status(context.Background()); err != nil || ok {
+		t.Fatalf("Status() after disabled start ok=%v err=%v", ok, err)
+	}
+}
+
+func TestStartFilesystemWatcherProductionLaunchHonorsContext(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	sessionID := "ar_ses_launch_timeout"
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	originalArg0 := os.Args[0]
+	os.Args[0] = "agentreceipt"
+	defer func() {
+		os.Args[0] = originalArg0
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err = startFilesystemWatcher(ctx, State{RepoRoot: repo, SessionID: sessionID}, layout, config.Default())
+	if err == nil {
+		t.Fatal("startFilesystemWatcher() returned nil error for test-binary sidecar timeout")
+	}
+}
+
+func TestStopFilesystemWatcherAcceptsDoneMarker(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	sessionID := "ar_ses_stop_done"
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	if err := os.WriteFile(layout.FilesystemWatcherDonePath, []byte("done\n"), 0o600); err != nil {
+		t.Fatalf("write done marker: %v", err)
+	}
+	state := State{
+		SessionID:            sessionID,
+		RepoRoot:             repo,
+		FilesystemWatcherPID: os.Getpid(),
+		CaptureSources:       CaptureSources{Filesystem: "active"},
+	}
+
+	if err := stopFilesystemWatcher(context.Background(), state, layout); err != nil {
+		t.Fatalf("stopFilesystemWatcher() error = %v", err)
+	}
+	if _, err := os.Stat(layout.FilesystemWatcherStopPath); err != nil {
+		t.Fatalf("stop marker was not written: %v", err)
+	}
+}
+
+func TestStopFilesystemWatcherNoopAndRepoPathFallback(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	layout, err := storage.NewLayout(repo, "ar_ses_watcher_noop")
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := stopFilesystemWatcher(context.Background(), State{}, layout); err != nil {
+		t.Fatalf("stopFilesystemWatcher() noop error = %v", err)
+	}
+	if got := repoPathOrCWD(""); got == "" {
+		t.Fatal("repoPathOrCWD empty returned empty path")
 	}
 }
 
@@ -360,6 +571,25 @@ func appendSessionFile(t *testing.T, path string, content string) {
 	if _, err := file.WriteString(content); err != nil {
 		t.Fatalf("append %s: %v", path, err)
 	}
+}
+
+func waitForSessionEvent(t *testing.T, eventsPath string, match func(model.Event) bool) model.Event {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		events, err := eventlog.ReadFile(eventsPath)
+		if err == nil {
+			for _, event := range events {
+				if match(event) {
+					return event
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	events, _ := eventlog.ReadFile(eventsPath)
+	t.Fatalf("timed out waiting for matching event in %+v", events)
+	return model.Event{}
 }
 
 func fixedNow() time.Time {

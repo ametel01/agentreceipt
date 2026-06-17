@@ -7,6 +7,10 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed session filesystem capture so `agentreceipt start` launches a durable watcher sidecar, records `fs.change` events while active, and flushes watcher evidence before `stop` finalizes the receipt.
+
 ## [0.2.0] - 2026-06-17
 
 ### Added

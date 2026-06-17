@@ -78,6 +78,7 @@ func NewRootCommand(version string) *cobra.Command {
 		newMarkCommand(),
 		newPRCommand(),
 		newVersionCommand(version),
+		newInternalFilesystemWatcherCommand(),
 	)
 
 	return root
@@ -918,6 +919,47 @@ func newVersionCommand(version string) *cobra.Command {
 			return err
 		},
 	}
+}
+
+func newInternalFilesystemWatcherCommand() *cobra.Command {
+	internalCmd := &cobra.Command{
+		Use:    "__internal-fswatcher",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repoRoot, err := repoRootFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			sessionID, err := cmd.Flags().GetString("session")
+			if err != nil {
+				return err
+			}
+			configJSON, err := cmd.Flags().GetString("config-json")
+			if err != nil {
+				return err
+			}
+			cfg := config.Default()
+			if configJSON != "" {
+				if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+					return fmt.Errorf("decode filesystem watcher config: %w", err)
+				}
+				if err := config.Validate(cfg); err != nil {
+					return err
+				}
+			}
+
+			return session.RunFilesystemWatcher(cmd.Context(), session.FilesystemWatcherOptions{
+				RepoRoot:  repoRoot,
+				SessionID: sessionID,
+				Config:    cfg,
+			})
+		},
+	}
+	internalCmd.Flags().String("session", "", "AgentReceipt session ID")
+	internalCmd.Flags().String("config-json", "", "Serialized AgentReceipt config")
+	_ = internalCmd.MarkFlagRequired("session")
+
+	return internalCmd
 }
 
 func newScaffoldCommand(use string, short string, future string) *cobra.Command {
