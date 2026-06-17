@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -21,6 +22,9 @@ func TestDefaultCodexFirstConfig(t *testing.T) {
 	}
 	if cfg.Privacy.StorePrompts || cfg.Privacy.StoreRawToolOutputs {
 		t.Fatalf("privacy defaults should not export prompts or raw tool outputs: %+v", cfg.Privacy)
+	}
+	if !slices.Contains(cfg.TestCommands, "make verify") {
+		t.Fatalf("default test commands missing make verify: %+v", cfg.TestCommands)
 	}
 }
 

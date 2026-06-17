@@ -372,6 +372,27 @@ func TestConfiguredCommandDetection(t *testing.T) {
 	}
 }
 
+func TestDefaultCommandDetectionRecognizesMakeVerify(t *testing.T) {
+	t.Parallel()
+
+	events := []model.Event{
+		commandAttemptEvent("evt_make_verify", "call_verify", "make verify"),
+		commandAttemptEvent("evt_staticcheck", "call_lint", "staticcheck ./..."),
+		commandAttemptEvent("evt_tsc", "call_typecheck", "tsc --noEmit"),
+	}
+	summary := summarize(events, config.Default())
+	kinds := map[string]string{}
+	for _, command := range summary.DetectedCommands {
+		kinds[command.Command] = command.Kind
+	}
+	if kinds["make verify"] != "test" || kinds["staticcheck ./..."] != "lint" || kinds["tsc --noEmit"] != "typecheck" {
+		t.Fatalf("command kinds = %+v, want make verify test, staticcheck lint, tsc typecheck", kinds)
+	}
+	if !summary.TestDetected || !summary.LintDetected || !summary.TypecheckDetected {
+		t.Fatalf("default command detection = %+v", summary)
+	}
+}
+
 func TestReviewPolicyToggles(t *testing.T) {
 	t.Parallel()
 

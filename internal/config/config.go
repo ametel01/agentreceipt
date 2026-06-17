@@ -120,6 +120,7 @@ func Default() Config {
 			"pytest",
 			"go test ./...",
 			"make test",
+			"make verify",
 		},
 	}
 }
