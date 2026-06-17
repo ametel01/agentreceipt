@@ -7,6 +7,8 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-18
+
 ### Added
 
 - Added `agentreceipt sessions` to list sessions available for the current repository.

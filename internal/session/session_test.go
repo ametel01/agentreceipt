@@ -90,6 +90,67 @@ func TestStartStatusLiveStopLifecycle(t *testing.T) {
 	}
 }
 
+func TestListSessionsForRepository(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+
+	summaries, err := manager.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() empty error = %v", err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("List() empty = %+v, want none", summaries)
+	}
+
+	active, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	summaries, err = manager.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() active error = %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("List() active len = %d, want 1: %+v", len(summaries), summaries)
+	}
+	if got := summaries[0]; got.SessionID != active.SessionID || got.State != model.SessionStateActive || !got.Active || got.EventCount != active.EventCount {
+		t.Fatalf("unexpected active summary: %+v state=%+v", got, active)
+	}
+
+	finalized, stopped, err := manager.Stop(context.Background())
+	if err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if !stopped {
+		t.Fatal("Stop() stopped=false")
+	}
+	sessionsPath, err := storage.SessionsPath(repo)
+	if err != nil {
+		t.Fatalf("SessionsPath() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sessionsPath, "not-a-session"), 0o750); err != nil {
+		t.Fatalf("mkdir invalid session: %v", err)
+	}
+	layoutWithoutState, err := storage.NewLayout(repo, "ar_ses_without_state")
+	if err != nil {
+		t.Fatalf("NewLayout() without state error = %v", err)
+	}
+	if err := os.MkdirAll(layoutWithoutState.Session, 0o750); err != nil {
+		t.Fatalf("mkdir session without state: %v", err)
+	}
+
+	summaries, err = manager.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() finalized error = %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("List() finalized len = %d, want 1: %+v", len(summaries), summaries)
+	}
+	if got := summaries[0]; got.SessionID != finalized.SessionID || got.State != model.SessionStateFinalized || got.Active || got.EventCount != finalized.EventCount || got.Warnings != len(finalized.Warnings) {
+		t.Fatalf("unexpected finalized summary: %+v state=%+v", got, finalized)
+	}
+}
+
 func TestAppendProviderEventsPreventsMissingCodexWarning(t *testing.T) {
 	repo := newSessionGitRepo(t)
 	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
