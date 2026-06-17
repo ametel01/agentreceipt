@@ -7,6 +7,8 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-17
+
 ### Changed
 
 - Improved receipt Markdown export readability with colorized terminal output for human-facing exports, concise risk bullets, capped risk lists, and dynamic rendering from signed receipt JSON instead of stale cached Markdown.

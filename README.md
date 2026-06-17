@@ -13,7 +13,7 @@ curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh
 Pin a specific release:
 
 ```bash
-curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.4.2
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.5.0
 ```
 
 ```bash
