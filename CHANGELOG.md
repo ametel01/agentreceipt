@@ -7,6 +7,8 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-06-17
+
 ### Fixed
 
 - Rejected unknown top-level receipt JSON fields during local and bundle verification so unsigned receipt content cannot pass as authenticated.
