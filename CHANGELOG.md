@@ -7,6 +7,8 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-17
+
 ### Added
 
 - Added Claude hook MVP support with dry-run hook installation, guarded settings merges, active-session hook ingestion, and provider-neutral review confidence.

@@ -502,6 +502,29 @@ func TestConfidenceInvariants(t *testing.T) {
 	}
 }
 
+func TestProviderLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events []model.Event
+		want   string
+	}{
+		{name: "none", want: "unknown"},
+		{name: "codex", events: []model.Event{{Source: "codex_session_log", Type: "provider.command"}}, want: "Codex CLI"},
+		{name: "claude", events: []model.Event{{Source: "claude_hook", Type: "provider.command", Provider: "claude"}}, want: "Claude Code"},
+		{name: "both", events: []model.Event{
+			{Source: "codex_session_log", Type: "provider.command", Provider: "codex"},
+			{Source: "claude_hook", Type: "provider.command", Provider: "claude"},
+		}, want: "Codex CLI + Claude Code"},
+		{name: "warning only", events: []model.Event{{Source: "claude_hook", Type: "provider.parse_warning", Provider: "claude"}}, want: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := providerLabel(tc.events); got != tc.want {
+				t.Fatalf("providerLabel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReviewErrorsWhenNoSessionExists(t *testing.T) {
 	repo := newReviewGitRepo(t)
 	if _, err := Build(context.Background(), Options{RepoPath: repo, Last: true}); err == nil {
