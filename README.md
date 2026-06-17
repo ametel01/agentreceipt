@@ -276,6 +276,7 @@ Explicit `--config` files control local review policy, including configured qual
 ```bash
 # Setup
 agentreceipt init # optional global storage/key setup
+agentreceipt install codex # optional read-only Codex log detection
 
 # Session lifecycle
 agentreceipt start

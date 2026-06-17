@@ -25,7 +25,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const scaffoldMessage = "command scaffolded; implementation is scheduled for a later AgentReceipt plan step"
 const prCommentFile = "-"
 
 const (
@@ -176,11 +175,45 @@ func newInstallCommand() *cobra.Command {
 		Short: "Configure provider-specific local integrations",
 	}
 	install.AddCommand(
-		newScaffoldCommand("codex", "Detect local Codex logs and configure parser defaults", "install codex will detect Codex log directories and update local parser preferences."),
+		newInstallCodexCommand(),
 		newInstallClaudeCommand(),
 	)
 
 	return install
+}
+
+func newInstallCodexCommand() *cobra.Command {
+	installCodex := &cobra.Command{
+		Use:   "codex",
+		Short: "Detect local Codex log availability",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			home, err := cmd.Flags().GetString("home")
+			if err != nil {
+				return err
+			}
+			result := codex.Inspect(home)
+			out := cmd.OutOrStdout()
+			if _, err := fmt.Fprintf(out, "Codex home: %s\nHome source: %s\nCandidates: %d\nWarnings: %d\n", result.CodexHome, codexHomeSource(home), len(result.Candidates), len(result.Warnings)); err != nil {
+				return err
+			}
+			if len(result.Candidates) > 0 {
+				if _, err := fmt.Fprintf(out, "Newest candidate: %s\n", result.Candidates[0].Path); err != nil {
+					return err
+				}
+			}
+			for _, warning := range result.Warnings {
+				if _, err := fmt.Fprintf(out, "warning[%s]: %s\n", warning.Code, warning.Message); err != nil {
+					return err
+				}
+			}
+			_, err = fmt.Fprintln(out, "Next: agentreceipt start --watch")
+
+			return err
+		},
+	}
+	installCodex.Flags().String("home", "", "Codex home directory; defaults to CODEX_HOME or ~/.codex")
+
+	return installCodex
 }
 
 func newInstallClaudeCommand() *cobra.Command {
@@ -191,6 +224,17 @@ func newInstallClaudeCommand() *cobra.Command {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), "Claude hook installation is deferred in the Codex-first MVP; no runtime hooks were configured.")
 			return err
 		},
+	}
+}
+
+func codexHomeSource(home string) string {
+	switch {
+	case home != "":
+		return "explicit --home"
+	case os.Getenv("CODEX_HOME") != "":
+		return "CODEX_HOME"
+	default:
+		return "default ~/.codex"
 	}
 }
 
@@ -971,17 +1015,6 @@ func newInternalFilesystemWatcherCommand() *cobra.Command {
 	_ = internalCmd.MarkFlagRequired("session")
 
 	return internalCmd
-}
-
-func newScaffoldCommand(use string, short string, future string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s.\n", future, scaffoldMessage)
-			return err
-		},
-	}
 }
 
 func managerFromCommand(cmd *cobra.Command) (session.Manager, error) {

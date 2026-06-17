@@ -534,6 +534,56 @@ func TestInstallClaudeIsDeferredNoOp(t *testing.T) {
 	}
 }
 
+func TestInstallCodexReportsMissingLogs(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	stdout, _, err := executeCommand(t, "install", "codex", "--home", home)
+	if err != nil {
+		t.Fatalf("install codex returned error: %v", err)
+	}
+	for _, want := range []string{
+		"Codex home: " + home,
+		"Home source: explicit --home",
+		"Candidates: 0",
+		"warning[codex_logs_missing]",
+		"Next: agentreceipt start --watch",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("install codex output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestInstallCodexReportsCandidates(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", "2026", "06", "16")
+	if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := filepath.Join(sessionDir, "rollout-test.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "install", "codex", "--home", home)
+	if err != nil {
+		t.Fatalf("install codex returned error: %v", err)
+	}
+	for _, want := range []string{
+		"Candidates: 1",
+		"Warnings: 0",
+		"Newest candidate: " + sessionPath,
+		"Next: agentreceipt start --watch",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("install codex output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestVersionCommand(t *testing.T) {
 	t.Parallel()
 
@@ -591,22 +641,6 @@ func TestCommandPayloadHelpers(t *testing.T) {
 	}
 	if got := emptyDefault("value", "fallback"); got != "value" {
 		t.Fatalf("emptyDefault value = %q", got)
-	}
-}
-
-func TestScaffoldCommandsPrintPlannedBehavior(t *testing.T) {
-	t.Parallel()
-
-	for _, args := range [][]string{
-		{"install", "codex"},
-	} {
-		stdout, _, err := executeCommand(t, args...)
-		if err != nil {
-			t.Fatalf("%q returned error: %v", strings.Join(args, " "), err)
-		}
-		if !strings.Contains(stdout, scaffoldMessage) {
-			t.Fatalf("%q output missing scaffold message: %q", strings.Join(args, " "), stdout)
-		}
 	}
 }
 

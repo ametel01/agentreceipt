@@ -105,7 +105,7 @@ fs events + git signals + codex logs
 | Command | Responsibility |
 | --- | --- |
 | `agentreceipt init` | Bootstrap global AgentReceipt storage and keys under `~/.agentreceipt/` if missing; does not write repo-local files. |
-| `agentreceipt install codex` | Detect Codex log directories and set parser preferences in config. |
+| `agentreceipt install codex` | Read-only detection of Codex log directories and next-step watch guidance. |
 | `agentreceipt install claude` | Deferred roadmap path; command may explain that Claude hook installation is not active in Codex-first MVP. |
 | `agentreceipt start` | Fail-fast if git monitor or filesystem watcher cannot initialize. Create session, persist `manifest.json`, begin capture. |
 | `agentreceipt status` | Show current session health and event summary counts. |
