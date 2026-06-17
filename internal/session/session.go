@@ -95,13 +95,6 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 	manifest := model.NewManifest(sessionID, now, storage.ManifestArtifacts(layout))
 	manifest.State = model.SessionStateActive
 
-	writer, err := eventlog.NewWriter(layout.EventsJSONL, "", 1)
-	if err != nil {
-		return State{}, err
-	}
-	defer func() {
-		_ = writer.Close()
-	}()
 	monitor, err := gitmonitor.New(ctx, repoRoot, sessionID, layout)
 	if err != nil {
 		return State{}, err
@@ -117,15 +110,9 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	var chainHash string
-	var eventCount int64
-	for _, event := range gitEvents {
-		appended, err := writer.Append(event)
-		if err != nil {
-			return State{}, err
-		}
-		chainHash = appended.EventHash
-		eventCount = appended.Seq
+	appendResult, err := eventlog.AppendBatch(layout.EventsJSONL, gitEvents)
+	if err != nil {
+		return State{}, err
 	}
 	state := State{
 		SchemaVersion: model.SchemaVersion,
@@ -135,8 +122,8 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 		PID:           os.Getpid(),
 		StartedAt:     now,
 		UpdatedAt:     now,
-		EventCount:    eventCount,
-		ChainHash:     chainHash,
+		EventCount:    appendResult.EventCount,
+		ChainHash:     appendResult.ChainHash,
 		CaptureSources: CaptureSources{
 			Git:        "active",
 			Filesystem: "starting",
@@ -144,7 +131,7 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 		},
 		RiskSummary: RiskSummary{Level: model.RiskInfo},
 	}
-	manifest.EventCount = eventCount
+	manifest.EventCount = appendResult.EventCount
 	if err := writeManifest(layout, manifest); err != nil {
 		return State{}, err
 	}
@@ -282,7 +269,7 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 	if err := stopFilesystemWatcher(ctx, state, layout); err != nil {
 		return State{}, false, err
 	}
-	if err := eventlog.WithAppendLock(layout.EventsJSONL, func() error {
+	if _, err := eventlog.AppendTransaction(layout.EventsJSONL, func(tx *eventlog.AppendTx) error {
 		currentState, err := readState(layout)
 		if err != nil {
 			return err
@@ -291,37 +278,16 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 			return fmt.Errorf("session is not active: %s", currentState.State)
 		}
 		state = currentState
-		events, err := eventlog.ReadFile(layout.EventsJSONL)
-		if err != nil {
-			return err
-		}
+		events := tx.Snapshot().Events
 		providerPresent := providerEventsPresent(events)
 		codexPresent := codexEventsPresent(events)
-		prevHash, err := eventlog.Replay(events)
-		if err != nil {
-			return err
-		}
-		writer, err := eventlog.NewWriter(layout.EventsJSONL, prevHash, int64(len(events)+1))
-		if err != nil {
-			return err
-		}
 		monitor, err := gitmonitor.New(ctx, state.RepoRoot, state.SessionID, layout)
 		if err != nil {
-			_ = writer.Close()
 			return err
 		}
 		finalSnapshot, gitEvents, err := monitor.CaptureFinal(ctx)
 		if err != nil {
-			_ = writer.Close()
 			return err
-		}
-		var appended model.Event
-		for _, event := range gitEvents {
-			appended, err = writer.Append(event)
-			if err != nil {
-				_ = writer.Close()
-				return err
-			}
 		}
 		finalize := model.Event{
 			EventID:   fmt.Sprintf("evt_finalize_%d", m.now().UnixNano()),
@@ -336,19 +302,16 @@ func (m Manager) Stop(ctx context.Context) (State, bool, error) {
 				"codex_events_present":    codexPresent,
 			},
 		}
-		appended, err = writer.Append(finalize)
-		closeErr := writer.Close()
+		eventsToAppend := append(append([]model.Event(nil), gitEvents...), finalize)
+		appendResult, err := tx.AppendAll(eventsToAppend)
 		if err != nil {
 			return err
-		}
-		if closeErr != nil {
-			return closeErr
 		}
 		now := m.now()
 		state.State = model.SessionStateFinalized
 		state.UpdatedAt = now
-		state.EventCount = appended.Seq
-		state.ChainHash = appended.EventHash
+		state.EventCount = appendResult.EventCount
+		state.ChainHash = appendResult.ChainHash
 		state.FinalDiffHash = finalSnapshot.PatchHash
 		state.CaptureSources.Git = "finalized"
 		state.CaptureSources.Filesystem = "stopped"
@@ -398,7 +361,7 @@ func (m Manager) AppendProviderEvents(ctx context.Context, providerEvents []mode
 	if err != nil {
 		return State{}, false, err
 	}
-	if err := eventlog.WithAppendLock(layout.EventsJSONL, func() error {
+	if _, err := eventlog.AppendTransaction(layout.EventsJSONL, func(tx *eventlog.AppendTx) error {
 		currentState, err := readState(layout)
 		if err != nil {
 			return err
@@ -407,40 +370,24 @@ func (m Manager) AppendProviderEvents(ctx context.Context, providerEvents []mode
 			return fmt.Errorf("session is not active: %s", currentState.State)
 		}
 		state = currentState
-		events, err := eventlog.ReadFile(layout.EventsJSONL)
-		if err != nil {
-			return err
-		}
-		prevHash, err := eventlog.Replay(events)
-		if err != nil {
-			return err
-		}
-		writer, err := eventlog.NewWriter(layout.EventsJSONL, prevHash, int64(len(events)+1))
-		if err != nil {
-			return err
-		}
-		var appended model.Event
+		normalizedProviderEvents := make([]model.Event, 0, len(providerEvents))
 		for _, providerEvent := range providerEvents {
-			providerEvent.SessionID = state.SessionID
-			if providerEvent.CWD == "" {
-				providerEvent.CWD = state.RepoRoot
+			normalized := providerEvent
+			normalized.SessionID = state.SessionID
+			if normalized.CWD == "" {
+				normalized.CWD = state.RepoRoot
 			}
-			appended, err = writer.Append(providerEvent)
-			if err != nil {
-				_ = writer.Close()
-				return err
-			}
+			normalizedProviderEvents = append(normalizedProviderEvents, normalized)
 		}
-		if err := writer.Close(); err != nil {
+		appendResult, err := tx.AppendAll(normalizedProviderEvents)
+		if err != nil {
 			return err
 		}
 		now := m.now()
 		state.UpdatedAt = now
-		if appended.EventHash != "" {
-			state.EventCount = appended.Seq
-			state.ChainHash = appended.EventHash
-		}
-		if providerEventsPresent(providerEvents) {
+		state.EventCount = appendResult.EventCount
+		state.ChainHash = appendResult.ChainHash
+		if providerEventsPresent(normalizedProviderEvents) {
 			state.CaptureSources.CodexLogs = "imported"
 		}
 		for _, warning := range warnings {
@@ -509,7 +456,7 @@ func (m Manager) Mark(ctx context.Context, message string, keyDir string) (State
 			"public_key":          keypair.Public,
 		},
 	}
-	if err := eventlog.WithAppendLock(layout.EventsJSONL, func() error {
+	if _, err := eventlog.AppendTransaction(layout.EventsJSONL, func(tx *eventlog.AppendTx) error {
 		currentState, err := readState(layout)
 		if err != nil {
 			return err
@@ -518,29 +465,13 @@ func (m Manager) Mark(ctx context.Context, message string, keyDir string) (State
 			return fmt.Errorf("session is not active: %s", currentState.State)
 		}
 		state = currentState
-		events, err := eventlog.ReadFile(layout.EventsJSONL)
+		appendResult, err := tx.AppendAll([]model.Event{marker})
 		if err != nil {
 			return err
-		}
-		prevHash, err := eventlog.Replay(events)
-		if err != nil {
-			return err
-		}
-		writer, err := eventlog.NewWriter(layout.EventsJSONL, prevHash, int64(len(events)+1))
-		if err != nil {
-			return err
-		}
-		appended, appendErr := writer.Append(marker)
-		closeErr := writer.Close()
-		if appendErr != nil {
-			return appendErr
-		}
-		if closeErr != nil {
-			return closeErr
 		}
 		state.UpdatedAt = now
-		state.EventCount = appended.Seq
-		state.ChainHash = appended.EventHash
+		state.EventCount = appendResult.EventCount
+		state.ChainHash = appendResult.ChainHash
 		manifest := model.NewManifest(state.SessionID, state.StartedAt, storage.ManifestArtifacts(layout))
 		manifest.State = state.State
 		manifest.UpdatedAt = now
@@ -1002,34 +933,18 @@ func stopFilesystemWatcher(ctx context.Context, state State, layout storage.Layo
 }
 
 func appendFilesystemEvent(layout storage.Layout, event model.Event) error {
-	return eventlog.WithAppendLock(layout.EventsJSONL, func() error {
-		events, err := eventlog.ReadFile(layout.EventsJSONL)
+	_, err := eventlog.AppendTransaction(layout.EventsJSONL, func(tx *eventlog.AppendTx) error {
+		appendResult, err := tx.AppendAll([]model.Event{event})
 		if err != nil {
 			return err
-		}
-		prevHash, err := eventlog.Replay(events)
-		if err != nil {
-			return err
-		}
-		writer, err := eventlog.NewWriter(layout.EventsJSONL, prevHash, int64(len(events)+1))
-		if err != nil {
-			return err
-		}
-		appended, appendErr := writer.Append(event)
-		closeErr := writer.Close()
-		if appendErr != nil {
-			return appendErr
-		}
-		if closeErr != nil {
-			return closeErr
 		}
 		state, err := readState(layout)
 		if err != nil {
 			return err
 		}
-		state.EventCount = appended.Seq
-		state.ChainHash = appended.EventHash
-		state.UpdatedAt = appended.Timestamp
+		state.EventCount = appendResult.EventCount
+		state.ChainHash = appendResult.ChainHash
+		state.UpdatedAt = appendResult.LastEvent.Timestamp
 		state.CaptureSources.Filesystem = "active"
 		manifest := model.NewManifest(state.SessionID, state.StartedAt, storage.ManifestArtifacts(layout))
 		manifest.State = state.State
@@ -1042,6 +957,8 @@ func appendFilesystemEvent(layout storage.Layout, event model.Event) error {
 
 		return writeState(layout, state)
 	})
+
+	return err
 }
 
 func cancelWhenStopFileAppears(ctx context.Context, cancel context.CancelFunc, path string) {

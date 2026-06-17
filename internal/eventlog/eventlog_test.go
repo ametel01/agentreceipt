@@ -136,6 +136,106 @@ func TestWriterRejectsAppendAfterClose(t *testing.T) {
 	}
 }
 
+func TestAppendTransactionAppendsAndExposesSnapshot(t *testing.T) {
+	t.Parallel()
+
+	path := t.TempDir() + "/events.jsonl"
+	result, err := AppendTransaction(path, func(tx *AppendTx) error {
+		snapshot := tx.Snapshot()
+		if snapshot.EventCount != 0 || snapshot.ChainHash != GenesisHash() || snapshot.NextSeq != 1 {
+			t.Fatalf("initial snapshot = %+v", snapshot)
+		}
+		first, err := tx.Append(testEvent("evt_1", "git.snapshot"))
+		if err != nil {
+			return err
+		}
+		if first.Seq != 1 {
+			t.Fatalf("first seq = %d, want 1", first.Seq)
+		}
+		appendResult, err := tx.AppendAll([]model.Event{testEvent("evt_2", "fs.change")})
+		if err != nil {
+			return err
+		}
+		if appendResult.EventCount != 2 || appendResult.LastEvent.Seq != 2 {
+			t.Fatalf("append result = %+v", appendResult)
+		}
+		snapshot = tx.Snapshot()
+		if snapshot.EventCount != 2 || snapshot.NextSeq != 3 || len(snapshot.Events) != 2 {
+			t.Fatalf("updated snapshot = %+v", snapshot)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("AppendTransaction() error = %v", err)
+	}
+	if result.EventCount != 2 || result.LastEvent.Seq != 2 || result.ChainHash == "" {
+		t.Fatalf("result = %+v", result)
+	}
+	events, err := ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	if _, err := Replay(events); err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+}
+
+func TestAppendTransactionAllowsEmptyAppend(t *testing.T) {
+	t.Parallel()
+
+	path := t.TempDir() + "/events.jsonl"
+	result, err := AppendBatch(path, nil)
+	if err != nil {
+		t.Fatalf("AppendBatch(nil) error = %v", err)
+	}
+	if result.EventCount != 0 || result.ChainHash != GenesisHash() || result.LastEvent.EventID != "" {
+		t.Fatalf("empty append result = %+v", result)
+	}
+}
+
+func TestAppendTransactionRejectsAppendAfterReturn(t *testing.T) {
+	t.Parallel()
+
+	path := t.TempDir() + "/events.jsonl"
+	var saved *AppendTx
+	if _, err := AppendTransaction(path, func(tx *AppendTx) error {
+		saved = tx
+
+		return nil
+	}); err != nil {
+		t.Fatalf("AppendTransaction() error = %v", err)
+	}
+	if _, err := saved.Append(testEvent("evt_1", "git.snapshot")); err == nil {
+		t.Fatal("Append() after transaction returned nil error")
+	}
+}
+
+func TestAppendTransactionSnapshotIsDefensiveCopy(t *testing.T) {
+	t.Parallel()
+
+	path := t.TempDir() + "/events.jsonl"
+	if _, err := AppendBatch(path, []model.Event{testEvent("evt_1", "git.snapshot")}); err != nil {
+		t.Fatalf("AppendBatch() error = %v", err)
+	}
+	if _, err := AppendTransaction(path, func(tx *AppendTx) error {
+		snapshot := tx.Snapshot()
+		snapshot.Events[0].EventID = "mutated"
+		snapshot.Events[0].Payload["path"] = "mutated"
+		next := tx.Snapshot()
+		if next.Events[0].EventID != "evt_1" || next.Events[0].Payload["path"] != "README.md" {
+			t.Fatalf("snapshot mutation leaked into tx: %+v", next.Events[0])
+		}
+
+		return nil
+	}); err != nil {
+		t.Fatalf("AppendTransaction() error = %v", err)
+	}
+}
+
 func TestWithAppendLockSerializesReplayAppend(t *testing.T) {
 	t.Parallel()
 
@@ -200,6 +300,40 @@ func TestWithAppendLockSerializesReplayAppend(t *testing.T) {
 		if event.Seq != int64(index+1) {
 			t.Fatalf("event %d seq = %d, want %d", index, event.Seq, index+1)
 		}
+	}
+}
+
+func TestAppendBatchSerializesConcurrentAppends(t *testing.T) {
+	t.Parallel()
+
+	path := t.TempDir() + "/events.jsonl"
+	const workers = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for index := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := AppendBatch(path, []model.Event{testEvent(fmt.Sprintf("evt_%02d", index), "fs.change")})
+			if err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("AppendBatch() failed: %v", err)
+	}
+	events, err := ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if len(events) != workers {
+		t.Fatalf("event count = %d, want %d", len(events), workers)
+	}
+	if _, err := Replay(events); err != nil {
+		t.Fatalf("Replay() error = %v", err)
 	}
 }
 

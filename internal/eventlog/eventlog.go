@@ -27,6 +27,25 @@ type Writer struct {
 	closed   bool
 }
 
+type Snapshot struct {
+	Events     []model.Event
+	EventCount int64
+	ChainHash  string
+	NextSeq    int64
+}
+
+type AppendResult struct {
+	LastEvent  model.Event
+	EventCount int64
+	ChainHash  string
+}
+
+type AppendTx struct {
+	path     string
+	snapshot Snapshot
+	closed   bool
+}
+
 func GenesisHash() string {
 	return hashBytes([]byte(genesisInput))
 }
@@ -182,6 +201,98 @@ func (w *Writer) Close() error {
 	return rootErr
 }
 
+func AppendTransaction(path string, fn func(*AppendTx) error) (AppendResult, error) {
+	if fn == nil {
+		return AppendResult{}, errors.New("event log append transaction callback is required")
+	}
+	var result AppendResult
+	err := WithAppendLock(path, func() error {
+		snapshot, err := readSnapshot(path)
+		if err != nil {
+			return err
+		}
+		tx := &AppendTx{path: path, snapshot: snapshot}
+		defer func() {
+			tx.closed = true
+		}()
+		if err := fn(tx); err != nil {
+			return err
+		}
+		result = AppendResult{
+			EventCount: tx.snapshot.EventCount,
+			ChainHash:  tx.snapshot.ChainHash,
+		}
+		if len(tx.snapshot.Events) > 0 {
+			result.LastEvent = tx.snapshot.Events[len(tx.snapshot.Events)-1]
+		}
+
+		return nil
+	})
+
+	return result, err
+}
+
+func AppendBatch(path string, events []model.Event) (AppendResult, error) {
+	return AppendTransaction(path, func(tx *AppendTx) error {
+		_, err := tx.AppendAll(events)
+
+		return err
+	})
+}
+
+func (tx *AppendTx) Snapshot() Snapshot {
+	return cloneSnapshot(tx.snapshot)
+}
+
+func (tx *AppendTx) Append(event model.Event) (model.Event, error) {
+	result, err := tx.AppendAll([]model.Event{event})
+	if err != nil {
+		return model.Event{}, err
+	}
+
+	return result.LastEvent, nil
+}
+
+func (tx *AppendTx) AppendAll(events []model.Event) (AppendResult, error) {
+	if tx.closed {
+		return AppendResult{}, errors.New("event log append transaction is closed")
+	}
+	result := AppendResult{
+		EventCount: tx.snapshot.EventCount,
+		ChainHash:  tx.snapshot.ChainHash,
+	}
+	if len(events) == 0 {
+		if len(tx.snapshot.Events) > 0 {
+			result.LastEvent = tx.snapshot.Events[len(tx.snapshot.Events)-1]
+		}
+
+		return result, nil
+	}
+	writer, err := NewWriter(tx.path, tx.snapshot.ChainHash, tx.snapshot.NextSeq)
+	if err != nil {
+		return AppendResult{}, err
+	}
+	appended := make([]model.Event, 0, len(events))
+	var last model.Event
+	for _, event := range events {
+		last, err = writer.Append(event)
+		if err != nil {
+			_ = writer.Close()
+			return AppendResult{}, err
+		}
+		appended = append(appended, last)
+	}
+	if err := writer.Close(); err != nil {
+		return AppendResult{}, err
+	}
+	tx.snapshot.Events = append(tx.snapshot.Events, appended...)
+	tx.snapshot.EventCount = int64(len(tx.snapshot.Events))
+	tx.snapshot.ChainHash = last.EventHash
+	tx.snapshot.NextSeq = tx.snapshot.EventCount + 1
+
+	return AppendResult{LastEvent: last, EventCount: tx.snapshot.EventCount, ChainHash: tx.snapshot.ChainHash}, nil
+}
+
 func ReadFile(path string) ([]model.Event, error) {
 	root, name, err := openRootForPath(path)
 	if err != nil {
@@ -244,6 +355,47 @@ func Replay(events []model.Event) (string, error) {
 	}
 
 	return prevHash, nil
+}
+
+func readSnapshot(path string) (Snapshot, error) {
+	events, err := ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		events = nil
+	} else if err != nil {
+		return Snapshot{}, err
+	}
+	chainHash, err := Replay(events)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	return Snapshot{
+		Events:     cloneEvents(events),
+		EventCount: int64(len(events)),
+		ChainHash:  chainHash,
+		NextSeq:    int64(len(events) + 1),
+	}, nil
+}
+
+func cloneSnapshot(snapshot Snapshot) Snapshot {
+	snapshot.Events = cloneEvents(snapshot.Events)
+
+	return snapshot
+}
+
+func cloneEvents(events []model.Event) []model.Event {
+	if len(events) == 0 {
+		return nil
+	}
+	cloned := make([]model.Event, len(events))
+	copy(cloned, events)
+	for index := range cloned {
+		if cloned[index].Payload != nil {
+			cloned[index].Payload = normalizePayload(cloned[index].Payload)
+		}
+	}
+
+	return cloned
 }
 
 func openRootForPath(path string) (*os.Root, string, error) {

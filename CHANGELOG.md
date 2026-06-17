@@ -7,6 +7,10 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Deepened event-log append handling behind a transaction interface so session start, stop, provider import, manual markers, and filesystem watcher appends share one locked replay-and-append path.
+
 ## [0.6.0] - 2026-06-18
 
 ### Added
