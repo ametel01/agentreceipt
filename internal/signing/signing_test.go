@@ -30,6 +30,17 @@ func TestLoadOrCreateDefaultSignsAndVerifies(t *testing.T) {
 	if Verify(publicKey, []byte("tampered"), signature) {
 		t.Fatal("signature verified for tampered payload")
 	}
+	encodedPublicKey := EncodePublicKey(publicKey)
+	decodedPublicKey, err := DecodePublicKey(encodedPublicKey)
+	if err != nil {
+		t.Fatalf("DecodePublicKey() error = %v", err)
+	}
+	if !decodedPublicKey.Equal(publicKey) {
+		t.Fatal("decoded public key did not match original")
+	}
+	if got := KeyID(publicKey); got == "" || got != KeyID(decodedPublicKey) {
+		t.Fatalf("unstable key id: %q", got)
+	}
 
 	reloaded, err := LoadOrCreateDefault(keyDir)
 	if err != nil {

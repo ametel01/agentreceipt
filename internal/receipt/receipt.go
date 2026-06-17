@@ -3,6 +3,7 @@ package receipt
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -77,16 +78,18 @@ func Finalize(ctx context.Context, options Options) (model.Receipt, error) {
 	receipt.Verification.ManifestHash = manifestHash
 	receipt.Verification.SignatureAlgorithm = "ed25519"
 	receipt.Verification.Valid = report.Verification.Valid
+	keypair, err := signing.LoadOrCreateDefault(options.KeyDir)
+	if err != nil {
+		return model.Receipt{}, err
+	}
+	receipt.Verification.SignerPublicKey = signing.EncodePublicKey(keypair.PublicKey)
+	receipt.Verification.SignerKeyID = signing.KeyID(keypair.PublicKey)
 	receiptHash, err := unsignedReceiptHash(receipt)
 	if err != nil {
 		return model.Receipt{}, err
 	}
 	receipt.Verification.ReceiptHash = receiptHash
 	signPayload, err := signaturePayload(receipt.Verification)
-	if err != nil {
-		return model.Receipt{}, err
-	}
-	keypair, err := signing.LoadOrCreateDefault(options.KeyDir)
 	if err != nil {
 		return model.Receipt{}, err
 	}
@@ -153,7 +156,7 @@ func Verify(ctx context.Context, options Options) (VerifyResult, error) {
 	if err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("read receipt signature: %v", err))
 	}
-	publicKey, publicPath, err := signing.LoadDefaultPublic(options.KeyDir)
+	publicKey, signedBy, err := publicKeyForVerification(receipt.Verification, options.KeyDir)
 	if err != nil {
 		result.Warnings = append(result.Warnings, err.Error())
 	} else {
@@ -166,7 +169,7 @@ func Verify(ctx context.Context, options Options) (VerifyResult, error) {
 				signature = string(bytes.TrimSpace(signatureData))
 			}
 			result.Signature = signing.Verify(publicKey, payload, signature)
-			result.SignedBy = publicPath
+			result.SignedBy = signedBy
 		}
 	}
 	result.Valid = result.EventChain && result.Signature && result.FinalDiffHash && result.ManifestHash && result.ReceiptHash
@@ -258,17 +261,39 @@ func RenderVerify(result VerifyResult) string {
 	return builder.String()
 }
 
+func publicKeyForVerification(verification model.Verification, keyDir string) (ed25519.PublicKey, string, error) {
+	if verification.SignerPublicKey != "" {
+		publicKey, err := signing.DecodePublicKey(verification.SignerPublicKey)
+		if err != nil {
+			return nil, "", fmt.Errorf("decode embedded signer public key: %w", err)
+		}
+		keyID := signing.KeyID(publicKey)
+		if verification.SignerKeyID != "" && verification.SignerKeyID != keyID {
+			return nil, "", fmt.Errorf("embedded signer key id mismatch: got %s, want %s", verification.SignerKeyID, keyID)
+		}
+		if verification.SignerKeyID != "" {
+			keyID = verification.SignerKeyID
+		}
+
+		return publicKey, "embedded:" + keyID, nil
+	}
+
+	return signing.LoadDefaultPublic(keyDir)
+}
+
 func signaturePayload(verification model.Verification) ([]byte, error) {
 	payload := struct {
 		EventChainHash string `json:"event_chain_hash"`
 		DiffHash       string `json:"diff_hash"`
 		ManifestHash   string `json:"manifest_hash"`
 		ReceiptHash    string `json:"receipt_hash"`
+		SignerKeyID    string `json:"signer_key_id,omitempty"`
 	}{
 		EventChainHash: verification.EventChainHash,
 		DiffHash:       verification.DiffHash,
 		ManifestHash:   verification.ManifestHash,
 		ReceiptHash:    verification.ReceiptHash,
+		SignerKeyID:    verification.SignerKeyID,
 	}
 
 	return model.MarshalCanonical(payload)

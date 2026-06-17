@@ -208,7 +208,7 @@ Key fields:
 - `summary`: changed files, detected commands, test/lint/typecheck detections, duration
 - `capture_confidence`: `git_diff`, `filesystem_writes`, `provider_tool_events`, `file_reads`, `network_calls`
 - `risk`: level + reasons
-- `verification`: event chain hash, diff hash, signature info
+- `verification`: event chain hash, diff hash, signature info, signer public key, signer key ID
 
 ## 7) Storage layout
 
@@ -310,7 +310,8 @@ Large provider payloads and command outputs should be stored as content-addresse
 ### 8.6 Signature module
 
 - Generate/validate Ed25519 keypair in `~/.agentreceipt/keys/default.ed25519|default.pub`.
-- Sign receipt summary + event chain hash + final diff hash + manifest hash.
+- Sign receipt summary + event chain hash + final diff hash + manifest hash + signer key ID.
+- Embed the signer public key and SHA-256 key ID in the receipt so verification is portable without the signer's local key directory. This proves artifact integrity, not signer identity.
 - Persist detached signature.
 
 ### 8.7 Review generator

@@ -3,7 +3,9 @@ package signing
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -97,6 +99,25 @@ func Verify(publicKey ed25519.PublicKey, payload []byte, signature string) bool 
 	}
 
 	return ed25519.Verify(publicKey, payload, decoded)
+}
+
+func EncodePublicKey(publicKey ed25519.PublicKey) string {
+	return base64.StdEncoding.EncodeToString(publicKey)
+}
+
+func DecodePublicKey(encoded string) (ed25519.PublicKey, error) {
+	publicKey, err := decodeKey([]byte(encoded), ed25519.PublicKeySize)
+	if err != nil {
+		return nil, err
+	}
+
+	return ed25519.PublicKey(publicKey), nil
+}
+
+func KeyID(publicKey ed25519.PublicKey) string {
+	sum := sha256.Sum256(publicKey)
+
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func readPair(dir string) (ed25519.PrivateKey, ed25519.PublicKey, error) {

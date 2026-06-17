@@ -145,6 +145,8 @@ agentreceipt review
 agentreceipt verify
 ```
 
+Receipts embed the signer public key and key ID, so verification works from shared artifacts without the signer's local key directory.
+
 ### 6) Export for PRs
 
 ```bash

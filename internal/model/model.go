@@ -157,6 +157,8 @@ type Verification struct {
 	ManifestHash       string `json:"manifest_hash"`
 	ReceiptHash        string `json:"receipt_hash"`
 	SignatureAlgorithm string `json:"signature_algorithm"`
+	SignerPublicKey    string `json:"signer_public_key,omitempty"`
+	SignerKeyID        string `json:"signer_key_id,omitempty"`
 	Signature          string `json:"signature"`
 	Valid              bool   `json:"valid"`
 }
