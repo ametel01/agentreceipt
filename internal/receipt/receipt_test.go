@@ -381,6 +381,54 @@ func TestVerifyDetectsReceiptTampering(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsUnknownReceiptFields(t *testing.T) {
+	repo := newReceiptGitRepo(t)
+	keyDir := t.TempDir()
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReceiptNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if _, err := Finalize(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID, KeyDir: keyDir}); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	layout, err := storage.NewLayout(repo, state.SessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	addUnknownReceiptField(t, layout.ReceiptJSON)
+
+	result, err := Verify(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID, KeyDir: keyDir})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if result.Valid || result.ReceiptHash {
+		t.Fatalf("receipt with unknown field verified unexpectedly: %+v", result)
+	}
+	if !hasVerifyWarning(result.Warnings, "unknown top-level fields: unauthenticated_note") {
+		t.Fatalf("unknown-field warning missing: %+v", result.Warnings)
+	}
+}
+
+func TestVerifyBundleRejectsUnknownReceiptFields(t *testing.T) {
+	bundle := finalizedReceiptBundle(t)
+	addUnknownReceiptField(t, filepath.Join(bundle, storage.ReceiptJSONFile))
+
+	result, err := VerifyBundle(bundle)
+	if err != nil {
+		t.Fatalf("VerifyBundle() error = %v", err)
+	}
+	if result.Valid || result.ReceiptHash {
+		t.Fatalf("bundle receipt with unknown field verified unexpectedly: %+v", result)
+	}
+	if !hasVerifyWarning(result.Warnings, "unknown top-level fields: unauthenticated_note") {
+		t.Fatalf("unknown-field warning missing: %+v", result.Warnings)
+	}
+}
+
 func TestVerifyDetectsSignerMetadataTampering(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -606,6 +654,23 @@ func copyReceiptBundle(t *testing.T, source string) string {
 	}
 
 	return dest
+}
+
+func addUnknownReceiptField(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read receipt: %v", err)
+	}
+	trimmed := strings.TrimRight(string(data), "\n")
+	tampered := strings.TrimSuffix(trimmed, "}")
+	if tampered == trimmed {
+		t.Fatalf("receipt JSON did not end with object close:\n%s", data)
+	}
+	tampered += `,` + "\n" + `  "unauthenticated_note": "tampered"` + "\n}"
+	if err := os.WriteFile(path, []byte(tampered+"\n"), 0o600); err != nil {
+		t.Fatalf("write receipt with unknown field: %v", err)
+	}
 }
 
 func hasVerifyWarning(warnings []string, text string) bool {

@@ -133,7 +133,7 @@ Excluded by default:
 CI verification sequence:
 
 1. Load `receipt.json`, `manifest.json`, `events.jsonl`, and `diffs/final.patch`.
-2. Validate JSON schemas and reject unknown critical receipt versions.
+2. Validate JSON schemas, reject unknown top-level receipt fields, and reject unknown critical receipt versions.
 3. Recompute the event chain hash from `events.jsonl`.
 4. Recompute the manifest hash from `manifest.json`.
 5. Recompute the final diff hash from `diffs/final.patch`.

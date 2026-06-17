@@ -12,6 +12,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
@@ -42,6 +44,11 @@ type VerifyResult struct {
 	ReceiptHash   bool
 	SignedBy      string
 	Warnings      []string
+}
+
+type decodedReceipt struct {
+	Receipt       model.Receipt
+	UnknownFields []string
 }
 
 func Finalize(ctx context.Context, options Options) (model.Receipt, error) {
@@ -122,10 +129,11 @@ func Verify(ctx context.Context, options Options) (VerifyResult, error) {
 	if err != nil {
 		return VerifyResult{}, err
 	}
-	receipt, err := Read(layout)
+	decoded, err := readDecodedReceiptPath(layout.ReceiptJSON)
 	if err != nil {
 		return VerifyResult{}, err
 	}
+	receipt := decoded.Receipt
 	result := VerifyResult{SessionID: sessionID, Valid: true}
 	chainHash, err := replayHash(layout.EventsJSONL)
 	result.EventChain = err == nil && chainHash == receipt.Verification.EventChainHash
@@ -154,6 +162,7 @@ func Verify(ctx context.Context, options Options) (VerifyResult, error) {
 	if err != nil {
 		result.Warnings = append(result.Warnings, err.Error())
 	}
+	rejectUnknownReceiptFields(&result, decoded.UnknownFields)
 	signatureData, err := readFile(layout.ReceiptSignature)
 	if err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("read receipt signature: %v", err))
@@ -187,10 +196,11 @@ func VerifyBundle(root string) (VerifyResult, error) {
 	manifestPath := filepath.Join(root, storage.ManifestFile)
 	eventsPath := filepath.Join(root, storage.EventsFile)
 	finalPatchPath := filepath.Join(root, storage.DiffsDir, storage.FinalPatchFile)
-	receipt, err := readReceiptPath(receiptPath)
+	decoded, err := readDecodedReceiptPath(receiptPath)
 	if err != nil {
 		return VerifyResult{}, err
 	}
+	receipt := decoded.Receipt
 	result := VerifyResult{SessionID: receipt.SessionID, Valid: true}
 	chainHash, err := replayHash(eventsPath)
 	result.EventChain = err == nil && chainHash == receipt.Verification.EventChainHash
@@ -212,6 +222,7 @@ func VerifyBundle(root string) (VerifyResult, error) {
 	if err != nil {
 		result.Warnings = append(result.Warnings, err.Error())
 	}
+	rejectUnknownReceiptFields(&result, decoded.UnknownFields)
 	publicKey, signedBy, err := embeddedPublicKeyForVerification(receipt.Verification)
 	if err != nil {
 		result.Warnings = append(result.Warnings, err.Error())
@@ -258,16 +269,35 @@ func Read(layout storage.Layout) (model.Receipt, error) {
 }
 
 func readReceiptPath(path string) (model.Receipt, error) {
-	data, err := readFile(path)
-	if err != nil {
-		return model.Receipt{}, fmt.Errorf("read receipt json: %w", err)
-	}
-	receipt, _, err := model.DecodeReceipt(data)
+	decoded, err := readDecodedReceiptPath(path)
 	if err != nil {
 		return model.Receipt{}, err
 	}
 
-	return receipt, nil
+	return decoded.Receipt, nil
+}
+
+func readDecodedReceiptPath(path string) (decodedReceipt, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return decodedReceipt{}, fmt.Errorf("read receipt json: %w", err)
+	}
+	receipt, unknownFields, err := model.DecodeReceipt(data)
+	if err != nil {
+		return decodedReceipt{}, err
+	}
+
+	return decodedReceipt{Receipt: receipt, UnknownFields: unknownFields}, nil
+}
+
+func rejectUnknownReceiptFields(result *VerifyResult, fields []string) {
+	if len(fields) == 0 {
+		return
+	}
+	fields = append([]string(nil), fields...)
+	sort.Strings(fields)
+	result.Warnings = append(result.Warnings, fmt.Sprintf("receipt contains unknown top-level fields: %s", strings.Join(fields, ", ")))
+	result.ReceiptHash = false
 }
 
 func RenderMarkdown(receipt model.Receipt) string {
