@@ -614,7 +614,7 @@ func newStopCommand() *cobra.Command {
 				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
 				return err
 			}
-			if _, err := receipt.Finalize(cmd.Context(), receipt.Options{RepoPath: state.RepoRoot, SessionID: state.SessionID}); err != nil {
+			if _, err := receipt.Finalize(cmd.Context(), receipt.Options{RepoPath: state.RepoRoot, SessionID: state.SessionID, Config: manager.Config}); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Finalized AgentReceipt session %s\n", state.SessionID)
@@ -983,20 +983,29 @@ func managerFromCommand(cmd *cobra.Command) (session.Manager, error) {
 	if err != nil {
 		return session.Manager{}, err
 	}
-	configPath, err := cmd.Root().PersistentFlags().GetString("config")
+	cfg, err := configFromCommand(cmd)
 	if err != nil {
 		return session.Manager{}, err
+	}
+
+	return session.Manager{RepoPath: repoPath, Config: cfg}, nil
+}
+
+func configFromCommand(cmd *cobra.Command) (config.Config, error) {
+	configPath, err := cmd.Root().PersistentFlags().GetString("config")
+	if err != nil {
+		return config.Config{}, err
 	}
 	cfg := config.Default()
 	if configPath != "" {
 		loaded, err := config.Load(configPath)
 		if err != nil {
-			return session.Manager{}, err
+			return config.Config{}, err
 		}
 		cfg = loaded
 	}
 
-	return session.Manager{RepoPath: repoPath, Config: cfg}, nil
+	return cfg, nil
 }
 
 func codexWarnings(warnings []codex.ParseWarning) []model.Warning {
@@ -1085,8 +1094,12 @@ func reviewOptionsFromCommand(cmd *cobra.Command) (review.Options, error) {
 	if err != nil {
 		return review.Options{}, err
 	}
+	cfg, err := configFromCommand(cmd)
+	if err != nil {
+		return review.Options{}, err
+	}
 
-	return review.Options{RepoPath: repoPath, SessionID: sessionID, Last: last, Security: security, Diff: diff}, nil
+	return review.Options{RepoPath: repoPath, SessionID: sessionID, Last: last, Security: security, Diff: diff, Config: cfg}, nil
 }
 
 func repoRootFromCommand(cmd *cobra.Command) (string, error) {

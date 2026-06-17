@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
+	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/review"
@@ -28,6 +29,7 @@ type Options struct {
 	Last        bool
 	KeyDir      string
 	GeneratedAt time.Time
+	Config      config.Config
 }
 
 type VerifyResult struct {
@@ -51,7 +53,7 @@ func Finalize(ctx context.Context, options Options) (model.Receipt, error) {
 	if err != nil {
 		return model.Receipt{}, err
 	}
-	report, err := review.Build(ctx, review.Options{RepoPath: repoRoot, SessionID: sessionID})
+	report, err := review.Build(ctx, review.Options{RepoPath: repoRoot, SessionID: sessionID, Config: options.Config})
 	if err != nil {
 		return model.Receipt{}, err
 	}

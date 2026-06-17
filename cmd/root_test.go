@@ -817,6 +817,39 @@ func TestReviewCodexJSONLImportsActiveSession(t *testing.T) {
 	}
 }
 
+func TestReviewUsesConfiguredTestCommands(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	repo := newCommandGitRepo(t)
+	configPath := filepath.Join(t.TempDir(), "agentreceipt.yml")
+	configFixture := strings.Join([]string{
+		"version: 1",
+		"test_commands:",
+		`  - "make ci"`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(configPath, []byte(configFixture), 0o600); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--config", configPath, "--repo", repo, "start"); err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	tracePath := filepath.Join(t.TempDir(), "trace.jsonl")
+	trace := `{"type":"response_item","timestamp":"2026-06-16T00:00:00Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":"{\"cmd\":\"make ci\"}"}}` + "\n"
+	if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "--config", configPath, "--repo", repo, "review", "--codex-jsonl", tracePath, "--json")
+	if err != nil {
+		t.Fatalf("review --config returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, `"test_detected": true`) {
+		t.Fatalf("review json did not apply configured test command:\n%s", stdout)
+	}
+	if _, _, err := executeCommand(t, "--config", configPath, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+}
+
 func TestReviewCodexJSONLRequiresActiveSession(t *testing.T) {
 	repo := newCommandGitRepo(t)
 	tracePath := filepath.Join(t.TempDir(), "trace.jsonl")

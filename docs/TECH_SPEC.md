@@ -176,11 +176,17 @@ test_commands:
   - "pnpm lint"
   - "pnpm typecheck"
   - "yarn test"
+  - "staticcheck ./..."
+  - "go vet ./..."
+  - "tsc --noEmit"
+  - "pyright"
   - "cargo test"
   - "pytest"
   - "go test ./..."
   - "make test"
 ```
+
+Review generation uses this config when passed with `--config`: `test_commands` drive test/lint/typecheck detection, and the `review` toggles control missing-test/typecheck prompts plus dependency, auth, and secret-path risk reasons.
 
 ### 6.2 Event schema
 

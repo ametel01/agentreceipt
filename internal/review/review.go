@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
+	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/session"
@@ -29,6 +31,7 @@ type Options struct {
 	Last      bool
 	Security  bool
 	Diff      bool
+	Config    config.Config
 }
 
 type Report struct {
@@ -86,13 +89,10 @@ type DiffSummary struct {
 	StatLines  []string `json:"stat_lines,omitempty"`
 }
 
-var commandKindPatterns = []struct {
+var fallbackCommandKindPatterns = []struct {
 	kind    string
 	pattern *regexp.Regexp
 }{
-	{kind: "test", pattern: regexp.MustCompile(`\b(go test|npm test|npm run test|pnpm test|yarn test|pytest|cargo test|make test)\b`)},
-	{kind: "lint", pattern: regexp.MustCompile(`\b(lint|golangci-lint|staticcheck|go vet)\b`)},
-	{kind: "typecheck", pattern: regexp.MustCompile(`\b(typecheck|tsc --noEmit|pyright)\b`)},
 	{kind: "network", pattern: regexp.MustCompile(`\b(curl|wget|ssh|nc|aws|gcloud)\b`)},
 	{kind: "destructive", pattern: regexp.MustCompile(`\b(rm|dd|mkfs|shutdown|reboot)\b`)},
 }
@@ -130,7 +130,8 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		Warnings:      state.Warnings,
 		EventsByType:  make(map[string]int),
 	}
-	report.Summary = summarize(events)
+	cfg := configForReview(options.Config)
+	report.Summary = summarize(events, cfg)
 	report.Confidence = confidence(events)
 	if gitSummary, gitErr := buildGitSummary(ctx, repoRoot, state.FinalDiffHash); gitErr != nil {
 		report.Warnings = append(report.Warnings, model.Warning{
@@ -140,9 +141,9 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	} else {
 		report.Git = gitSummary
 	}
-	report.Risk = risk(report.Summary, state.Warnings, events)
-	report.Focus = focus(report.Summary, report.Risk)
-	report.Gaps = gaps(report.Summary, report.Confidence, state.Warnings)
+	report.Risk = risk(report.Summary, state.Warnings, events, cfg)
+	report.Focus = focus(report.Summary, report.Risk, cfg)
+	report.Gaps = gaps(report.Summary, report.Confidence, state.Warnings, cfg)
 	report.Timeline = timeline(events)
 	for _, event := range events {
 		report.EventsByType[event.Type]++
@@ -748,7 +749,15 @@ func latestSession(repoRoot string) (string, error) {
 	return latest, nil
 }
 
-func summarize(events []model.Event) model.Summary {
+func configForReview(cfg config.Config) config.Config {
+	if cfg.Version == 0 {
+		return config.Default()
+	}
+
+	return cfg
+}
+
+func summarize(events []model.Event, cfg config.Config) model.Summary {
 	changedByPath := make(map[string]model.ChangedFile)
 	commandAttempts := make([]commandAttempt, 0)
 	resultsByCallID := make(map[string]string)
@@ -768,7 +777,7 @@ func summarize(events []model.Event) model.Summary {
 		if event.Type == "provider.command" {
 			command := commandFromPayload(event.Payload)
 			if command != "" {
-				kind := commandKind(command)
+				kind := commandKind(command, cfg)
 				commandAttempts = append(commandAttempts, commandAttempt{
 					command: model.DetectedCommand{
 						Command:    command,
@@ -827,6 +836,29 @@ func summarize(events []model.Event) model.Summary {
 	return summary
 }
 
+func hasTypeScriptChanges(summary model.Summary) bool {
+	for _, changed := range summary.ChangedFiles {
+		path := strings.ToLower(changed.Path)
+		switch filepath.Ext(path) {
+		case ".ts", ".tsx", ".mts", ".cts":
+			return true
+		}
+	}
+
+	return false
+}
+
+func isAuthPath(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	for _, marker := range []string{"/auth/", "/authentication/", "/oauth/", "/jwt/"} {
+		if strings.Contains("/"+path+"/", marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
 type commandAttempt struct {
 	command model.DetectedCommand
 	callID  string
@@ -871,10 +903,10 @@ func isProviderToolEvidenceEvent(event model.Event) bool {
 	}
 }
 
-func risk(summary model.Summary, warnings []model.Warning, events []model.Event) model.Risk {
+func risk(summary model.Summary, warnings []model.Warning, events []model.Event, cfg config.Config) model.Risk {
 	result := model.Risk{Level: model.RiskInfo}
 	for _, changed := range summary.ChangedFiles {
-		if changed.Sensitive {
+		if changed.Sensitive && cfg.Review.FlagSecretPaths {
 			result.Level = maxRisk(result.Level, model.RiskMedium)
 			result.Reasons = append(result.Reasons, model.RiskReason{
 				Code:       "sensitive_path_changed",
@@ -883,7 +915,16 @@ func risk(summary model.Summary, warnings []model.Warning, events []model.Event)
 				Confidence: model.ConfidenceHigh,
 			})
 		}
-		if changed.Dependency {
+		if isAuthPath(changed.Path) && cfg.Review.FlagAuthChanges {
+			result.Level = maxRisk(result.Level, model.RiskMedium)
+			result.Reasons = append(result.Reasons, model.RiskReason{
+				Code:       "auth_path_changed",
+				Message:    "Authentication-sensitive path changed: " + changed.Path,
+				Level:      model.RiskMedium,
+				Confidence: model.ConfidenceHigh,
+			})
+		}
+		if changed.Dependency && cfg.Review.FlagDependencyChanges {
 			result.Level = maxRisk(result.Level, model.RiskMedium)
 			result.Reasons = append(result.Reasons, model.RiskReason{
 				Code:       "dependency_changed",
@@ -1032,7 +1073,7 @@ func riskCodeFragment(value string) string {
 	return fragment
 }
 
-func focus(summary model.Summary, risk model.Risk) []string {
+func focus(summary model.Summary, risk model.Risk, cfg config.Config) []string {
 	items := make([]string, 0)
 	if len(risk.Reasons) == 0 {
 		items = append(items, "Review the final diff against the generated receipt.")
@@ -1040,26 +1081,29 @@ func focus(summary model.Summary, risk model.Risk) []string {
 	for _, reason := range risk.Reasons {
 		items = append(items, reason.Message)
 	}
-	if !summary.TestDetected {
+	if cfg.Review.RequireTestsForCodeChanges && !summary.TestDetected {
 		items = append(items, "Confirm appropriate tests were run for code changes.")
 	}
-	if !summary.TypecheckDetected {
+	if cfg.Review.RequireTypecheckForTS && hasTypeScriptChanges(summary) && !summary.TypecheckDetected {
 		items = append(items, "Confirm typecheck coverage where relevant.")
 	}
 
 	return items
 }
 
-func gaps(summary model.Summary, confidence model.CaptureConfidence, warnings []model.Warning) []string {
+func gaps(summary model.Summary, confidence model.CaptureConfidence, warnings []model.Warning, cfg config.Config) []string {
 	gaps := make([]string, 0)
 	if confidence.ProviderToolEvents == model.ConfidenceNone {
 		gaps = append(gaps, "No provider tool events were observed.")
 	}
-	if !summary.TestDetected {
+	if cfg.Review.RequireTestsForCodeChanges && !summary.TestDetected {
 		gaps = append(gaps, "No test command detected.")
 	}
 	if !summary.LintDetected {
 		gaps = append(gaps, "No lint command detected.")
+	}
+	if cfg.Review.RequireTypecheckForTS && hasTypeScriptChanges(summary) && !summary.TypecheckDetected {
+		gaps = append(gaps, "No typecheck command detected for TypeScript changes.")
 	}
 	for _, warning := range warnings {
 		gaps = append(gaps, warning.Message)
@@ -1082,14 +1126,44 @@ func timeline(events []model.Event) []TimelineItem {
 	return items
 }
 
-func commandKind(command string) string {
-	for _, matcher := range commandKindPatterns {
+func commandKind(command string, cfg config.Config) string {
+	if kind := configuredCommandKind(command, cfg.TestCommands); kind != "" {
+		return kind
+	}
+	for _, matcher := range fallbackCommandKindPatterns {
 		if matcher.pattern.MatchString(command) {
 			return matcher.kind
 		}
 	}
 
 	return "command"
+}
+
+func configuredCommandKind(command string, configured []string) string {
+	command = normalizedCommand(command)
+	for _, candidate := range configured {
+		candidate = normalizedCommand(candidate)
+		if candidate == "" {
+			continue
+		}
+		if command != candidate && !strings.HasPrefix(command, candidate+" ") {
+			continue
+		}
+		switch {
+		case strings.Contains(candidate, "lint") || strings.Contains(candidate, "staticcheck") || strings.Contains(candidate, "go vet"):
+			return "lint"
+		case strings.Contains(candidate, "typecheck") || strings.Contains(candidate, "tsc") || strings.Contains(candidate, "pyright"):
+			return "typecheck"
+		default:
+			return "test"
+		}
+	}
+
+	return ""
+}
+
+func normalizedCommand(command string) string {
+	return strings.Join(strings.Fields(command), " ")
 }
 
 func commandFromPayload(payload map[string]any) string {

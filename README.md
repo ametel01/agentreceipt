@@ -28,7 +28,7 @@ While it watches, AgentReceipt records observable local evidence from your works
 - **Codex log parsing is best effort.** Interactive Codex logs are treated as local evidence, not a stable provider API. Missing, incomplete, malformed, or format-changed logs reduce provider confidence but do not stop receipt generation.
 - **AgentReceipt observes; it does not gate.** It does not launch, wrap, sandbox, approve, deny, or proxy agent actions. This is intentional for the sidecar model, but permission enforcement is outside the current release.
 - **Risk classification is heuristic.** Command risk badges use built-in rules for high/medium/low signals. They help reviewers focus attention, but they are not a policy engine and do not replace review.
-- **Team enforcement is not wired yet.** GitHub App support, CI policy gates, configurable risk policy, and broader team workflow controls are planned follow-ups; see [GitHub PR Workflow Design](docs/GITHUB_PR_WORKFLOW_DESIGN.md).
+- **Team enforcement is not wired yet.** GitHub App support, CI policy gates, hosted policy distribution, and broader team workflow controls are planned follow-ups; see [GitHub PR Workflow Design](docs/GITHUB_PR_WORKFLOW_DESIGN.md).
 
 ## Why this exists
 
@@ -268,6 +268,8 @@ By default:
 - raw tool outputs are not exported
 - secrets are redacted in exports
 - raw logs remain local unless explicitly configured
+
+Explicit `--config` files control local review policy, including configured quality commands, test/typecheck prompts, and dependency/auth/secret-path risk flags.
 
 ## Quick command reference
 

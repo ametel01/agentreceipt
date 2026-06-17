@@ -350,6 +350,71 @@ func TestBuildReviewIncludesProviderRiskSignals(t *testing.T) {
 	}
 }
 
+func TestConfiguredCommandDetection(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	events := []model.Event{
+		commandAttemptEvent("evt_custom_test", "call_custom", "make ci"),
+		commandAttemptEvent("evt_staticcheck", "call_lint", "staticcheck ./..."),
+		commandAttemptEvent("evt_tsc", "call_typecheck", "tsc --noEmit"),
+	}
+	cfg.TestCommands = []string{"make ci"}
+	summary := summarize(events, cfg)
+	if !summary.TestDetected || summary.LintDetected || summary.TypecheckDetected {
+		t.Fatalf("custom command detection = %+v", summary)
+	}
+
+	cfg = config.Default()
+	summary = summarize(events, cfg)
+	if summary.TestDetected || !summary.LintDetected || !summary.TypecheckDetected {
+		t.Fatalf("default command detection = %+v", summary)
+	}
+}
+
+func TestReviewPolicyToggles(t *testing.T) {
+	t.Parallel()
+
+	summary := model.Summary{ChangedFiles: []model.ChangedFile{
+		{Path: ".env", Sensitive: true},
+		{Path: "go.mod", Dependency: true},
+		{Path: "src/auth/session.ts", Sensitive: true},
+	}}
+	cfg := config.Default()
+	gotRisk := risk(summary, nil, nil, cfg)
+	for _, want := range []string{"sensitive_path_changed", "dependency_changed", "auth_path_changed"} {
+		if !hasRiskCode(gotRisk.Reasons, want) {
+			t.Fatalf("default policy risk missing %q: %+v", want, gotRisk.Reasons)
+		}
+	}
+	if !hasText(focus(summary, gotRisk, cfg), "tests were run") || !hasText(focus(summary, gotRisk, cfg), "typecheck coverage") {
+		t.Fatalf("default policy focus missing required prompts")
+	}
+	if !hasText(gaps(summary, model.CaptureConfidence{ProviderToolEvents: model.ConfidenceMedium}, nil, cfg), "No typecheck command") {
+		t.Fatalf("default policy gaps missing typecheck prompt")
+	}
+
+	cfg.Review.RequireTestsForCodeChanges = false
+	cfg.Review.RequireTypecheckForTS = false
+	cfg.Review.FlagDependencyChanges = false
+	cfg.Review.FlagAuthChanges = false
+	cfg.Review.FlagSecretPaths = false
+	gotRisk = risk(summary, nil, nil, cfg)
+	for _, unexpected := range []string{"sensitive_path_changed", "dependency_changed", "auth_path_changed"} {
+		if hasRiskCode(gotRisk.Reasons, unexpected) {
+			t.Fatalf("disabled policy emitted %q: %+v", unexpected, gotRisk.Reasons)
+		}
+	}
+	policyFocus := focus(summary, gotRisk, cfg)
+	if hasText(policyFocus, "tests were run") || hasText(policyFocus, "typecheck coverage") {
+		t.Fatalf("disabled policy emitted focus prompts: %+v", policyFocus)
+	}
+	policyGaps := gaps(summary, model.CaptureConfidence{ProviderToolEvents: model.ConfidenceMedium}, nil, cfg)
+	if hasText(policyGaps, "No test command") || hasText(policyGaps, "No typecheck command") {
+		t.Fatalf("disabled policy emitted gaps: %+v", policyGaps)
+	}
+}
+
 func TestConfidenceInvariants(t *testing.T) {
 	gitEvent := model.Event{Source: "git_monitor", Type: "git.snapshot"}
 	fsEvent := model.Event{Source: "fs_watcher", Type: "fs.change"}
