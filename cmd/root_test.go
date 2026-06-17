@@ -92,6 +92,7 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		{"stop"},
 		{"review"},
 		{"verify"},
+		{"verify", "bundle"},
 		{"export"},
 		{"import", "codex-jsonl"},
 		{"inspect", "codex"},
@@ -734,6 +735,21 @@ func TestLifecycleCommandsUsePersistedSessionState(t *testing.T) {
 	if !strings.Contains(stdout, "Receipt valid.") || !strings.Contains(stdout, "Signature: valid") {
 		t.Fatalf("verify output = %q", stdout)
 	}
+	stdout, _, err = executeCommand(t, "verify", "bundle", layout.Session)
+	if err != nil {
+		t.Fatalf("verify bundle returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "Receipt valid.") || !strings.Contains(stdout, "Signed by: embedded:") {
+		t.Fatalf("verify bundle output = %q", stdout)
+	}
+	tamperedBundle := copyCommandReceiptBundle(t, layout.Session)
+	if err := os.WriteFile(filepath.Join(tamperedBundle, storage.DiffsDir, storage.FinalPatchFile), []byte("tampered\n"), 0o600); err != nil {
+		t.Fatalf("tamper bundle: %v", err)
+	}
+	stdout, _, err = executeCommand(t, "verify", "bundle", tamperedBundle)
+	if err == nil || !strings.Contains(stdout, "Receipt invalid.") {
+		t.Fatalf("tampered verify bundle err=%v output=%q", err, stdout)
+	}
 	stdout, _, err = executeCommand(t, "--repo", repo, "export", "--json")
 	if err != nil {
 		t.Fatalf("export json returned error: %v", err)
@@ -1231,4 +1247,30 @@ func runCommandGit(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, output)
 	}
+}
+
+func copyCommandReceiptBundle(t *testing.T, source string) string {
+	t.Helper()
+	dest := t.TempDir()
+	for _, relative := range []string{
+		storage.ReceiptJSONFile,
+		storage.ManifestFile,
+		storage.EventsFile,
+		filepath.Join(storage.DiffsDir, storage.FinalPatchFile),
+	} {
+		sourcePath := filepath.Join(source, relative)
+		destPath := filepath.Join(dest, relative)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
+			t.Fatalf("mkdir bundle path: %v", err)
+		}
+		data, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read bundle file %s: %v", sourcePath, err)
+		}
+		if err := os.WriteFile(destPath, data, 0o600); err != nil {
+			t.Fatalf("write bundle file %s: %v", destPath, err)
+		}
+	}
+
+	return dest
 }

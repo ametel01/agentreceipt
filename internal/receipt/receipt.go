@@ -179,6 +179,56 @@ func Verify(ctx context.Context, options Options) (VerifyResult, error) {
 	return result, nil
 }
 
+func VerifyBundle(root string) (VerifyResult, error) {
+	if root == "" {
+		return VerifyResult{}, errors.New("bundle path is required")
+	}
+	receiptPath := filepath.Join(root, storage.ReceiptJSONFile)
+	manifestPath := filepath.Join(root, storage.ManifestFile)
+	eventsPath := filepath.Join(root, storage.EventsFile)
+	finalPatchPath := filepath.Join(root, storage.DiffsDir, storage.FinalPatchFile)
+	receipt, err := readReceiptPath(receiptPath)
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	result := VerifyResult{SessionID: receipt.SessionID, Valid: true}
+	chainHash, err := replayHash(eventsPath)
+	result.EventChain = err == nil && chainHash == receipt.Verification.EventChainHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	manifestHash, err := fileHash(manifestPath)
+	result.ManifestHash = err == nil && manifestHash == receipt.Verification.ManifestHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	finalPatchHash, err := fileHash(finalPatchPath)
+	result.FinalDiffHash = err == nil && finalPatchHash == receipt.Verification.DiffHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	receiptHash, err := unsignedReceiptHash(receipt)
+	result.ReceiptHash = err == nil && receiptHash == receipt.Verification.ReceiptHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	publicKey, signedBy, err := embeddedPublicKeyForVerification(receipt.Verification)
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	} else {
+		payload, payloadErr := signaturePayload(receipt.Verification)
+		if payloadErr != nil {
+			result.Warnings = append(result.Warnings, payloadErr.Error())
+		} else {
+			result.Signature = signing.Verify(publicKey, payload, receipt.Verification.Signature)
+			result.SignedBy = signedBy
+		}
+	}
+	result.Valid = result.EventChain && result.Signature && result.FinalDiffHash && result.ManifestHash && result.ReceiptHash
+
+	return result, nil
+}
+
 func Export(ctx context.Context, options Options, format string) ([]byte, error) {
 	repoRoot, sessionID, err := resolveSession(ctx, options)
 	if err != nil {
@@ -199,7 +249,16 @@ func Export(ctx context.Context, options Options, format string) ([]byte, error)
 }
 
 func Read(layout storage.Layout) (model.Receipt, error) {
-	data, err := readFile(layout.ReceiptJSON)
+	receipt, err := readReceiptPath(layout.ReceiptJSON)
+	if err != nil {
+		return model.Receipt{}, err
+	}
+
+	return receipt, nil
+}
+
+func readReceiptPath(path string) (model.Receipt, error) {
+	data, err := readFile(path)
 	if err != nil {
 		return model.Receipt{}, fmt.Errorf("read receipt json: %w", err)
 	}
@@ -265,22 +324,29 @@ func RenderVerify(result VerifyResult) string {
 
 func publicKeyForVerification(verification model.Verification, keyDir string) (ed25519.PublicKey, string, error) {
 	if verification.SignerPublicKey != "" {
-		publicKey, err := signing.DecodePublicKey(verification.SignerPublicKey)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode embedded signer public key: %w", err)
-		}
-		keyID := signing.KeyID(publicKey)
-		if verification.SignerKeyID != "" && verification.SignerKeyID != keyID {
-			return nil, "", fmt.Errorf("embedded signer key id mismatch: got %s, want %s", verification.SignerKeyID, keyID)
-		}
-		if verification.SignerKeyID != "" {
-			keyID = verification.SignerKeyID
-		}
-
-		return publicKey, "embedded:" + keyID, nil
+		return embeddedPublicKeyForVerification(verification)
 	}
 
 	return signing.LoadDefaultPublic(keyDir)
+}
+
+func embeddedPublicKeyForVerification(verification model.Verification) (ed25519.PublicKey, string, error) {
+	if verification.SignerPublicKey == "" {
+		return nil, "", errors.New("bundle verification requires embedded signer public key")
+	}
+	publicKey, err := signing.DecodePublicKey(verification.SignerPublicKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("decode embedded signer public key: %w", err)
+	}
+	keyID := signing.KeyID(publicKey)
+	if verification.SignerKeyID != "" && verification.SignerKeyID != keyID {
+		return nil, "", fmt.Errorf("embedded signer key id mismatch: got %s, want %s", verification.SignerKeyID, keyID)
+	}
+	if verification.SignerKeyID != "" {
+		keyID = verification.SignerKeyID
+	}
+
+	return publicKey, "embedded:" + keyID, nil
 }
 
 func signaturePayload(verification model.Verification) ([]byte, error) {

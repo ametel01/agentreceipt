@@ -15,6 +15,7 @@ and this project follows semantic versioning.
 - Applied explicit review config to quality-command detection and dependency, auth, secret-path, test, and typecheck policy decisions.
 - Validated filesystem watcher identity before the stop fallback signals a recorded PID.
 - Implemented read-only `install codex` detection for local Codex log availability.
+- Added `verify bundle` for local CI-style verification of portable AgentReceipt artifact bundles.
 
 ## [0.3.0] - 2026-06-17
 

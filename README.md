@@ -143,9 +143,11 @@ agentreceipt review
 
 ```bash
 agentreceipt verify
+agentreceipt verify bundle ./agentreceipt
 ```
 
 Receipts embed the signer public key and key ID, so verification works from shared artifacts without the signer's local key directory.
+`verify bundle` checks a local artifact bundle and does not contact GitHub or enforce CI policy.
 
 ### 6) Export for PRs
 
@@ -297,6 +299,7 @@ agentreceipt review --md
 agentreceipt review --pr
 agentreceipt verify
 agentreceipt verify --session <id>
+agentreceipt verify bundle ./agentreceipt
 
 # Exports
 agentreceipt export --json

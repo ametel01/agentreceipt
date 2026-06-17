@@ -757,8 +757,31 @@ func newVerifyCommand() *cobra.Command {
 		},
 	}
 	verify.Flags().String("session", "", "Verify a specific session ID")
+	verify.AddCommand(newVerifyBundleCommand())
 
 	return verify
+}
+
+func newVerifyBundleCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "bundle <path>",
+		Short: "Verify a local AgentReceipt artifact bundle",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := receipt.VerifyBundle(args[0])
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), receipt.RenderVerify(result)); err != nil {
+				return err
+			}
+			if !result.Valid {
+				return fmt.Errorf("receipt verification failed")
+			}
+
+			return nil
+		},
+	}
 }
 
 func newExportCommand() *cobra.Command {

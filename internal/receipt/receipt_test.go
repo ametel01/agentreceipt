@@ -192,6 +192,85 @@ func TestVerifyDetectsFinalPatchTampering(t *testing.T) {
 	}
 }
 
+func TestVerifyBundleValidatesFinalizedArtifacts(t *testing.T) {
+	bundleRoot := finalizedReceiptBundle(t)
+
+	result, err := VerifyBundle(bundleRoot)
+	if err != nil {
+		t.Fatalf("VerifyBundle() error = %v", err)
+	}
+	if !result.Valid || !result.EventChain || !result.Signature || !result.FinalDiffHash || !result.ManifestHash || !result.ReceiptHash {
+		t.Fatalf("bundle verification result: %+v", result)
+	}
+	if !strings.HasPrefix(result.SignedBy, "embedded:") {
+		t.Fatalf("bundle verification did not use embedded signer: %+v", result)
+	}
+}
+
+func TestVerifyBundleDetectsTampering(t *testing.T) {
+	sourceBundle := finalizedReceiptBundle(t)
+	tests := []struct {
+		name   string
+		tamper func(t *testing.T, bundle string)
+		check  func(VerifyResult) bool
+	}{
+		{
+			name: "events",
+			tamper: func(t *testing.T, bundle string) {
+				appendReceiptFile(t, filepath.Join(bundle, storage.EventsFile), "{}\n")
+			},
+			check: func(result VerifyResult) bool { return !result.EventChain },
+		},
+		{
+			name: "manifest",
+			tamper: func(t *testing.T, bundle string) {
+				if err := os.WriteFile(filepath.Join(bundle, storage.ManifestFile), []byte("{}\n"), 0o600); err != nil {
+					t.Fatalf("tamper manifest: %v", err)
+				}
+			},
+			check: func(result VerifyResult) bool { return !result.ManifestHash },
+		},
+		{
+			name: "final patch",
+			tamper: func(t *testing.T, bundle string) {
+				if err := os.WriteFile(filepath.Join(bundle, storage.DiffsDir, storage.FinalPatchFile), []byte("tampered\n"), 0o600); err != nil {
+					t.Fatalf("tamper final patch: %v", err)
+				}
+			},
+			check: func(result VerifyResult) bool { return !result.FinalDiffHash },
+		},
+		{
+			name: "embedded signer",
+			tamper: func(t *testing.T, bundle string) {
+				receipt, err := readReceiptPath(filepath.Join(bundle, storage.ReceiptJSONFile))
+				if err != nil {
+					t.Fatalf("read receipt: %v", err)
+				}
+				receipt.Verification.SignerPublicKey = ""
+				if err := writeJSON(filepath.Join(bundle, storage.ReceiptJSONFile), receipt); err != nil {
+					t.Fatalf("write receipt: %v", err)
+				}
+			},
+			check: func(result VerifyResult) bool {
+				return !result.Signature && hasVerifyWarning(result.Warnings, "embedded signer public key")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bundle := copyReceiptBundle(t, sourceBundle)
+			test.tamper(t, bundle)
+			result, err := VerifyBundle(bundle)
+			if err != nil {
+				t.Fatalf("VerifyBundle() error = %v", err)
+			}
+			if result.Valid || !test.check(result) {
+				t.Fatalf("tampered bundle verification result: %+v", result)
+			}
+		})
+	}
+}
+
 func TestFinalizeConfidenceDowngradesMissingProviderOnly(t *testing.T) {
 	repo := newReceiptGitRepo(t)
 	keyDir := t.TempDir()
@@ -418,6 +497,45 @@ func TestVerifyErrorsWhenNoSessionExists(t *testing.T) {
 	}
 }
 
+func finalizedReceiptBundle(t *testing.T) string {
+	t.Helper()
+	repo := newReceiptGitRepo(t)
+	keyDir := t.TempDir()
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReceiptNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	providerEvent := model.Event{
+		EventID:   "evt_codex_bundle",
+		Timestamp: fixedReceiptNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.command",
+		Provider:  "codex",
+		Payload:   map[string]any{"command": "go test ./..."},
+	}
+	if _, _, err := manager.AppendProviderEvents(context.Background(), []model.Event{providerEvent}, nil); err != nil {
+		t.Fatalf("AppendProviderEvents() error = %v", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if _, err := Finalize(context.Background(), Options{
+		RepoPath:    repo,
+		SessionID:   state.SessionID,
+		KeyDir:      keyDir,
+		GeneratedAt: fixedReceiptNow(),
+	}); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	layout, err := storage.NewLayout(repo, state.SessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+
+	return layout.Session
+}
+
 func newReceiptGitRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -462,6 +580,42 @@ func appendReceiptFile(t *testing.T, path string, content string) {
 	if _, err := file.WriteString(content); err != nil {
 		t.Fatalf("append %s: %v", path, err)
 	}
+}
+
+func copyReceiptBundle(t *testing.T, source string) string {
+	t.Helper()
+	dest := t.TempDir()
+	for _, relative := range []string{
+		storage.ReceiptJSONFile,
+		storage.ManifestFile,
+		storage.EventsFile,
+		filepath.Join(storage.DiffsDir, storage.FinalPatchFile),
+	} {
+		sourcePath := filepath.Join(source, relative)
+		destPath := filepath.Join(dest, relative)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
+			t.Fatalf("mkdir bundle path: %v", err)
+		}
+		data, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read bundle file %s: %v", sourcePath, err)
+		}
+		if err := os.WriteFile(destPath, data, 0o600); err != nil {
+			t.Fatalf("write bundle file %s: %v", destPath, err)
+		}
+	}
+
+	return dest
+}
+
+func hasVerifyWarning(warnings []string, text string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, text) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func waitForReceiptEvent(t *testing.T, eventsPath string, match func(model.Event) bool) model.Event {

@@ -142,6 +142,12 @@ CI verification sequence:
 8. Evaluate deterministic policy checks.
 9. Render check annotations and a concise job summary.
 
+Current implementation spike:
+
+- `agentreceipt verify bundle <path>` performs the local artifact integrity checks for `receipt.json`, `manifest.json`, `events.jsonl`, and `diffs/final.patch`.
+- It verifies embedded signer material and does not require the signer's local key directory.
+- It does not yet compare against a GitHub pull request diff, publish a GitHub Check, upload artifacts, or enforce repository policy.
+
 ## Deterministic Policy
 
 The workflow must not compute an agent trust score, model score, or developer score.
