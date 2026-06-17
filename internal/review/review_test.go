@@ -303,6 +303,53 @@ func TestBuildReviewPropagatesCommandResultStatus(t *testing.T) {
 	}
 }
 
+func TestBuildReviewIncludesProviderRiskSignals(t *testing.T) {
+	repo := newReviewGitRepo(t)
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReviewNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	event := model.Event{
+		EventID:   "evt_provider_risk",
+		Timestamp: fixedReviewNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.command",
+		Provider:  "codex",
+		Payload: map[string]any{
+			"tool_call": map[string]any{
+				"command": "cat .env",
+			},
+			"risk_signals": []any{
+				map[string]any{
+					"level":      string(model.RiskHigh),
+					"signal":     "secret_access",
+					"details":    "command appears to read or expose credential material",
+					"command":    "cat .env",
+					"confidence": string(model.ConfidenceHigh),
+				},
+			},
+		},
+	}
+	if _, _, err := manager.AppendProviderEvents(context.Background(), []model.Event{event}, nil); err != nil {
+		t.Fatalf("AppendProviderEvents() error = %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if report.Risk.Level != model.RiskHigh {
+		t.Fatalf("Risk level = %q, want high: %+v", report.Risk.Level, report.Risk)
+	}
+	if !hasRiskCode(report.Risk.Reasons, "provider_risk_secret_access") {
+		t.Fatalf("provider risk reason missing: %+v", report.Risk.Reasons)
+	}
+	if !hasText(report.Focus, "Provider risk detected (secret_access)") {
+		t.Fatalf("focus missing provider risk reason: %+v", report.Focus)
+	}
+}
+
 func TestConfidenceInvariants(t *testing.T) {
 	gitEvent := model.Event{Source: "git_monitor", Type: "git.snapshot"}
 	fsEvent := model.Event{Source: "fs_watcher", Type: "fs.change"}

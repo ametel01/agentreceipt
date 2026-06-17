@@ -106,6 +106,59 @@ func TestFinalizeVerifyAndExportReceipt(t *testing.T) {
 	}
 }
 
+func TestFinalizeReceiptIncludesProviderRiskSignals(t *testing.T) {
+	repo := newReceiptGitRepo(t)
+	keyDir := t.TempDir()
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReceiptNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	providerEvent := model.Event{
+		EventID:   "evt_codex_risk_receipt",
+		Timestamp: fixedReceiptNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.command",
+		Provider:  "codex",
+		Payload: map[string]any{
+			"tool_call": map[string]any{
+				"command": "cat .env",
+			},
+			"risk_signals": []any{
+				map[string]any{
+					"level":      string(model.RiskHigh),
+					"signal":     "secret_access",
+					"details":    "command appears to read or expose credential material",
+					"command":    "cat .env",
+					"confidence": string(model.ConfidenceHigh),
+				},
+			},
+		},
+	}
+	if _, _, err := manager.AppendProviderEvents(context.Background(), []model.Event{providerEvent}, nil); err != nil {
+		t.Fatalf("AppendProviderEvents() error = %v", err)
+	}
+	if _, _, err := manager.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	receipt, err := Finalize(context.Background(), Options{
+		RepoPath:    repo,
+		SessionID:   state.SessionID,
+		KeyDir:      keyDir,
+		GeneratedAt: fixedReceiptNow(),
+	})
+	if err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if receipt.Risk.Level != model.RiskHigh {
+		t.Fatalf("Risk level = %q, want high: %+v", receipt.Risk.Level, receipt.Risk)
+	}
+	if !hasReceiptRiskCode(receipt.Risk.Reasons, "provider_risk_secret_access") {
+		t.Fatalf("receipt missing provider risk reason: %+v", receipt.Risk.Reasons)
+	}
+}
+
 func TestVerifyDetectsFinalPatchTampering(t *testing.T) {
 	repo := newReceiptGitRepo(t)
 	keyDir := t.TempDir()
@@ -433,6 +486,16 @@ func waitForReceiptEvent(t *testing.T, eventsPath string, match func(model.Event
 func hasReceiptWarning(warnings []model.Warning, code string) bool {
 	for _, warning := range warnings {
 		if warning.Code == code {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasReceiptRiskCode(reasons []model.RiskReason, code string) bool {
+	for _, reason := range reasons {
+		if reason.Code == code {
 			return true
 		}
 	}

@@ -140,7 +140,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	} else {
 		report.Git = gitSummary
 	}
-	report.Risk = risk(report.Summary, state.Warnings)
+	report.Risk = risk(report.Summary, state.Warnings, events)
 	report.Focus = focus(report.Summary, report.Risk)
 	report.Gaps = gaps(report.Summary, report.Confidence, state.Warnings)
 	report.Timeline = timeline(events)
@@ -871,7 +871,7 @@ func isProviderToolEvidenceEvent(event model.Event) bool {
 	}
 }
 
-func risk(summary model.Summary, warnings []model.Warning) model.Risk {
+func risk(summary model.Summary, warnings []model.Warning, events []model.Event) model.Risk {
 	result := model.Risk{Level: model.RiskInfo}
 	for _, changed := range summary.ChangedFiles {
 		if changed.Sensitive {
@@ -904,6 +904,10 @@ func risk(summary model.Summary, warnings []model.Warning) model.Risk {
 			})
 		}
 	}
+	for _, reason := range providerRiskReasons(events) {
+		result.Level = maxRisk(result.Level, reason.Level)
+		result.Reasons = append(result.Reasons, reason)
+	}
 	for _, warning := range warnings {
 		result.Level = maxRisk(result.Level, model.RiskLow)
 		result.Reasons = append(result.Reasons, model.RiskReason{
@@ -915,6 +919,117 @@ func risk(summary model.Summary, warnings []model.Warning) model.Risk {
 	}
 
 	return result
+}
+
+func providerRiskReasons(events []model.Event) []model.RiskReason {
+	reasons := make([]model.RiskReason, 0)
+	seen := map[string]bool{}
+	for _, event := range events {
+		if event.Type != "provider.command" {
+			continue
+		}
+		fallbackCommand := commandFromPayload(event.Payload)
+		for _, signal := range providerRiskSignals(event.Payload, fallbackCommand) {
+			if signal.level == model.RiskLow || signal.level == model.RiskInfo || signal.level == "" {
+				continue
+			}
+			code := "provider_risk_" + riskCodeFragment(signal.signal)
+			message := providerRiskMessage(signal)
+			key := code + ":" + message
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			reasons = append(reasons, model.RiskReason{
+				Code:       code,
+				Message:    message,
+				Level:      signal.level,
+				Confidence: signal.confidence,
+			})
+		}
+	}
+
+	return reasons
+}
+
+type providerRiskSignal struct {
+	level      model.RiskLevel
+	signal     string
+	details    string
+	command    string
+	confidence model.Confidence
+}
+
+func providerRiskSignals(payload map[string]any, fallbackCommand string) []providerRiskSignal {
+	rawSignals := arrayPayload(payload, "risk_signals")
+	signals := make([]providerRiskSignal, 0, len(rawSignals))
+	for _, raw := range rawSignals {
+		signalPayload, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		level := model.RiskLevel(stringPayload(signalPayload, "level"))
+		if riskRank(level) == 0 {
+			continue
+		}
+		confidence := model.Confidence(stringPayload(signalPayload, "confidence"))
+		if confidence == "" {
+			confidence = model.ConfidenceMedium
+		}
+		command := stringPayload(signalPayload, "command")
+		if command == "" {
+			command = fallbackCommand
+		}
+		signals = append(signals, providerRiskSignal{
+			level:      level,
+			signal:     stringPayload(signalPayload, "signal"),
+			details:    stringPayload(signalPayload, "details"),
+			command:    command,
+			confidence: confidence,
+		})
+	}
+
+	return signals
+}
+
+func providerRiskMessage(signal providerRiskSignal) string {
+	label := signal.signal
+	if label == "" {
+		label = "provider"
+	}
+	details := signal.details
+	if details == "" {
+		details = "provider classified the command as risky"
+	}
+	message := "Provider risk detected (" + label + "): " + details
+	if signal.command != "" {
+		message += " in command: " + signal.command
+	}
+
+	return message
+}
+
+func riskCodeFragment(value string) string {
+	value = strings.ToLower(value)
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			builder.WriteRune(char)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	fragment := strings.Trim(builder.String(), "_")
+	if fragment == "" {
+		return "unknown"
+	}
+
+	return fragment
 }
 
 func focus(summary model.Summary, risk model.Risk) []string {
@@ -1060,6 +1175,14 @@ func mapPayload(payload map[string]any, key string) map[string]any {
 	}
 
 	return map[string]any{}
+}
+
+func arrayPayload(payload map[string]any, key string) []any {
+	if value, ok := payload[key].([]any); ok {
+		return value
+	}
+
+	return nil
 }
 
 func maxRisk(left model.RiskLevel, right model.RiskLevel) model.RiskLevel {

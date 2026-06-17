@@ -11,6 +11,7 @@ and this project follows semantic versioning.
 
 - Serialized AgentReceipt event-log appenders so concurrent provider, marker, and filesystem watcher writes preserve a replayable hash chain.
 - Enforced Codex provider privacy defaults so normalized events omit prompt text and raw tool output unless config explicitly opts in.
+- Carried Codex provider risk signals into final review and receipt risk reasons.
 
 ## [0.3.0] - 2026-06-17
 

@@ -291,6 +291,7 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 	}
 	r.ToolCalls = append(r.ToolCalls, toolCall)
 	eventType := "provider.event"
+	var riskSignals []RiskSignal
 	if command != "" {
 		eventType = "provider.command"
 		r.Commands = append(r.Commands, CommandEvent{
@@ -304,7 +305,15 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 			Status:     "unknown",
 			Source:     "session_jsonl",
 		})
-		r.addRiskSignals(options, command)
+		riskSignals = r.addRiskSignals(options, command)
+	}
+	eventPayload := map[string]any{
+		"line_no":   r.LineCount,
+		"tool_call": toolCall,
+		"raw_type":  stringField(raw, "type"),
+	}
+	if len(riskSignals) > 0 {
+		eventPayload["risk_signals"] = riskSignals
 	}
 	r.Events = append(r.Events, model.Event{
 		EventID:   fmt.Sprintf("evt_codex_%d", r.LineCount),
@@ -314,11 +323,7 @@ func (r *ParseResult) consumeToolCall(options ParseOptions, raw map[string]any, 
 		Type:      eventType,
 		Provider:  "codex",
 		CWD:       options.CWD,
-		Payload: map[string]any{
-			"line_no":   r.LineCount,
-			"tool_call": toolCall,
-			"raw_type":  stringField(raw, "type"),
-		},
+		Payload:   eventPayload,
 	})
 	if tool == "" {
 		r.addWarning(r.LineCount, "missing_tool_name", "function call record is missing tool name")
@@ -396,10 +401,11 @@ func (r *ParseResult) consumeTokenCount(options ParseOptions, payload map[string
 	})
 }
 
-func (r *ParseResult) addRiskSignals(options ParseOptions, command string) {
+func (r *ParseResult) addRiskSignals(options ParseOptions, command string) []RiskSignal {
 	privacy := privacyFromOptions(options)
+	signals := make([]RiskSignal, 0)
 	for _, classification := range commandrisk.Classify(command) {
-		r.RiskSignals = append(r.RiskSignals, RiskSignal{
+		signal := RiskSignal{
 			SessionID:  options.SessionID,
 			Level:      classification.Level,
 			Signal:     classification.Signal,
@@ -408,8 +414,12 @@ func (r *ParseResult) addRiskSignals(options ParseOptions, command string) {
 			Details:    classification.Reason,
 			LineNumber: r.LineCount,
 			Confidence: model.ConfidenceHigh,
-		})
+		}
+		signals = append(signals, signal)
+		r.RiskSignals = append(r.RiskSignals, signal)
 	}
+
+	return signals
 }
 
 func (r *ParseResult) addWarning(lineNumber int, code string, message string) {
