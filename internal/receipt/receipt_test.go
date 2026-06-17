@@ -271,6 +271,81 @@ func TestVerifyBundleDetectsTampering(t *testing.T) {
 	}
 }
 
+func TestFinalizeReceiptRecordsProviderLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events []model.Event
+		want   string
+	}{
+		{
+			name: "claude",
+			events: []model.Event{{
+				EventID:   "evt_claude_receipt_provider",
+				Timestamp: fixedReceiptNow(),
+				Source:    "claude_hook",
+				Type:      "provider.command",
+				Provider:  "claude",
+				Payload:   map[string]any{"command": "go test ./..."},
+			}},
+			want: "Claude Code",
+		},
+		{
+			name: "mixed",
+			events: []model.Event{
+				{
+					EventID:   "evt_codex_receipt_provider",
+					Timestamp: fixedReceiptNow(),
+					Source:    "codex_session_log",
+					Type:      "provider.command",
+					Provider:  "codex",
+					Payload:   map[string]any{"command": "go test ./..."},
+				},
+				{
+					EventID:   "evt_claude_receipt_provider",
+					Timestamp: fixedReceiptNow().Add(time.Second),
+					Source:    "claude_hook",
+					Type:      "provider.command",
+					Provider:  "claude",
+					Payload:   map[string]any{"command": "go test ./..."},
+				},
+			},
+			want: "Codex CLI + Claude Code",
+		},
+		{name: "missing", want: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newReceiptGitRepo(t)
+			keyDir := t.TempDir()
+			manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReceiptNow}
+			state, err := manager.Start(context.Background())
+			if err != nil {
+				t.Fatalf("Start() error = %v", err)
+			}
+			if len(tc.events) > 0 {
+				if _, _, err := manager.AppendProviderEvents(context.Background(), tc.events, nil); err != nil {
+					t.Fatalf("AppendProviderEvents() error = %v", err)
+				}
+			}
+			if _, _, err := manager.Stop(context.Background()); err != nil {
+				t.Fatalf("Stop() error = %v", err)
+			}
+
+			receipt, err := Finalize(context.Background(), Options{
+				RepoPath:    repo,
+				SessionID:   state.SessionID,
+				KeyDir:      keyDir,
+				GeneratedAt: fixedReceiptNow(),
+			})
+			if err != nil {
+				t.Fatalf("Finalize() error = %v", err)
+			}
+			if receipt.Agent.Provider != tc.want {
+				t.Fatalf("Agent.Provider = %q, want %q", receipt.Agent.Provider, tc.want)
+			}
+		})
+	}
+}
+
 func TestFinalizeConfidenceDowngradesMissingProviderOnly(t *testing.T) {
 	repo := newReceiptGitRepo(t)
 	keyDir := t.TempDir()

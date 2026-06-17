@@ -74,7 +74,7 @@ func Finalize(ctx context.Context, options Options) (model.Receipt, error) {
 		CreatedAt:     generatedAt(options).UTC(),
 		Mode:          "sidecar",
 		Agent: model.Agent{
-			Provider:           "codex",
+			Provider:           report.Provider,
 			ProviderConfidence: report.Confidence.ProviderToolEvents,
 		},
 		Repo:              model.Repo{Root: repoRoot, DirtyEnd: len(report.Summary.ChangedFiles) > 0},
