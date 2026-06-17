@@ -635,6 +635,15 @@ func newReviewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			codexJSONL, err := cmd.Flags().GetString("codex-jsonl")
+			if err != nil {
+				return err
+			}
+			if codexJSONL != "" {
+				if err := importCodexJSONLForReview(cmd.Context(), cmd, codexJSONL); err != nil {
+					return err
+				}
+			}
 			report, err := review.Build(cmd.Context(), options)
 			if err != nil {
 				return err
@@ -677,9 +686,7 @@ func newReviewCommand() *cobra.Command {
 	reviewCmd.Flags().Bool("json", false, "Render review output as JSON")
 	reviewCmd.Flags().Bool("md", false, "Render review output as Markdown")
 	reviewCmd.Flags().Bool("pr", false, "Render concise PR-comment Markdown")
-	reviewCmd.Flags().Bool("full", false, "Include expanded evidence details")
 	reviewCmd.Flags().String("codex-jsonl", "", "Import a Codex JSONL trace before building the review")
-	reviewCmd.Flags().String("provider", "", "Filter review output by provider")
 
 	return reviewCmd
 }
@@ -1004,6 +1011,33 @@ func codexWarnings(warnings []codex.ParseWarning) []model.Warning {
 	}
 
 	return converted
+}
+
+func importCodexJSONLForReview(ctx context.Context, cmd *cobra.Command, path string) error {
+	manager, err := managerFromCommand(cmd)
+	if err != nil {
+		return err
+	}
+	state, active, err := manager.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return fmt.Errorf("review --codex-jsonl requires an active AgentReceipt session")
+	}
+	result, err := codex.ParseFile(path, codex.ParseOptions{SessionID: state.SessionID, CWD: state.RepoRoot})
+	if err != nil {
+		return err
+	}
+	layout, err := storage.NewLayout(state.RepoRoot, state.SessionID)
+	if err != nil {
+		return err
+	}
+	if err := codex.WriteTraces(layout, result); err != nil {
+		return err
+	}
+	_, _, err = manager.AppendProviderEvents(ctx, result.Events, codexWarnings(result.Warnings))
+	return err
 }
 
 func reviewOptionsFromCommand(cmd *cobra.Command) (review.Options, error) {

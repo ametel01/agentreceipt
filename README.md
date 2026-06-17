@@ -286,6 +286,7 @@ agentreceipt review --last
 agentreceipt review --session <id>
 agentreceipt review --security
 agentreceipt review --diff
+agentreceipt review --codex-jsonl ./codex-run.jsonl
 agentreceipt review --json
 agentreceipt review --md
 agentreceipt review --pr

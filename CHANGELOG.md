@@ -11,6 +11,7 @@ and this project follows semantic versioning.
 
 - Fixed session filesystem capture so `agentreceipt start` launches a durable watcher sidecar, records `fs.change` events while active, and flushes watcher evidence before `stop` finalizes the receipt.
 - Fixed review summaries so Codex command results update detected command status to `success` or `failed` when matching result evidence is present, while attempt-only commands remain `unknown`.
+- Fixed review flag behavior by making `review --codex-jsonl` import a Codex trace into the active session before review and removing inactive `--full` and `--provider` flags.
 
 ## [0.2.0] - 2026-06-17
 

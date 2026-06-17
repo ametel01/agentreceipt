@@ -105,9 +105,14 @@ func TestReviewModeFlags(t *testing.T) {
 		t.Fatalf("find review command: %v", err)
 	}
 
-	for _, name := range []string{"last", "session", "security", "diff", "json", "md", "pr"} {
+	for _, name := range []string{"last", "session", "security", "diff", "json", "md", "pr", "codex-jsonl"} {
 		if review.Flags().Lookup(name) == nil {
 			t.Fatalf("review flag %q is not registered", name)
+		}
+	}
+	for _, name := range []string{"full", "provider"} {
+		if review.Flags().Lookup(name) != nil {
+			t.Fatalf("inactive review flag %q is still registered", name)
 		}
 	}
 }
@@ -759,6 +764,46 @@ func TestImportCodexJSONLActiveSession(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "\x1b[") || !strings.Contains(stdout, "AgentReceipt Review") {
 		t.Fatalf("review color output = %q", stdout)
+	}
+}
+
+func TestReviewCodexJSONLImportsActiveSession(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	repo := newCommandGitRepo(t)
+	if _, _, err := executeCommand(t, "--repo", repo, "start"); err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	tracePath := filepath.Join(t.TempDir(), "trace.jsonl")
+	trace := strings.Join([]string{
+		`{"type":"response_item","timestamp":"2026-06-16T00:00:00Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":"{\"cmd\":\"go test ./...\"}"}}`,
+		`{"type":"response_item","timestamp":"2026-06-16T00:00:01Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Exit code: 0\nok"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "--repo", repo, "review", "--codex-jsonl", tracePath, "--json")
+	if err != nil {
+		t.Fatalf("review --codex-jsonl returned error: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, `"command": "go test ./..."`) || !strings.Contains(stdout, `"status": "success"`) {
+		t.Fatalf("review json did not include imported command result:\n%s", stdout)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+}
+
+func TestReviewCodexJSONLRequiresActiveSession(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	tracePath := filepath.Join(t.TempDir(), "trace.jsonl")
+	if err := os.WriteFile(tracePath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	_, _, err := executeCommand(t, "--repo", repo, "review", "--codex-jsonl", tracePath)
+	if err == nil || !strings.Contains(err.Error(), "requires an active AgentReceipt session") {
+		t.Fatalf("expected active session error, got %v", err)
 	}
 }
 
