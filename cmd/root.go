@@ -939,6 +939,10 @@ func newInternalFilesystemWatcherCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			watcherNonce, err := cmd.Flags().GetString("watcher-nonce")
+			if err != nil {
+				return err
+			}
 			configJSON, err := cmd.Flags().GetString("config-json")
 			if err != nil {
 				return err
@@ -957,10 +961,12 @@ func newInternalFilesystemWatcherCommand() *cobra.Command {
 				RepoRoot:  repoRoot,
 				SessionID: sessionID,
 				Config:    cfg,
+				Nonce:     watcherNonce,
 			})
 		},
 	}
 	internalCmd.Flags().String("session", "", "AgentReceipt session ID")
+	internalCmd.Flags().String("watcher-nonce", "", "AgentReceipt filesystem watcher identity nonce")
 	internalCmd.Flags().String("config-json", "", "Serialized AgentReceipt config")
 	_ = internalCmd.MarkFlagRequired("session")
 

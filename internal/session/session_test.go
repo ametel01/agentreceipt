@@ -319,6 +319,7 @@ func TestRunFilesystemWatcherStopsOnMarker(t *testing.T) {
 			RepoRoot:  repo,
 			SessionID: sessionID,
 			Config:    config.Default(),
+			Nonce:     testWatcherNonce(),
 		})
 	}()
 	if err := waitForFilesystemWatcherReady(ctx, layout); err != nil {
@@ -381,7 +382,7 @@ func TestStartFilesystemWatcherProductionLaunchHonorsContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
-	_, err = startFilesystemWatcher(ctx, State{RepoRoot: repo, SessionID: sessionID}, layout, config.Default())
+	_, _, err = startFilesystemWatcher(ctx, State{RepoRoot: repo, SessionID: sessionID}, layout, config.Default())
 	if err == nil {
 		t.Fatal("startFilesystemWatcher() returned nil error for test-binary sidecar timeout")
 	}
@@ -426,6 +427,118 @@ func TestStopFilesystemWatcherNoopAndRepoPathFallback(t *testing.T) {
 	}
 	if got := repoPathOrCWD(""); got == "" {
 		t.Fatal("repoPathOrCWD empty returned empty path")
+	}
+}
+
+func TestStopFilesystemWatcherRejectsMismatchedIdentityBeforeSignal(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	sessionID := "ar_ses_stop_mismatch"
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	state := State{
+		SessionID:              sessionID,
+		RepoRoot:               repo,
+		FilesystemWatcherPID:   12345,
+		FilesystemWatcherNonce: testWatcherNonce(),
+		CaptureSources:         CaptureSources{Filesystem: "active"},
+	}
+	if err := writeFilesystemWatcherIdentity(layout, filesystemWatcherIdentity{
+		SessionID: sessionID,
+		Nonce:     strings.Repeat("b", 32),
+		PID:       state.FilesystemWatcherPID,
+	}); err != nil {
+		t.Fatalf("write identity: %v", err)
+	}
+	called := false
+	withFilesystemWatcherStopTestSeams(t, func(pid int) (filesystemWatcherProcess, error) {
+		called = true
+		return &fakeFilesystemWatcherProcess{}, nil
+	})
+
+	err = stopFilesystemWatcher(context.Background(), state, layout)
+	if err == nil || !strings.Contains(err.Error(), "identity mismatch") {
+		t.Fatalf("stopFilesystemWatcher() err = %v, want identity mismatch", err)
+	}
+	if called {
+		t.Fatal("fallback signaled process despite mismatched identity")
+	}
+}
+
+func TestStopFilesystemWatcherRequiresIdentityBeforeSignal(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	sessionID := "ar_ses_stop_missing_identity"
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	state := State{
+		SessionID:              sessionID,
+		RepoRoot:               repo,
+		FilesystemWatcherPID:   12345,
+		FilesystemWatcherNonce: testWatcherNonce(),
+		CaptureSources:         CaptureSources{Filesystem: "active"},
+	}
+	called := false
+	withFilesystemWatcherStopTestSeams(t, func(pid int) (filesystemWatcherProcess, error) {
+		called = true
+		return &fakeFilesystemWatcherProcess{}, nil
+	})
+
+	err = stopFilesystemWatcher(context.Background(), state, layout)
+	if err == nil || !strings.Contains(err.Error(), "identity cannot be verified") {
+		t.Fatalf("stopFilesystemWatcher() err = %v, want identity verification error", err)
+	}
+	if called {
+		t.Fatal("fallback signaled process despite missing identity")
+	}
+}
+
+func TestStopFilesystemWatcherSignalsVerifiedIdentityOnFallback(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	sessionID := "ar_ses_stop_verified_identity"
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	state := State{
+		SessionID:              sessionID,
+		RepoRoot:               repo,
+		FilesystemWatcherPID:   12345,
+		FilesystemWatcherNonce: testWatcherNonce(),
+		CaptureSources:         CaptureSources{Filesystem: "active"},
+	}
+	if err := writeFilesystemWatcherIdentity(layout, filesystemWatcherIdentity{
+		SessionID: sessionID,
+		Nonce:     state.FilesystemWatcherNonce,
+		PID:       state.FilesystemWatcherPID,
+	}); err != nil {
+		t.Fatalf("write identity: %v", err)
+	}
+	process := &fakeFilesystemWatcherProcess{}
+	withFilesystemWatcherStopTestSeams(t, func(pid int) (filesystemWatcherProcess, error) {
+		if pid != state.FilesystemWatcherPID {
+			t.Fatalf("pid = %d, want %d", pid, state.FilesystemWatcherPID)
+		}
+		return process, nil
+	})
+
+	err = stopFilesystemWatcher(context.Background(), state, layout)
+	if err == nil || !strings.Contains(err.Error(), "did not stop cleanly") {
+		t.Fatalf("stopFilesystemWatcher() err = %v, want fallback failure", err)
+	}
+	if process.signals != 1 || process.kills != 1 {
+		t.Fatalf("fallback signals=%d kills=%d, want 1/1", process.signals, process.kills)
 	}
 }
 
@@ -702,6 +815,45 @@ func newSessionGitRepo(t *testing.T) string {
 	runSessionGit(t, repo, "commit", "-m", "initial")
 
 	return repo
+}
+
+type fakeFilesystemWatcherProcess struct {
+	signals int
+	kills   int
+}
+
+func (p *fakeFilesystemWatcherProcess) Signal(os.Signal) error {
+	p.signals++
+
+	return nil
+}
+
+func (p *fakeFilesystemWatcherProcess) Kill() error {
+	p.kills++
+
+	return nil
+}
+
+func testWatcherNonce() string {
+	return strings.Repeat("a", 32)
+}
+
+func withFilesystemWatcherStopTestSeams(t *testing.T, find func(int) (filesystemWatcherProcess, error)) {
+	t.Helper()
+	originalFind := findFilesystemWatcherProcess
+	originalDelay := filesystemWatcherFallbackDelay
+	originalTimeout := filesystemWatcherStopAckTimeout
+	originalPoll := filesystemWatcherStopPollInterval
+	findFilesystemWatcherProcess = find
+	filesystemWatcherFallbackDelay = 0
+	filesystemWatcherStopAckTimeout = time.Millisecond
+	filesystemWatcherStopPollInterval = time.Millisecond
+	t.Cleanup(func() {
+		findFilesystemWatcherProcess = originalFind
+		filesystemWatcherFallbackDelay = originalDelay
+		filesystemWatcherStopAckTimeout = originalTimeout
+		filesystemWatcherStopPollInterval = originalPoll
+	})
 }
 
 func runSessionGit(t *testing.T, dir string, args ...string) {

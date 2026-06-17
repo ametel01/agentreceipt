@@ -32,20 +32,21 @@ type Manager struct {
 }
 
 type State struct {
-	SchemaVersion        int                `json:"schema_version"`
-	SessionID            string             `json:"session_id"`
-	RepoRoot             string             `json:"repo_root"`
-	State                model.SessionState `json:"state"`
-	PID                  int                `json:"pid"`
-	FilesystemWatcherPID int                `json:"filesystem_watcher_pid,omitempty"`
-	StartedAt            time.Time          `json:"started_at"`
-	UpdatedAt            time.Time          `json:"updated_at"`
-	EventCount           int64              `json:"event_count"`
-	ChainHash            string             `json:"chain_hash"`
-	FinalDiffHash        string             `json:"final_diff_hash,omitempty"`
-	CaptureSources       CaptureSources     `json:"capture_sources"`
-	RiskSummary          RiskSummary        `json:"risk_summary"`
-	Warnings             []model.Warning    `json:"warnings,omitempty"`
+	SchemaVersion          int                `json:"schema_version"`
+	SessionID              string             `json:"session_id"`
+	RepoRoot               string             `json:"repo_root"`
+	State                  model.SessionState `json:"state"`
+	PID                    int                `json:"pid"`
+	FilesystemWatcherPID   int                `json:"filesystem_watcher_pid,omitempty"`
+	FilesystemWatcherNonce string             `json:"filesystem_watcher_nonce,omitempty"`
+	StartedAt              time.Time          `json:"started_at"`
+	UpdatedAt              time.Time          `json:"updated_at"`
+	EventCount             int64              `json:"event_count"`
+	ChainHash              string             `json:"chain_hash"`
+	FinalDiffHash          string             `json:"final_diff_hash,omitempty"`
+	CaptureSources         CaptureSources     `json:"capture_sources"`
+	RiskSummary            RiskSummary        `json:"risk_summary"`
+	Warnings               []model.Warning    `json:"warnings,omitempty"`
 }
 
 type CaptureSources struct {
@@ -143,12 +144,13 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 	if err := writeActiveSession(repoRoot, sessionID); err != nil {
 		return State{}, err
 	}
-	watcherPID, err := startFilesystemWatcher(ctx, state, layout, m.Config)
+	watcherPID, watcherNonce, err := startFilesystemWatcher(ctx, state, layout, m.Config)
 	if err != nil {
 		_ = clearActiveSession(repoRoot)
 		return State{}, err
 	}
 	state.FilesystemWatcherPID = watcherPID
+	state.FilesystemWatcherNonce = watcherNonce
 	state.CaptureSources.Filesystem = "active"
 	state.UpdatedAt = m.now()
 	manifest.UpdatedAt = state.UpdatedAt
@@ -710,6 +712,13 @@ type FilesystemWatcherOptions struct {
 	RepoRoot  string
 	SessionID string
 	Config    config.Config
+	Nonce     string
+}
+
+type filesystemWatcherIdentity struct {
+	SessionID string `json:"session_id"`
+	Nonce     string `json:"nonce"`
+	PID       int    `json:"pid"`
 }
 
 type inProcessWatcher struct {
@@ -719,9 +728,25 @@ type inProcessWatcher struct {
 
 var inProcessWatchers sync.Map
 
+type filesystemWatcherProcess interface {
+	Signal(os.Signal) error
+	Kill() error
+}
+
+var findFilesystemWatcherProcess = func(pid int) (filesystemWatcherProcess, error) {
+	return os.FindProcess(pid)
+}
+
+var filesystemWatcherFallbackDelay = 100 * time.Millisecond
+var filesystemWatcherStopAckTimeout = 2 * time.Second
+var filesystemWatcherStopPollInterval = 25 * time.Millisecond
+
 func RunFilesystemWatcher(ctx context.Context, options FilesystemWatcherOptions) error {
 	if err := storage.ValidateSessionID(options.SessionID); err != nil {
 		return err
+	}
+	if !validWatcherNonce(options.Nonce) {
+		return errors.New("filesystem watcher nonce is required")
 	}
 	layout, err := storage.NewLayout(options.RepoRoot, options.SessionID)
 	if err != nil {
@@ -740,6 +765,7 @@ func RunFilesystemWatcher(ctx context.Context, options FilesystemWatcherOptions)
 	}
 	defer func() {
 		_ = os.Remove(layout.FilesystemWatcherPIDPath)
+		_ = os.Remove(filesystemWatcherIdentityPath(layout))
 		_ = os.WriteFile(layout.FilesystemWatcherDonePath, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
 	}()
 	watcher, err := BuildFilesystemWatcher(options.RepoRoot, options.SessionID, options.Config)
@@ -750,6 +776,13 @@ func RunFilesystemWatcher(ctx context.Context, options FilesystemWatcherOptions)
 		_ = watcher.Close()
 	}()
 	if err := watcher.Start(runCtx); err != nil {
+		return err
+	}
+	if err := writeFilesystemWatcherIdentity(layout, filesystemWatcherIdentity{
+		SessionID: options.SessionID,
+		Nonce:     options.Nonce,
+		PID:       os.Getpid(),
+	}); err != nil {
 		return err
 	}
 	if err := os.WriteFile(layout.FilesystemWatcherPIDPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
@@ -764,9 +797,13 @@ func RunFilesystemWatcher(ctx context.Context, options FilesystemWatcherOptions)
 	return nil
 }
 
-func startFilesystemWatcher(ctx context.Context, state State, layout storage.Layout, cfg config.Config) (int, error) {
+func startFilesystemWatcher(ctx context.Context, state State, layout storage.Layout, cfg config.Config) (int, string, error) {
 	if !cfg.Capture.Filesystem {
-		return 0, errors.New("filesystem capture is disabled")
+		return 0, "", errors.New("filesystem capture is disabled")
+	}
+	nonce, err := newWatcherNonce()
+	if err != nil {
+		return 0, "", err
 	}
 	if strings.HasSuffix(os.Args[0], ".test") {
 		runCtx, cancel := context.WithCancel(context.Background())
@@ -780,34 +817,36 @@ func startFilesystemWatcher(ctx context.Context, state State, layout storage.Lay
 				RepoRoot:  state.RepoRoot,
 				SessionID: state.SessionID,
 				Config:    cfg,
+				Nonce:     nonce,
 			})
 		}()
 
-		return 0, waitForFilesystemWatcherReady(ctx, layout)
+		return 0, nonce, waitForFilesystemWatcherReady(ctx, layout)
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return 0, fmt.Errorf("resolve current executable: %w", err)
+		return 0, "", fmt.Errorf("resolve current executable: %w", err)
 	}
 	configJSON, err := json.Marshal(cfg)
 	if err != nil {
-		return 0, fmt.Errorf("marshal filesystem watcher config: %w", err)
+		return 0, "", fmt.Errorf("marshal filesystem watcher config: %w", err)
 	}
 	// #nosec G204 -- launches this AgentReceipt executable with validated session args for the local watcher sidecar.
 	command := exec.CommandContext(ctx, executable,
 		"--repo", state.RepoRoot,
 		"__internal-fswatcher",
 		"--session", state.SessionID,
+		"--watcher-nonce", nonce,
 		"--config-json", string(configJSON),
 	)
 	if err := command.Start(); err != nil {
-		return 0, fmt.Errorf("start filesystem watcher: %w", err)
+		return 0, "", fmt.Errorf("start filesystem watcher: %w", err)
 	}
 	if err := waitForFilesystemWatcherReady(ctx, layout); err != nil {
-		return 0, err
+		return 0, "", err
 	}
 
-	return command.Process.Pid, nil
+	return command.Process.Pid, nonce, nil
 }
 
 func stopFilesystemWatcher(ctx context.Context, state State, layout storage.Layout) error {
@@ -829,7 +868,7 @@ func stopFilesystemWatcher(ctx context.Context, state State, layout storage.Layo
 	if err := os.WriteFile(layout.FilesystemWatcherStopPath, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600); err != nil {
 		return fmt.Errorf("write filesystem watcher stop marker: %w", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(filesystemWatcherStopAckTimeout)
 	for {
 		if _, err := os.Stat(layout.FilesystemWatcherDonePath); err == nil {
 			return nil
@@ -840,18 +879,25 @@ func stopFilesystemWatcher(ctx context.Context, state State, layout storage.Layo
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(25 * time.Millisecond):
+		case <-time.After(filesystemWatcherStopPollInterval):
 		}
 	}
 	if state.FilesystemWatcherPID <= 0 {
 		return errors.New("filesystem watcher did not acknowledge stop")
 	}
-	process, err := os.FindProcess(state.FilesystemWatcherPID)
+	if err := validateFilesystemWatcherIdentity(layout, filesystemWatcherIdentity{
+		SessionID: state.SessionID,
+		Nonce:     state.FilesystemWatcherNonce,
+		PID:       state.FilesystemWatcherPID,
+	}); err != nil {
+		return err
+	}
+	process, err := findFilesystemWatcherProcess(state.FilesystemWatcherPID)
 	if err != nil {
 		return fmt.Errorf("find filesystem watcher process: %w", err)
 	}
 	_ = process.Signal(os.Interrupt)
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(filesystemWatcherFallbackDelay)
 	if _, err := os.Stat(layout.FilesystemWatcherDonePath); err == nil {
 		return nil
 	}
@@ -921,6 +967,69 @@ func cancelWhenStopFileAppears(ctx context.Context, cancel context.CancelFunc, p
 
 func filesystemWatcherKey(layout storage.Layout) string {
 	return filepath.Clean(layout.Session)
+}
+
+func filesystemWatcherIdentityPath(layout storage.Layout) string {
+	return filepath.Join(layout.Session, "fswatcher.identity.json")
+}
+
+func newWatcherNonce() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate filesystem watcher nonce: %w", err)
+	}
+
+	return hex.EncodeToString(raw[:]), nil
+}
+
+func validWatcherNonce(nonce string) bool {
+	if len(nonce) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(nonce)
+
+	return err == nil
+}
+
+func writeFilesystemWatcherIdentity(layout storage.Layout, identity filesystemWatcherIdentity) error {
+	if !validWatcherNonce(identity.Nonce) {
+		return errors.New("filesystem watcher nonce is required")
+	}
+	data, err := json.Marshal(identity)
+	if err != nil {
+		return fmt.Errorf("marshal filesystem watcher identity: %w", err)
+	}
+	data = append(data, '\n')
+
+	return os.WriteFile(filesystemWatcherIdentityPath(layout), data, 0o600)
+}
+
+func readFilesystemWatcherIdentity(layout storage.Layout) (filesystemWatcherIdentity, error) {
+	data, err := os.ReadFile(filesystemWatcherIdentityPath(layout))
+	if err != nil {
+		return filesystemWatcherIdentity{}, fmt.Errorf("read filesystem watcher identity: %w", err)
+	}
+	var identity filesystemWatcherIdentity
+	if err := json.Unmarshal(data, &identity); err != nil {
+		return filesystemWatcherIdentity{}, fmt.Errorf("decode filesystem watcher identity: %w", err)
+	}
+
+	return identity, nil
+}
+
+func validateFilesystemWatcherIdentity(layout storage.Layout, expected filesystemWatcherIdentity) error {
+	if !validWatcherNonce(expected.Nonce) {
+		return errors.New("filesystem watcher identity cannot be verified: missing watcher nonce")
+	}
+	actual, err := readFilesystemWatcherIdentity(layout)
+	if err != nil {
+		return fmt.Errorf("filesystem watcher identity cannot be verified: %w", err)
+	}
+	if actual.SessionID != expected.SessionID || actual.Nonce != expected.Nonce || actual.PID != expected.PID {
+		return errors.New("filesystem watcher identity mismatch; refusing to signal recorded PID")
+	}
+
+	return nil
 }
 
 func waitForFilesystemWatcherReady(ctx context.Context, layout storage.Layout) error {
