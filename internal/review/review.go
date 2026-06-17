@@ -750,7 +750,9 @@ func latestSession(repoRoot string) (string, error) {
 
 func summarize(events []model.Event) model.Summary {
 	changedByPath := make(map[string]model.ChangedFile)
-	commands := make([]model.DetectedCommand, 0)
+	commandAttempts := make([]commandAttempt, 0)
+	resultsByCallID := make(map[string]string)
+	resultsByCommand := make(map[string]string)
 	for _, event := range events {
 		if event.Type == "fs.change" {
 			path := stringPayload(event.Payload, "path")
@@ -767,15 +769,41 @@ func summarize(events []model.Event) model.Summary {
 			command := commandFromPayload(event.Payload)
 			if command != "" {
 				kind := commandKind(command)
-				commands = append(commands, model.DetectedCommand{
-					Command:    command,
-					Kind:       kind,
-					Status:     "unknown",
-					Source:     event.Source,
-					Confidence: model.ConfidenceMedium,
+				commandAttempts = append(commandAttempts, commandAttempt{
+					command: model.DetectedCommand{
+						Command:    command,
+						Kind:       kind,
+						Status:     "unknown",
+						Source:     event.Source,
+						Confidence: model.ConfidenceMedium,
+					},
+					callID: callIDFromCommandPayload(event.Payload),
 				})
 			}
 		}
+		if event.Type == "provider.command_result" {
+			result := commandResultFromPayload(event.Payload)
+			if result.status != "" {
+				if result.callID != "" {
+					resultsByCallID[result.callID] = result.status
+				}
+				if result.command != "" {
+					resultsByCommand[result.command] = result.status
+				}
+			}
+		}
+	}
+	commands := make([]model.DetectedCommand, 0, len(commandAttempts))
+	for _, attempt := range commandAttempts {
+		command := attempt.command
+		if attempt.callID != "" {
+			if status := resultsByCallID[attempt.callID]; status != "" {
+				command.Status = status
+			}
+		} else if status := resultsByCommand[attempt.command.Command]; status != "" {
+			command.Status = status
+		}
+		commands = append(commands, command)
 	}
 	changedFiles := make([]model.ChangedFile, 0, len(changedByPath))
 	for _, changed := range changedByPath {
@@ -797,6 +825,17 @@ func summarize(events []model.Event) model.Summary {
 	}
 
 	return summary
+}
+
+type commandAttempt struct {
+	command model.DetectedCommand
+	callID  string
+}
+
+type commandResult struct {
+	callID  string
+	command string
+	status  string
 }
 
 func confidence(events []model.Event) model.CaptureConfidence {
@@ -937,6 +976,35 @@ func commandFromPayload(payload map[string]any) string {
 	}
 
 	return stringPayload(mapPayload(toolCall, "arguments"), "cmd")
+}
+
+func callIDFromCommandPayload(payload map[string]any) string {
+	if callID := stringPayload(payload, "call_id"); callID != "" {
+		return callID
+	}
+	return stringPayload(mapPayload(payload, "tool_call"), "call_id")
+}
+
+func commandResultFromPayload(payload map[string]any) commandResult {
+	resultPayload := mapPayload(payload, "command_result")
+	if resultPayload == nil {
+		resultPayload = payload
+	}
+
+	return commandResult{
+		callID:  stringPayload(resultPayload, "call_id"),
+		command: stringPayload(resultPayload, "command"),
+		status:  normalizeCommandStatus(stringPayload(resultPayload, "status")),
+	}
+}
+
+func normalizeCommandStatus(status string) string {
+	switch status {
+	case "success", "failed", "unknown":
+		return status
+	default:
+		return ""
+	}
 }
 
 func readState(layout storage.Layout) (session.State, error) {

@@ -255,6 +255,54 @@ func TestBuildReviewFromActiveSessionRiskAndConfidenceSignals(t *testing.T) {
 	}
 }
 
+func TestBuildReviewPropagatesCommandResultStatus(t *testing.T) {
+	repo := newReviewGitRepo(t)
+	manager := session.Manager{RepoPath: repo, Config: config.Default(), Now: fixedReviewNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	events := []model.Event{
+		commandAttemptEvent("evt_cmd_success", "call_success", "go test ./..."),
+		commandResultEvent("evt_cmd_success_result", "call_success", "success"),
+		commandAttemptEvent("evt_cmd_failed", "call_failed", "staticcheck ./..."),
+		commandResultEvent("evt_cmd_failed_result", "call_failed", "failed"),
+		commandAttemptEvent("evt_cmd_unknown", "call_unknown", "tsc --noEmit"),
+	}
+	if _, _, err := manager.AppendProviderEvents(context.Background(), events, nil); err != nil {
+		t.Fatalf("AppendProviderEvents() error = %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{RepoPath: repo, SessionID: state.SessionID})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got, want := len(report.Summary.DetectedCommands), 3; got != want {
+		t.Fatalf("DetectedCommands len = %d, want %d: %+v", got, want, report.Summary.DetectedCommands)
+	}
+	statuses := map[string]string{}
+	kinds := map[string]string{}
+	for _, command := range report.Summary.DetectedCommands {
+		statuses[command.Command] = command.Status
+		kinds[command.Command] = command.Kind
+	}
+	for command, wantStatus := range map[string]string{
+		"go test ./...":     "success",
+		"staticcheck ./...": "failed",
+		"tsc --noEmit":      "unknown",
+	} {
+		if statuses[command] != wantStatus {
+			t.Fatalf("%q status = %q, want %q; commands=%+v", command, statuses[command], wantStatus, report.Summary.DetectedCommands)
+		}
+	}
+	if kinds["go test ./..."] != "test" || kinds["staticcheck ./..."] != "lint" || kinds["tsc --noEmit"] != "typecheck" {
+		t.Fatalf("command kinds not preserved: %+v", kinds)
+	}
+	if !report.Summary.TestDetected || !report.Summary.LintDetected || !report.Summary.TypecheckDetected {
+		t.Fatalf("command detection flags not set: %+v", report.Summary)
+	}
+}
+
 func TestReviewErrorsWhenNoSessionExists(t *testing.T) {
 	repo := newReviewGitRepo(t)
 	if _, err := Build(context.Background(), Options{RepoPath: repo, Last: true}); err == nil {
@@ -320,4 +368,36 @@ func hasText(items []string, text string) bool {
 	}
 
 	return false
+}
+
+func commandAttemptEvent(eventID string, callID string, command string) model.Event {
+	return model.Event{
+		EventID:   eventID,
+		Timestamp: fixedReviewNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.command",
+		Provider:  "codex",
+		Payload: map[string]any{
+			"tool_call": map[string]any{
+				"call_id": callID,
+				"command": command,
+			},
+		},
+	}
+}
+
+func commandResultEvent(eventID string, callID string, status string) model.Event {
+	return model.Event{
+		EventID:   eventID,
+		Timestamp: fixedReviewNow(),
+		Source:    "codex_session_log",
+		Type:      "provider.command_result",
+		Provider:  "codex",
+		Payload: map[string]any{
+			"command_result": map[string]any{
+				"call_id": callID,
+				"status":  status,
+			},
+		},
+	}
 }
