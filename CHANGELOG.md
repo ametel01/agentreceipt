@@ -7,6 +7,8 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-17
+
 ### Added
 
 - Added a Claude provider design covering hook event normalization, storage and privacy behavior, install command requirements, and MVP acceptance criteria.
