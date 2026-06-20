@@ -132,5 +132,5 @@
   - `make verify` failed at the coverage gate: total `78.6%` (threshold `80.0%`).
 - Changelog update:
   - Added `Unreleased`/`Added` entry for portable replay bundle output.
-- Commit reference: `a5eadc8`
+- Commit reference: `e8a3d48`
 - Next step: Step 6
