@@ -12,6 +12,10 @@ and this project follows semantic versioning.
 - Deepened event-log append handling behind a transaction interface so session start, stop, provider import, manual markers, and filesystem watcher appends share one locked replay-and-append path.
 - Deepened Provider Evidence handling behind a typed module so Codex and Claude adapters construct the shared event-log shape in one place, while review, session confidence, and watch token baselines read provider commands, results, risk signals, labels, and token totals through one interface.
 
+### Added
+
+- Added replay implementation progress tracking (`PROGRESS.md`) and committed the first planning-control milestone for verifier-facing replay work.
+
 ## [0.6.0] - 2026-06-18
 
 ### Added
