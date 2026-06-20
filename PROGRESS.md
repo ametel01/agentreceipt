@@ -52,7 +52,7 @@
   - `make verify` failed due coverage gate.
 - Changelog update:
   - Added `Unreleased`/`Changed` entry for replay-safe evidence extraction refactor.
-- Commit reference: pending
+- Commit reference: `2d3a652`
 - Next step: Step 2
 
 ### 2026-06-21
