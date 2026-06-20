@@ -56,6 +56,14 @@ review_json_output="$("$tmpdir/agentreceipt" --repo "$repo" review --last --json
 export_pr_output="$("$tmpdir/agentreceipt" --repo "$repo" export --pr)"
 export_json_output="$("$tmpdir/agentreceipt" --repo "$repo" export --json)"
 inspect_output="$("$tmpdir/agentreceipt" inspect codex --home "$tmpdir/missing-codex-home")"
+replay_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --json)"
+replay_bundle_dir="$tmpdir/replay-bundle"
+replay_bundle_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --json --bundle "$replay_bundle_dir")"
+
+if "$tmpdir/agentreceipt" --repo "$repo" replay; then
+    echo "expected replay without --session to fail" >&2
+    exit 1
+fi
 
 [[ "$init_output" == *"Initialized global AgentReceipt storage"* ]]
 [[ "$session_id" == ar_ses_* ]]
@@ -68,6 +76,12 @@ inspect_output="$("$tmpdir/agentreceipt" inspect codex --home "$tmpdir/missing-c
 [[ "$export_pr_output" == *"## AgentReceipt"* ]]
 [[ "$export_json_output" == *'"signature_algorithm": "ed25519"'* ]]
 [[ "$inspect_output" == *"warning[codex_logs_missing]"* ]]
+[[ "$replay_output" == *"\"kind\": \"agentreceipt.session_replay\""* ]]
+[[ "$replay_output" == *"\"session_id\": \"$session_id\""* ]]
+[[ "$replay_output" == *"\"valid\": true"* ]]
+[[ "$replay_output" == *"\"commands\""* ]]
+[[ "$replay_output" == *"go test ./..."* ]]
+[[ "$replay_output" != *"imported-session.jsonl"* ]]
 
 test -s "$keydir/default.ed25519"
 test -s "$keydir/default.pub"
@@ -78,6 +92,17 @@ test -n "$session_dir"
 test -s "$session_dir/receipt.json"
 test -s "$session_dir/review.md"
 test -s "$session_dir/signatures/receipt.sig"
+test -s "$replay_bundle_dir/replay.json"
+test -s "$replay_bundle_dir/receipt.json"
+test -s "$replay_bundle_dir/manifest.json"
+test -s "$replay_bundle_dir/events.jsonl"
+test -s "$replay_bundle_dir/diffs/final.patch"
+if test -d "$replay_bundle_dir/provider/codex/traces"; then
+    trace_file_count="$(find "$replay_bundle_dir/provider/codex/traces" -type f | wc -l | tr -d ' ')"
+    if [[ "$trace_file_count" -gt 0 ]]; then
+        :
+    fi
+fi
 
 codex_home="$tmpdir/codex-home"
 codex_session_dir="$codex_home/sessions/2026/06/17"

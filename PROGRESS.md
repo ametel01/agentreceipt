@@ -15,9 +15,9 @@
 - [ ] Step 8: Final Replay Acceptance Audit
 
 ## Status
-- Current step: Step 6 (End-to-end coverage)
-- Last completed step: Step 5
-- Next step: Step 6
+- Current step: Step 7 (Documentation)
+- Last completed step: Step 6
+- Next step: Step 7
 - Rule: `PROGRESS.md` must be updated after each completed step with completed scope, validation output, commit reference, current status, and next step before the step’s commit.
 
 ## Update Log
@@ -134,3 +134,26 @@
   - Added `Unreleased`/`Added` entry for portable replay bundle output.
 - Commit reference: `e8a3d48`
 - Next step: Step 6
+
+### 2026-06-21
+- Status: Step 6 completed.
+- Scope:
+  - Extended `scripts/smoke.sh` to execute replay end-to-end in JSON mode and bundle mode for the active smoke session.
+  - Added replay output assertions for JSON shape, session correlation, command evidence, valid verification state, artifact-backed output, and absence of raw provider log text.
+  - Added explicit assertion that `agentreceipt replay` fails when `--session` is omitted.
+  - Added bundle existence assertions for `replay.json`, `receipt.json`, `manifest.json`, `events.jsonl`, and `diffs/final.patch`.
+- Validation:
+  - `make fmt` passed.
+  - `make fmt-check` passed.
+  - `make lint` passed.
+  - `make test` passed.
+  - `make test-race` passed.
+  - `make security` passed.
+  - `make build` passed.
+  - `make smoke` passed.
+  - `make coverage` failed: total coverage 78.6% (required 80.0%), blocking `make verify`.
+  - `make verify` failed at coverage gate with the same total coverage shortfall.
+- Changelog update:
+  - Added `Unreleased`/`Added` entry for replay smoke coverage and explicit bundle verification.
+- Commit reference: this commit
+- Next step: Step 7
