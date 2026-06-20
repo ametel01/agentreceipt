@@ -380,7 +380,10 @@ func TestVerifyBundleDetectsTampering(t *testing.T) {
 				}
 			},
 			check: func(result VerifyResult) bool {
-				return !result.Signature && hasVerifyWarning(result.Warnings, "embedded signer public key")
+				return !result.Signature &&
+					hasVerifyWarning(result.Warnings, "embedded signer public key") &&
+					result.SignatureError == "bundle verification requires embedded signer public key" &&
+					result.SignatureErrorCode == "legacy_missing_embedded_signer"
 			},
 		},
 		{

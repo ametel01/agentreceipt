@@ -588,14 +588,35 @@ func commandStatus(output string) (string, *int, string) {
 	if output == "" {
 		return "unknown", nil, ""
 	}
-	exitPattern := regexp.MustCompile(`(?:Exit code:|Process exited with code)\s*([0-9]+)`)
-	if match := exitPattern.FindStringSubmatch(output); len(match) == 2 {
-		code, _ := strconv.Atoi(match[1])
-		if code != 0 {
-			return "failed", &code, "non-zero exit code"
+	exitPattern := regexp.MustCompile(`(?m)(Exit code:|Process exited with code)\s*([0-9]+)`)
+	matches := exitPattern.FindAllStringSubmatch(output, -1)
+	if len(matches) > 0 {
+		processMatch := ""
+		exitMatch := ""
+		for _, match := range matches {
+			if len(match) != 3 {
+				continue
+			}
+			marker := match[1]
+			switch marker {
+			case "Process exited with code":
+				processMatch = match[2]
+			case "Exit code:":
+				exitMatch = match[2]
+			}
 		}
+		codeText := processMatch
+		if codeText == "" {
+			codeText = exitMatch
+		}
+		if codeText != "" {
+			code, _ := strconv.Atoi(codeText)
+			if code != 0 {
+				return "failed", &code, "non-zero exit code"
+			}
 
-		return "success", &code, ""
+			return "success", &code, ""
+		}
 	}
 	if strings.Contains(output, "failed for") {
 		return "failed", nil, "tool output contained failure marker"

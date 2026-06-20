@@ -115,7 +115,7 @@ fs events + git signals + codex logs
 | `agentreceipt stop` | Finalize session, compute diff/hash/signature/manifest summary, emit warning if Codex provider evidence missing, exit success (non-blocking). |
 | `agentreceipt review` | Produce concise summary in terminal (`--last`, `--session <id>`, `--security`, `--diff`, `--codex-jsonl <path>`, `--json`, `--md`, `--pr`). |
 | `agentreceipt verify` | Validate chain, manifest, diff hash, signature. |
-| `agentreceipt replay` | Build machine-readable verifier report from a specified session and optional portable bundle output. |
+| `agentreceipt replay` | Build machine-readable verifier report from a specified session and optional portable bundle output. Replay output is factual evidence only and carries no built-in policy decisions. |
 | `agentreceipt export --json|--md|--pr` | Rehydrate finalized receipt in requested format. |
 | `agentreceipt import codex-jsonl <path>` | Optional parser path for non-interactive Codex JSONL. |
 | `agentreceipt inspect codex --last` | Provider research harness that reports Codex log discovery, parseability, candidate sessions, command/tool extraction coverage, and confidence. |
@@ -353,6 +353,7 @@ Raw provider logs such as `provider/codex/imported-session.jsonl` are intentiona
 - `agentreceipt replay` reads artifacts from a named session layout and emits one structured JSON object.
 - Output schema includes verification status, command/timeline summaries, file/risk/gap/task sections, and artifact references.
 - Replay output is artifact-only: it never runs shell commands, applies patches, calls model APIs, or mutates workspace state.
+- Replay output is strictly factual: it reports observed sequence, command, file, integrity, and gap data for evaluators; it does not output quality-policy recommendations.
 - `--bundle` writes a portable bundle using only portable artifacts and optional normalized Codex traces.
 
 ## 9) Session state machine

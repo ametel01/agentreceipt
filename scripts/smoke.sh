@@ -82,6 +82,15 @@ fi
 [[ "$replay_output" == *"\"commands\""* ]]
 [[ "$replay_output" == *"go test ./..."* ]]
 [[ "$replay_output" != *"imported-session.jsonl"* ]]
+[[ "$replay_output" != *"\"risk_signals\""* ]]
+[[ "$replay_output" != *"No lint command detected."* ]]
+[[ "$replay_output" != *"No typecheck command detected."* ]]
+[[ "$replay_output" == *"\"event_chain_valid\": true"* ]]
+[[ "$replay_output" == *"\"final_patch_hash_valid\": true"* ]]
+[[ "$replay_output" == *"\"manifest_hash_valid\": true"* ]]
+[[ "$replay_output" == *"\"receipt_hash_valid\": true"* ]]
+[[ "$replay_output" == *"\"path\": \"README.md\""* ]]
+[[ "$replay_output" == *"\"in_final_patch\": true"* ]]
 
 test -s "$keydir/default.ed25519"
 test -s "$keydir/default.pub"

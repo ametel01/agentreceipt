@@ -337,11 +337,124 @@ func TestBuildCapturesMissingEvidenceGaps(t *testing.T) {
 	if !containsGap(report.Gaps, "No provider tool events were observed.") {
 		t.Fatalf("gaps = %+v", report.Gaps)
 	}
-	if !containsGap(report.Gaps, "No test command detected.") {
-		t.Fatalf("gaps = %+v", report.Gaps)
+	if containsGap(report.Gaps, "No test command detected.") {
+		t.Fatalf("review-only gap present unexpectedly: %+v", report.Gaps)
 	}
-	if !containsGap(report.Gaps, "No lint command detected.") {
-		t.Fatalf("gaps = %+v", report.Gaps)
+	if containsGap(report.Gaps, "No lint command detected.") {
+		t.Fatalf("review-only gap present unexpectedly: %+v", report.Gaps)
+	}
+	if containsGap(report.Gaps, "No typecheck command detected for TypeScript changes.") {
+		t.Fatalf("review-only gap present unexpectedly: %+v", report.Gaps)
+	}
+}
+
+func TestBuildIncludesFinalPatchFilesWithoutFsEvents(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	if err := os.WriteFile(layout.FinalPatch, []byte("diff --git a/main.go b/main.go\nindex 111..222 100644\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+new\n"), 0o600); err != nil {
+		t.Fatalf("write final patch: %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(report.Files) != 1 {
+		t.Fatalf("files = %+v", report.Files)
+	}
+	if report.Summary.ChangedFileCount != len(report.Files) {
+		t.Fatalf("changed file count mismatch: %d != %d", report.Summary.ChangedFileCount, len(report.Files))
+	}
+	file := report.Files[0]
+	if file.Path != "main.go" {
+		t.Fatalf("file path = %q", file.Path)
+	}
+	if !file.InFinalPatch {
+		t.Fatalf("file InFinalPatch = false: %+v", file)
+	}
+	if !containsEvidenceRef(file.EvidenceRefs, "diffs/final.patch") {
+		t.Fatalf("file evidence refs = %+v", file.EvidenceRefs)
+	}
+}
+
+func TestBuildMergesFinalPatchAndFilesystemEvidence(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_success",
+						"command": "go test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":          "call_success",
+					"command":          "go test ./...",
+					"status":           "success",
+					"exit_code":        0,
+					"stdout_truncated": true,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "README.md",
+					"action":     "modify",
+					"dependency": false,
+					"sensitive":  false,
+				},
+			},
+		},
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("updated\n"), 0o600); err != nil {
+				t.Fatalf("write readme: %v", err)
+			}
+		},
+	)
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := os.WriteFile(layout.FinalPatch, []byte("diff --git a/README.md b/README.md\nindex 111..222 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n\ndiff --git a/main.go b/main.go\nindex 222..333 100644\nnew file mode 100644\n--- /dev/null\n+++ b/main.go\n"), 0o600); err != nil {
+		t.Fatalf("write final patch: %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(report.Files) != 2 {
+		t.Fatalf("files = %+v", report.Files)
+	}
+	if report.Summary.ChangedFileCount != len(report.Files) {
+		t.Fatalf("changed file count mismatch: summary=%d files=%d", report.Summary.ChangedFileCount, len(report.Files))
+	}
+	readme := findFile(report.Files, "README.md")
+	if readme == nil {
+		t.Fatalf("missing README.md in files: %+v", report.Files)
+	}
+	if !containsEvidencePrefix(readme.EvidenceRefs, "events.jsonl#seq=") {
+		t.Fatalf("README evidence refs = %+v", readme.EvidenceRefs)
+	}
+	if !containsEvidenceRef(readme.EvidenceRefs, "diffs/final.patch") {
+		t.Fatalf("README evidence refs = %+v", readme.EvidenceRefs)
 	}
 }
 
@@ -352,6 +465,7 @@ func TestBuildMarksInvalidWhenArtifactsAreTampered(t *testing.T) {
 		name      string
 		tamper    func(t *testing.T, repoRoot string, sessionID string, layout storage.Layout)
 		expectGap string
+		check     func(*testing.T, Verification)
 	}{
 		{
 			name: "events",
@@ -362,6 +476,14 @@ func TestBuildMarksInvalidWhenArtifactsAreTampered(t *testing.T) {
 				}
 			},
 			expectGap: "Event chain verification failed",
+			check: func(t *testing.T, verification Verification) {
+				if verification.EventChainValid {
+					t.Fatalf("event chain should be invalid: %+v", verification)
+				}
+				if !verification.FinalPatchHashValid || !verification.ManifestHashValid || !verification.ReceiptHashValid || !verification.SignatureValid {
+					t.Fatalf("unexpected component validity for event-tamper case: %+v", verification)
+				}
+			},
 		},
 		{
 			name: "receipt",
@@ -381,6 +503,17 @@ func TestBuildMarksInvalidWhenArtifactsAreTampered(t *testing.T) {
 				}
 			},
 			expectGap: "Signature verification failed",
+			check: func(t *testing.T, verification Verification) {
+				if verification.SignatureValid {
+					t.Fatalf("signature should be invalid: %+v", verification)
+				}
+				if verification.ReceiptHashValid {
+					t.Fatalf("receipt hash should be invalid after tampering: %+v", verification)
+				}
+				if !verification.EventChainValid || !verification.ManifestHashValid || !verification.FinalPatchHashValid {
+					t.Fatalf("unexpected component validity for receipt-tamper case: %+v", verification)
+				}
+			},
 		},
 		{
 			name: "manifest",
@@ -391,6 +524,14 @@ func TestBuildMarksInvalidWhenArtifactsAreTampered(t *testing.T) {
 				}
 			},
 			expectGap: "Manifest hash verification failed",
+			check: func(t *testing.T, verification Verification) {
+				if verification.ManifestHashValid {
+					t.Fatalf("manifest hash should be invalid: %+v", verification)
+				}
+				if !verification.EventChainValid || !verification.FinalPatchHashValid || !verification.ReceiptHashValid || !verification.SignatureValid {
+					t.Fatalf("unexpected component validity for manifest-tamper case: %+v", verification)
+				}
+			},
 		},
 		{
 			name: "final patch",
@@ -401,6 +542,14 @@ func TestBuildMarksInvalidWhenArtifactsAreTampered(t *testing.T) {
 				}
 			},
 			expectGap: "Final patch hash verification failed",
+			check: func(t *testing.T, verification Verification) {
+				if verification.FinalPatchHashValid {
+					t.Fatalf("final patch hash should be invalid: %+v", verification)
+				}
+				if !verification.EventChainValid || !verification.ManifestHashValid || !verification.ReceiptHashValid || !verification.SignatureValid {
+					t.Fatalf("unexpected component validity for final patch-tamper case: %+v", verification)
+				}
+			},
 		},
 	}
 
@@ -422,7 +571,87 @@ func TestBuildMarksInvalidWhenArtifactsAreTampered(t *testing.T) {
 			if !containsGap(report.Gaps, tc.expectGap) {
 				t.Fatalf("gaps for %s = %+v", tc.name, report.Gaps)
 			}
+			if tc.check != nil {
+				tc.check(t, report.Verification)
+			}
 		})
+	}
+}
+
+func TestBuildVerificationProvidesComponentFlagsAndSignatureErrorCodes(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(t, nil, nil)
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !report.Verification.Valid {
+		t.Fatalf("expected valid verification for baseline session: %+v", report.Verification)
+	}
+	if !report.Verification.EventChainValid || !report.Verification.FinalPatchHashValid || !report.Verification.ManifestHashValid || !report.Verification.ReceiptHashValid || !report.Verification.SignatureValid {
+		t.Fatalf("expected all verification components to be valid: %+v", report.Verification)
+	}
+	if report.Verification.SignatureError != "" {
+		t.Fatalf("signature error should be empty for valid verification: %+v", report.Verification.SignatureError)
+	}
+	if report.Verification.SignatureErrorCode != "" {
+		t.Fatalf("signature error code should be empty for valid verification: %+v", report.Verification.SignatureErrorCode)
+	}
+}
+
+func readReceiptForReplayTest(path string) (model.Receipt, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return model.Receipt{}, err
+	}
+	var decoded model.Receipt
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return model.Receipt{}, err
+	}
+
+	return decoded, nil
+}
+
+func TestBuildVerificationReportsLegacyEmbeddedSignerError(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	decoded, err := readReceiptForReplayTest(layout.ReceiptJSON)
+	if err != nil {
+		t.Fatalf("read receipt: %v", err)
+	}
+	decoded.Verification.SignerPublicKey = ""
+	decoded.Verification.SignerKeyID = ""
+	data, err := json.MarshalIndent(decoded, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal receipt: %v", err)
+	}
+	if err := os.WriteFile(layout.ReceiptJSON, append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("write receipt: %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if report.Verification.Valid {
+		t.Fatalf("expected invalid verification for legacy signer missing embedded metadata: %+v", report.Verification)
+	}
+	if report.Verification.SignatureValid {
+		t.Fatalf("signature should be invalid for legacy signer case: %+v", report.Verification)
+	}
+	if report.Verification.SignatureErrorCode != "legacy_missing_embedded_signer" {
+		t.Fatalf("expected legacy_missing_embedded_signer code, got %q: %+v", report.Verification.SignatureErrorCode, report.Verification)
+	}
+	if !containsGap(report.Gaps, "Signature verification failed") {
+		t.Fatalf("missing signature-gap warning: %+v", report.Gaps)
 	}
 }
 
@@ -795,6 +1024,36 @@ func containsGap(gaps []string, needle string) bool {
 	return false
 }
 
+func containsEvidenceRef(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+
+	return false
+}
+
+func containsEvidencePrefix(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(value, needle) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func replayNow() time.Time {
 	return time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+}
+
+func findFile(files []File, path string) *File {
+	for index := range files {
+		if files[index].Path == path {
+			return &files[index]
+		}
+	}
+
+	return nil
 }

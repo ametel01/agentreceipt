@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/buildinfo"
+	"github.com/ametel01/agentreceipt/internal/capture/fswatcher"
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
@@ -30,6 +31,7 @@ import (
 )
 
 const replayKind = "agentreceipt.session_replay"
+const finalPatchEvidenceRef = "diffs/final.patch"
 
 var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)sk-[A-Za-z0-9_-]+`),
@@ -72,13 +74,19 @@ type Source struct {
 }
 
 type Verification struct {
-	Valid          bool   `json:"valid"`
-	EventChainHash string `json:"event_chain_hash"`
-	DiffHash       string `json:"diff_hash"`
-	ManifestHash   string `json:"manifest_hash"`
-	ReceiptHash    string `json:"receipt_hash"`
-	SignatureValid bool   `json:"signature_valid"`
-	SignedBy       string `json:"signed_by"`
+	Valid               bool   `json:"valid"`
+	EventChainHash      string `json:"event_chain_hash"`
+	DiffHash            string `json:"diff_hash"`
+	ManifestHash        string `json:"manifest_hash"`
+	ReceiptHash         string `json:"receipt_hash"`
+	EventChainValid     bool   `json:"event_chain_valid"`
+	FinalPatchHashValid bool   `json:"final_patch_hash_valid"`
+	ManifestHashValid   bool   `json:"manifest_hash_valid"`
+	ReceiptHashValid    bool   `json:"receipt_hash_valid"`
+	SignatureValid      bool   `json:"signature_valid"`
+	SignatureError      string `json:"signature_error,omitempty"`
+	SignatureErrorCode  string `json:"signature_error_code,omitempty"`
+	SignedBy            string `json:"signed_by"`
 }
 
 type Summary struct {
@@ -191,7 +199,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	cfg := config.Default()
 	evidenceSummary := evidence.Summary(events, cfg)
 	evidenceConfidence := evidence.Confidence(events)
-	gaps = append(gaps, evidence.Gaps(evidenceSummary, evidenceConfidence, state.Warnings, cfg)...)
+	gaps = append(gaps, buildFactualGaps(state.Warnings, evidenceConfidence)...)
 
 	finalPatch, finalPatchErr := readText(layout.FinalPatch)
 	if finalPatchErr != nil {
@@ -201,7 +209,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	commands, commandGaps := buildCommands(events, cfg)
 	gaps = append(gaps, commandGaps...)
 
-	files := buildFiles(evidenceSummary.ChangedFiles, finalPatch, events)
+	files := buildFiles(cfg, evidenceSummary.ChangedFiles, finalPatch, events)
 	timeline := buildTimeline(events, evidenceConfidence)
 
 	verification, verifyWarnings := buildVerification(layout, eventsErr == nil)
@@ -228,7 +236,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			Provider:          providerevidence.ProviderLabel(events),
 			DurationSeconds:   sessionDuration(state.StartedAt, events),
 			CommandCount:      len(commands),
-			ChangedFileCount:  len(evidenceSummary.ChangedFiles),
+			ChangedFileCount:  len(files),
 			TestDetected:      evidenceSummary.TestDetected,
 			LintDetected:      evidenceSummary.LintDetected,
 			TypecheckDetected: evidenceSummary.TypecheckDetected,
@@ -504,7 +512,12 @@ func commandOutputSummary(result commandResultMeta) string {
 	return truncate(strings.Join(parts, "; "), maxOutputSummaryRunes)
 }
 
-func buildFiles(changed []model.ChangedFile, finalPatch string, events []model.Event) []File {
+type patchFile struct {
+	Path   string
+	Action string
+}
+
+func buildFiles(cfg config.Config, changed []model.ChangedFile, finalPatch string, events []model.Event) []File {
 	fileRefs := map[string][]string{}
 	for _, event := range events {
 		if event.Type != "fs.change" {
@@ -518,35 +531,68 @@ func buildFiles(changed []model.ChangedFile, finalPatch string, events []model.E
 		fileRefs[path] = append(fileRefs[path], evidenceRef(event.Seq))
 	}
 
-	files := make([]File, 0, len(changed))
+	classifier := fswatcher.NewClassifier(cfg)
+	patchRefs := parseFinalPatchRefs(finalPatch)
+	fileSummary := map[string]File{}
 	for _, changedFile := range changed {
 		path := filepath.ToSlash(changedFile.Path)
-		files = append(files, File{
+		fileSummary[path] = File{
 			Path:         path,
 			Action:       changedFile.Action,
 			Sensitive:    changedFile.Sensitive,
 			Dependency:   changedFile.Dependency,
-			InFinalPatch: patchContainsPath(finalPatch, path),
+			InFinalPatch: false,
 			EvidenceRefs: uniqueSorted(fileRefs[path]),
-		})
+		}
+	}
+	for _, file := range parseFinalPatchFiles(finalPatch) {
+		existing, ok := fileSummary[file.Path]
+		if !ok {
+			classified := classifier.Classify(file.Path)
+			existing = File{
+				Path:       file.Path,
+				Sensitive:  classified.Sensitive,
+				Dependency: classified.Dependency,
+			}
+		}
+		existing.Action = combineAction(existing.Action, file.Action)
+		existing.InFinalPatch = true
+		existing.EvidenceRefs = uniqueSorted(append(existing.EvidenceRefs, finalPatchEvidenceRef))
+		fileSummary[file.Path] = existing
 	}
 
+	for _, file := range fileSummary {
+		if _, patchRefIsPresent := patchRefs[file.Path]; patchRefIsPresent {
+			file.InFinalPatch = true
+		}
+	}
+
+	files := make([]File, 0, len(fileSummary))
+	for _, file := range fileSummary {
+		files = append(files, file)
+	}
 	sort.SliceStable(files, func(i, j int) bool {
 		if files[i].Path == files[j].Path {
 			return files[i].Action < files[j].Action
 		}
 		return files[i].Path < files[j].Path
 	})
-
 	return files
 }
 
-func patchContainsPath(patch string, target string) bool {
-	needle := filepath.ToSlash(target)
-	if needle == "" {
-		return false
+func parseFinalPatchRefs(patch string) map[string]bool {
+	refs := map[string]bool{}
+	for _, file := range parseFinalPatchFiles(patch) {
+		refs[file.Path] = true
 	}
-	for _, line := range strings.Split(patch, "\n") {
+	return refs
+}
+
+func parseFinalPatchFiles(patch string) []patchFile {
+	lines := strings.Split(patch, "\n")
+	files := make([]patchFile, 0)
+	for index := 0; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
 		if !strings.HasPrefix(line, "diff --git ") {
 			continue
 		}
@@ -556,11 +602,62 @@ func patchContainsPath(patch string, target string) bool {
 		}
 		left := diffPath(parts[2])
 		right := diffPath(parts[3])
-		if left == needle || right == needle {
-			return true
+		action := "modify"
+		for inner := index + 1; inner < len(lines); inner++ {
+			next := strings.TrimSpace(lines[inner])
+			if strings.HasPrefix(next, "diff --git ") {
+				index = inner - 1
+				break
+			}
+			switch {
+			case strings.HasPrefix(next, "new file mode "):
+				action = "add"
+			case strings.HasPrefix(next, "deleted file mode "):
+				action = "delete"
+			case strings.HasPrefix(next, "rename from "):
+				action = "rename"
+				left = diffPath(strings.TrimPrefix(next, "rename from "))
+			case strings.HasPrefix(next, "rename to "):
+				action = "rename"
+				right = diffPath(strings.TrimPrefix(next, "rename to "))
+			}
+		}
+		switch action {
+		case "delete":
+			if left != "" {
+				files = append(files, patchFile{Path: left, Action: action})
+			}
+		case "rename":
+			if right != "" {
+				files = append(files, patchFile{Path: right, Action: action})
+			}
+			if left != "" && left != right {
+				files = append(files, patchFile{Path: left, Action: action})
+			}
+		default:
+			if right != "" {
+				files = append(files, patchFile{Path: right, Action: action})
+				continue
+			}
+			if left != "" {
+				files = append(files, patchFile{Path: left, Action: action})
+			}
 		}
 	}
-	return false
+	return files
+}
+
+func combineAction(existing, next string) string {
+	if next == "" || next == "modify" {
+		return existing
+	}
+	if existing == "" || existing == "modify" {
+		return next
+	}
+	if existing == next {
+		return existing
+	}
+	return next
 }
 
 func diffPath(token string) string {
@@ -569,6 +666,20 @@ func diffPath(token string) string {
 		t = t[2:]
 	}
 	return strings.TrimPrefix(filepath.ToSlash(t), "./")
+}
+
+func buildFactualGaps(warnings []model.Warning, confidence model.CaptureConfidence) []string {
+	gaps := make([]string, 0)
+	if confidence.ProviderToolEvents == model.ConfidenceNone {
+		gaps = append(gaps, "No provider tool events were observed.")
+	}
+	for _, warning := range warnings {
+		if warning.Message != "" {
+			gaps = append(gaps, warning.Message)
+		}
+	}
+
+	return gaps
 }
 
 func buildTimeline(events []model.Event, confidence model.CaptureConfidence) []TimelineItem {
@@ -647,7 +758,13 @@ func buildVerification(layout storage.Layout, _ bool) (Verification, []string) {
 	}
 
 	verification.Valid = result.Valid
+	verification.EventChainValid = result.EventChain
+	verification.FinalPatchHashValid = result.FinalDiffHash
+	verification.ManifestHashValid = result.ManifestHash
+	verification.ReceiptHashValid = result.ReceiptHash
 	verification.SignatureValid = result.Signature
+	verification.SignatureError = result.SignatureError
+	verification.SignatureErrorCode = result.SignatureErrorCode
 	verification.SignedBy = result.SignedBy
 	if !result.EventChain {
 		verificationWarnings = append(verificationWarnings, "Event chain verification failed")

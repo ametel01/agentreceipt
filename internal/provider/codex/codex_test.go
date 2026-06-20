@@ -50,6 +50,71 @@ func TestParseJSONLExtractsCommandsWarningsAndRisk(t *testing.T) {
 	}
 }
 
+func TestCommandStatusPrefersProcessExitCodeMarker(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name      string
+		output    string
+		wantCode  *int
+		want      string
+		wantFinal string
+	}{
+		{
+			name:      "nested process exit overrides wrapper exit",
+			output:    "Exit code: 0\nProcess exited with code 2",
+			wantCode:  ptrInt(2),
+			want:      "failed",
+			wantFinal: "non-zero exit code",
+		},
+		{
+			name:      "wrapper exit code still used when no process marker",
+			output:    "Exit code: 0",
+			wantCode:  ptrInt(0),
+			want:      "success",
+			wantFinal: "",
+		},
+		{
+			name:      "no explicit marker on output is success",
+			output:    "command ran",
+			wantCode:  nil,
+			want:      "success",
+			wantFinal: "",
+		},
+		{
+			name:      "last process marker wins",
+			output:    "Process exited with code 0\nsome log\nProcess exited with code 3",
+			wantCode:  ptrInt(3),
+			want:      "failed",
+			wantFinal: "non-zero exit code",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, code, reason := commandStatus(tc.output)
+			if status != tc.want {
+				t.Fatalf("status = %q, want %q", status, tc.want)
+			}
+			if tc.wantCode == nil {
+				if code != nil {
+					t.Fatalf("exitCode = %d, want nil", *code)
+				}
+			} else if code == nil || *code != *tc.wantCode {
+				t.Fatalf("exitCode = %v, want %d", code, *tc.wantCode)
+			}
+			if reason != tc.wantFinal {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantFinal)
+			}
+		})
+	}
+}
+
+func ptrInt(value int) *int {
+	copy := value
+	return &copy
+}
+
 func TestParseJSONLOmitsPromptAndRawToolOutputByDefault(t *testing.T) {
 	t.Parallel()
 

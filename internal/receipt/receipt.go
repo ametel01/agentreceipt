@@ -36,16 +36,30 @@ type Options struct {
 }
 
 type VerifyResult struct {
-	SessionID     string
-	Valid         bool
-	EventChain    bool
-	Signature     bool
-	FinalDiffHash bool
-	ManifestHash  bool
-	ReceiptHash   bool
-	SignedBy      string
-	Warnings      []string
+	SessionID          string
+	Valid              bool
+	EventChain         bool
+	Signature          bool
+	FinalDiffHash      bool
+	ManifestHash       bool
+	ReceiptHash        bool
+	EventChainError    string
+	FinalDiffHashError string
+	ManifestHashError  string
+	ReceiptHashError   string
+	SignatureError     string
+	SignatureErrorCode string
+	SignedBy           string
+	Warnings           []string
 }
+
+const (
+	signatureErrorCodeLegacyMissingSigner = "legacy_missing_embedded_signer"
+	signatureErrorCodeKeyIDMismatch       = "signature_signer_key_id_mismatch"
+	signatureErrorCodePayload             = "signature_payload_error"
+	signatureErrorCodeVerifier            = "signature_verification_error"
+	signatureErrorCodePublicKeyResolution = "signature_public_key_error"
+)
 
 type decodedReceipt struct {
 	Receipt       model.Receipt
@@ -628,27 +642,61 @@ func verifyArtifacts(layout storage.Layout, keyDir string, resolvePublicKey sign
 	}
 	receipt := decoded.Receipt
 	result := VerifyResult{SessionID: receipt.SessionID, Valid: true}
+
 	chainHash, err := replayHash(layout.EventsJSONL)
-	result.EventChain = err == nil && chainHash == receipt.Verification.EventChainHash
+	if err != nil {
+		result.EventChain = false
+		setVerificationError(&result, "event_chain", err.Error())
+	} else {
+		result.EventChain = chainHash == receipt.Verification.EventChainHash
+		if !result.EventChain {
+			setVerificationError(&result, "event_chain", "event chain hash mismatch")
+		}
+	}
 	if err != nil {
 		result.Warnings = append(result.Warnings, err.Error())
 	}
+
 	manifestHash, err := fileHash(layout.ManifestJSON)
 	result.ManifestHash = err == nil && manifestHash == receipt.Verification.ManifestHash
 	if err != nil {
+		setVerificationError(&result, "manifest", err.Error())
 		result.Warnings = append(result.Warnings, err.Error())
+	} else if !result.ManifestHash {
+		setVerificationError(&result, "manifest", "manifest hash mismatch")
 	}
+
 	finalPatchHash, err := fileHash(layout.FinalPatch)
 	result.FinalDiffHash = err == nil && finalPatchHash == receipt.Verification.DiffHash
 	if err != nil {
+		setVerificationError(&result, "final_diff", err.Error())
 		result.Warnings = append(result.Warnings, err.Error())
+	} else if !result.FinalDiffHash {
+		setVerificationError(&result, "final_diff", "final diff hash mismatch")
 	}
+
 	receiptHash, err := unsignedReceiptHash(receipt)
 	result.ReceiptHash = err == nil && receiptHash == receipt.Verification.ReceiptHash
 	if err != nil {
+		setVerificationError(&result, "receipt", err.Error())
 		result.Warnings = append(result.Warnings, err.Error())
+	} else if !result.ReceiptHash {
+		setVerificationError(&result, "receipt", "receipt hash mismatch")
 	}
 	rejectUnknownReceiptFields(&result, decoded.UnknownFields)
+
+	if !result.ReceiptHash && result.ReceiptHashError == "" {
+		setVerificationError(&result, "receipt", "unknown receipt hash failure")
+	}
+	if !result.ManifestHash && result.ManifestHashError == "" {
+		setVerificationError(&result, "manifest", "unknown manifest failure")
+	}
+	if !result.FinalDiffHash && result.FinalDiffHashError == "" {
+		setVerificationError(&result, "final_diff", "unknown final diff failure")
+	}
+	if !result.EventChain && result.EventChainError == "" {
+		setVerificationError(&result, "event_chain", "unknown event-chain failure")
+	}
 
 	signature := receipt.Verification.Signature
 	if layout.ReceiptSignature != "" {
@@ -664,19 +712,68 @@ func verifyArtifacts(layout storage.Layout, keyDir string, resolvePublicKey sign
 
 	publicKey, signedBy, err := resolvePublicKey(receipt.Verification, keyDir)
 	if err != nil {
+		result.Signature = false
+		result.SignatureError = err.Error()
+		result.SignatureErrorCode = signatureErrorCodeFromResolverError(err)
 		result.Warnings = append(result.Warnings, err.Error())
+		result.SignedBy = ""
 	} else {
 		payload, payloadErr := signaturePayload(receipt.Verification)
 		if payloadErr != nil {
+			result.Signature = false
+			result.SignatureError = "could not construct signature payload"
+			result.SignatureErrorCode = signatureErrorCodePayload
 			result.Warnings = append(result.Warnings, payloadErr.Error())
+		} else if !signing.Verify(publicKey, payload, signature) {
+			result.Signature = false
+			result.SignatureError = "signature verification failed"
+			result.SignatureErrorCode = signatureErrorCodeVerifier
+			result.Warnings = append(result.Warnings, result.SignatureError)
 		} else {
-			result.Signature = signing.Verify(publicKey, payload, signature)
+			result.Signature = true
 			result.SignedBy = signedBy
 		}
 	}
 	result.Valid = result.EventChain && result.Signature && result.FinalDiffHash && result.ManifestHash && result.ReceiptHash
-
 	return result, receipt.Verification, nil
+}
+
+func signatureErrorCodeFromResolverError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	if strings.Contains(message, "requires embedded signer public key") {
+		return signatureErrorCodeLegacyMissingSigner
+	}
+	if strings.Contains(message, "embedded signer key id mismatch") {
+		return signatureErrorCodeKeyIDMismatch
+	}
+
+	return signatureErrorCodePublicKeyResolution
+}
+
+func setVerificationError(result *VerifyResult, component string, reason string) {
+	switch component {
+	case "event_chain":
+		result.EventChainError = firstNonEmpty(result.EventChainError, reason)
+	case "final_diff":
+		result.FinalDiffHashError = firstNonEmpty(result.FinalDiffHashError, reason)
+	case "manifest":
+		result.ManifestHashError = firstNonEmpty(result.ManifestHashError, reason)
+	case "receipt":
+		result.ReceiptHashError = firstNonEmpty(result.ReceiptHashError, reason)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func readFile(path string) ([]byte, error) {

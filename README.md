@@ -179,6 +179,7 @@ agentreceipt replay --session <id> --bundle ./replay-bundle
 
 - `--session <id>` is required; there is no implicit latest/active-session replay.
 - Output is machine-readable JSON with `kind: "agentreceipt.session_replay"`.
+- Replay is a factual evidence surface: it reports sequence events, commands, file evidence, integrity checks, and gaps, but it does not score the session or apply policy.
 - `--bundle <path>` writes a portable replay bundle containing:
   - `replay.json`
   - `receipt.json`
@@ -188,6 +189,8 @@ agentreceipt replay --session <id> --bundle ./replay-bundle
   - optional normalized provider traces from `provider/codex/traces/`
 - Replay is artifact-only: no command reruns, no patch application, no model calls, no workspace mutation.
 - Raw prompts, raw tool output, and raw provider logs are not included by default.
+- Evaluator conclusions should be inferred from command/output evidence and integrity status in `replay.json`, not by any built-in policy rule in this command.
+- Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
 ### 8) Export for PRs
 
@@ -332,7 +335,7 @@ The visible CLI surface is:
 | `agentreceipt review` | Build a reviewer-focused receipt summary. |
 | `agentreceipt verify` | Verify receipt integrity and signatures. |
 | `agentreceipt verify bundle <path>` | Verify a local AgentReceipt artifact bundle. |
-| `agentreceipt replay` | Build a machine-readable verifier replay report from a specific session and optionally write a portable replay bundle. |
+| `agentreceipt replay` | Build a machine-readable verifier replay report from a specific session and optionally write a portable replay bundle. Replay reports evidence facts only; no session scoring or policy decisions are made. |
 | `agentreceipt export` | Export finalized receipt artifacts. |
 | `agentreceipt import codex-jsonl <path>` | Import a Codex JSONL trace into the active session. |
 | `agentreceipt inspect codex` | Inspect local Codex evidence availability. |
