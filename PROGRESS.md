@@ -4,7 +4,7 @@
 - `/Users/alexmetelli/source/agentreceipt/docs/REPLAY_SPECS.md`
 
 ## Plan
-- [ ] Step 0: Progress and Changelog Tracking Setup
+- [x] Step 0: Progress and Changelog Tracking Setup
 - [ ] Step 1: Extract Replay-Safe Evidence Analysis
 - [ ] Step 2: Add Artifact-Only Receipt Verification
 - [ ] Step 3: Build Replay JSON Model and Session Builder
@@ -29,5 +29,5 @@
   - `make verify` (initial baseline run) passed.
 - Changelog update:
   - Added `Unreleased`/`Added` entry for progress tracking setup.
-- Commit reference: pending
+- Commit reference: `4979234`
 - Next step: Step 1
