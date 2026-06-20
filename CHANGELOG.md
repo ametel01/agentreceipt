@@ -21,6 +21,7 @@ and this project follows semantic versioning.
 - Added `agentreceipt replay` CLI command to emit machine-readable verifier JSON with required `--session` validation and JSON output mode.
 - Added portable replay bundle generation for `agentreceipt replay` via `--bundle`, including required artifact packaging, normalized Codex trace copying, and `replay.json` manifest emission.
 - Added smoke-level replay coverage for `agentreceipt replay` JSON and bundle outputs, plus validation that replay requires `--session` and emits machine-readable output without raw provider logs.
+- Added replay workflow documentation updates in README and PRD/TECH_SPEC for verifier-only usage, artifact requirements, explicit-session behavior, and privacy constraints.
 
 ## [0.6.0] - 2026-06-18
 

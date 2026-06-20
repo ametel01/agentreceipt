@@ -10,14 +10,14 @@
 - [x] Step 3: Build Replay JSON Model and Session Builder
 - [x] Step 4: Add the `agentreceipt replay` CLI Command
 - [x] Step 5: Implement Portable Replay Bundles
-- [ ] Step 6: Add End-to-End Replay Coverage and Smoke Checks
+- [x] Step 6: Add End-to-End Replay Coverage and Smoke Checks
 - [ ] Step 7: Document Replay Usage and Contracts
 - [ ] Step 8: Final Replay Acceptance Audit
 
 ## Status
-- Current step: Step 7 (Documentation)
-- Last completed step: Step 6
-- Next step: Step 7
+- Current step: Step 8 (Final Replay Acceptance Audit)
+- Last completed step: Step 7
+- Next step: Step 8
 - Rule: `PROGRESS.md` must be updated after each completed step with completed scope, validation output, commit reference, current status, and next step before the step’s commit.
 
 ## Update Log
@@ -157,3 +157,24 @@
   - Added `Unreleased`/`Added` entry for replay smoke coverage and explicit bundle verification.
 - Commit reference: this commit
 - Next step: Step 7
+
+### 2026-06-21
+- Status: Step 7 completed.
+- Scope:
+  - Documented replay usage and contracts in `README.md`, `docs/PRD.md`, and `docs/TECH_SPEC.md`.
+  - Added explicit verifier workflow docs for `agentreceipt replay --session <id>` including required explicit-session behavior and artifact-only, non-reexecution semantics.
+- Validation:
+  - `make fmt` passed.
+  - `make fmt-check` passed.
+  - `make lint` passed.
+  - `make test` passed.
+  - `make test-race` passed.
+  - `make security` passed.
+  - `make build` passed.
+  - `make smoke` passed.
+  - `make coverage` failed: total coverage 78.6% (required 80.0%), blocking `make verify`.
+  - `make verify` failed at the same coverage gate.
+- Changelog update:
+  - Added `Unreleased`/`Added` entry for replay documentation updates.
+- Commit reference: this commit
+- Next step: Step 8

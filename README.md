@@ -135,7 +135,7 @@ When multiple Codex sessions exist, AgentReceipt prefers logs whose Codex `cwd` 
 agentreceipt sessions
 ```
 
-`sessions` lists AgentReceipt sessions for the current repository, newest first. Use it when you need a session ID for `review --session`, `verify --session`, or `export --session`.
+`sessions` lists AgentReceipt sessions for the current repository, newest first. Use it when you need a session ID for `review --session`, `verify --session`, `replay --session`, or `export --session`.
 
 ```text
 SESSION                                  STATE      ACTIVE  UPDATED              EVENTS  WARNINGS
@@ -167,7 +167,29 @@ agentreceipt verify bundle ./agentreceipt
 Receipts embed the signer public key and key ID, so verification works from shared artifacts without the signer's local key directory.
 `verify bundle` checks a local artifact bundle and does not contact GitHub or enforce CI policy.
 
-### 7) Export for PRs
+### 7) Replay for verifier workflows
+
+```bash
+agentreceipt replay --session <id>
+agentreceipt replay --session <id> --json
+agentreceipt replay --session <id> --bundle ./replay-bundle
+```
+
+`replay` builds a verifier-facing JSON report from stored session artifacts.
+
+- `--session <id>` is required; there is no implicit latest/active-session replay.
+- Output is machine-readable JSON with `kind: "agentreceipt.session_replay"`.
+- `--bundle <path>` writes a portable replay bundle containing:
+  - `replay.json`
+  - `receipt.json`
+  - `manifest.json`
+  - `events.jsonl`
+  - `diffs/final.patch`
+  - optional normalized provider traces from `provider/codex/traces/`
+- Replay is artifact-only: no command reruns, no patch application, no model calls, no workspace mutation.
+- Raw prompts, raw tool output, and raw provider logs are not included by default.
+
+### 8) Export for PRs
 
 ```bash
 agentreceipt review --pr
@@ -288,6 +310,7 @@ By default:
 - raw tool outputs are not exported
 - secrets are redacted in exports
 - raw logs remain local unless explicitly configured
+- replay output is redacted and excludes raw prompts, raw command output, and raw provider logs by default
 
 Explicit `--config` files control local review policy, including configured quality commands, test/typecheck prompts, and dependency/auth/secret-path risk flags.
 
@@ -309,6 +332,7 @@ The visible CLI surface is:
 | `agentreceipt review` | Build a reviewer-focused receipt summary. |
 | `agentreceipt verify` | Verify receipt integrity and signatures. |
 | `agentreceipt verify bundle <path>` | Verify a local AgentReceipt artifact bundle. |
+| `agentreceipt replay` | Build a machine-readable verifier replay report from a specific session and optionally write a portable replay bundle. |
 | `agentreceipt export` | Export finalized receipt artifacts. |
 | `agentreceipt import codex-jsonl <path>` | Import a Codex JSONL trace into the active session. |
 | `agentreceipt inspect codex` | Inspect local Codex evidence availability. |
@@ -348,6 +372,8 @@ agentreceipt review --pr
 agentreceipt verify
 agentreceipt verify --session <id>
 agentreceipt verify bundle ./agentreceipt
+agentreceipt replay --session <id>
+agentreceipt replay --session <id> --bundle ./replay-bundle
 
 # Exports
 agentreceipt export --json

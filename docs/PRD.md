@@ -25,6 +25,7 @@ AgentReceipt creates review artifacts that show:
 - whether the current workspace still matches the recorded final diff
 - whether the event log, manifest, receipt hash, final patch hash, and signature verify
 - where evidence is high confidence, medium confidence, low confidence, or unavailable
+- whether the captured session can be replayed as verifier-facing, machine-readable evidence
 
 ## 2. Positioning
 
@@ -130,6 +131,8 @@ Current implemented scope includes:
 - terminal, JSON, Markdown, and PR Markdown review/export modes
 - portable receipt verification using embedded signer public key and key ID
 - local artifact bundle verification
+- machine-readable verifier replay via `agentreceipt replay --session <id>`
+- portable replay bundles via `agentreceipt replay --session <id> --bundle <path>`
 - GitHub CLI PR comment posting
 - release packaging and installer scripts
 
@@ -254,6 +257,21 @@ agentreceipt verify bundle ./agentreceipt
 
 `verify bundle` checks a local artifact bundle path and does not contact GitHub.
 
+### Replay
+
+```bash
+agentreceipt replay --session <id>
+agentreceipt replay --session <id> --json
+agentreceipt replay --session <id> --bundle ./replay-bundle
+```
+
+Replay reconstructs a verifier-facing JSON payload from one finalized session artifact set.
+
+- `--session` is required.
+- Output is machine-readable JSON and defaults to `agentreceipt.session_replay` structure.
+- `--bundle <path>` writes `replay.json` plus required session artifacts and optional normalized Codex traces for offline verifier consumption.
+- Replay is artifact-only: it reads session artifacts, does not rerun commands, and does not call local or remote models.
+
 ### Export And PR Comment
 
 ```bash
@@ -304,6 +322,8 @@ All commands inherit:
 | `agentreceipt review` | Builds a reviewer-focused report from a finalized or selected session. |
 | `agentreceipt verify` | Verifies local receipt integrity and exits non-zero when invalid. |
 | `agentreceipt verify bundle <path>` | Verifies a local artifact bundle and exits non-zero when invalid. |
+| `agentreceipt replay` | Builds a machine-readable verifier replay report for `--session <id>`. |
+| `agentreceipt replay --session <id> --bundle <path>` | Writes a portable verifier replay bundle and exits non-zero when replay construction or required artifact checks fail. |
 | `agentreceipt export --json|--md|--pr` | Exports a finalized receipt in one selected format. |
 | `agentreceipt import codex-jsonl <path>` | Parses a Codex JSONL trace. If a session is active, writes Codex traces and appends provider events. Otherwise runs as a preview import. |
 | `agentreceipt inspect codex` | Lists local Codex evidence candidates and warnings. |
@@ -387,6 +407,26 @@ Claude hook parser behavior:
 ### Manual Markers
 
 Manual markers are signed local context events. They let a developer add human review context to the active session's event chain.
+
+### Replay (Verifier Surface)
+
+Verifier replay uses existing session artifacts only:
+
+- `events.jsonl`
+- `receipt.json`
+- `manifest.json`
+- `diffs/final.patch`
+
+Replay also includes normalized provider traces under `provider/codex/traces/` where available. By default, raw provider logs are excluded from replay outputs and bundles.
+
+Replay surfaces explicit verifier fields for:
+
+- command attempts/results with status and exit context where available
+- changed file evidence references
+- risk list and final risk level
+- validation status and warnings
+- missing evidence gaps
+- verifier tasks derived from evidence gaps and risks
 
 ## 8. Confidence And Risk
 
@@ -728,6 +768,8 @@ Markdown and PR output are concise review summaries. JSON output emits the struc
 - unknown top-level receipt fields
 - detached or embedded Ed25519 signature
 
+`agentreceipt replay` checks the same artifact hashes and signature state through the local replay path, but it is intentionally artifact-only and does not require a current workspace diff check.
+
 New receipts embed signer public key and signer key ID. Verification can therefore work without the signer's local key directory. Legacy verification can still fall back to the local public key.
 
 Invalid verification prints a rendered verification result and exits non-zero.
@@ -761,6 +803,7 @@ Current limitations are:
 - `--quiet` exists as a global flag, but not every command has materially different quiet output.
 - Review risk is heuristic and deterministic, not a security verdict.
 - `verify bundle` verifies local artifacts only; it does not contact GitHub or enforce CI policy.
+- `replay` is explicit-session only (`--session <id>`) and intentionally excludes raw prompts, raw tool output, and raw provider logs by default.
 
 ## 17. Build, Test, Release
 

@@ -55,6 +55,7 @@ Structured logging is a runtime stream concern, not the default rendering mechan
   - `--md`
   - `--pr`
 - PR workflow support through generated Markdown and a GitHub CLI convenience command.
+- Verifier replay reporting and portable replay bundles.
 - Future GitHub PR check variants are documented in [GitHub PR Workflow Design](GITHUB_PR_WORKFLOW_DESIGN.md); they are not active CI gates in the Codex-first MVP.
 - Codex provider research/diagnostic command for validating local log evidence before full capture.
 - Policy-driven redaction for export/review payloads
@@ -114,6 +115,7 @@ fs events + git signals + codex logs
 | `agentreceipt stop` | Finalize session, compute diff/hash/signature/manifest summary, emit warning if Codex provider evidence missing, exit success (non-blocking). |
 | `agentreceipt review` | Produce concise summary in terminal (`--last`, `--session <id>`, `--security`, `--diff`, `--codex-jsonl <path>`, `--json`, `--md`, `--pr`). |
 | `agentreceipt verify` | Validate chain, manifest, diff hash, signature. |
+| `agentreceipt replay` | Build machine-readable verifier report from a specified session and optional portable bundle output. |
 | `agentreceipt export --json|--md|--pr` | Rehydrate finalized receipt in requested format. |
 | `agentreceipt import codex-jsonl <path>` | Optional parser path for non-interactive Codex JSONL. |
 | `agentreceipt inspect codex --last` | Provider research harness that reports Codex log discovery, parseability, candidate sessions, command/tool extraction coverage, and confidence. |
@@ -260,6 +262,22 @@ Event log is append-only. Parsed Codex files should be treated as untrusted inpu
 Claude directories are reserved for roadmap compatibility and should not imply active Claude hook support in the Codex-first MVP. The deferred Claude contract is documented in [Claude Provider Design](CLAUDE_PROVIDER_DESIGN.md) before implementation.
 Large provider payloads and command outputs should be stored as content-addressed local blobs when retained, with redacted references in exported reports.
 
+A replay bundle produced by `agentreceipt replay --bundle <path>` reuses required artifacts from session storage and writes:
+
+```text
+replay.json
+receipt.json
+manifest.json
+events.jsonl
+diffs/
+  final.patch
+provider/
+  codex/
+    traces/
+```
+
+Raw provider logs such as `provider/codex/imported-session.jsonl` are intentionally omitted from the default replay bundle.
+
 ## 8) Component design
 
 ### 8.1 Git monitor
@@ -330,6 +348,13 @@ Large provider payloads and command outputs should be stored as content-addresse
 - Include explicit confidence and missing-evidence sections.
 - No hard-fail on missing provider events; only warning + downgraded confidence.
 
+### 8.8 Replay generator
+
+- `agentreceipt replay` reads artifacts from a named session layout and emits one structured JSON object.
+- Output schema includes verification status, command/timeline summaries, file/risk/gap/task sections, and artifact references.
+- Replay output is artifact-only: it never runs shell commands, applies patches, calls model APIs, or mutates workspace state.
+- `--bundle` writes a portable bundle using only portable artifacts and optional normalized Codex traces.
+
 ## 9) Session state machine
 
 ```
@@ -386,6 +411,7 @@ Transitions:
 
 - Redact values matching known secret/token patterns in review/export.
 - Keep raw logs locally by default, excluded from exported review text by default.
+- Replay output and replay bundles default to redacted content and omit raw provider logs.
 - Cap large blobs and replace with hashes when writing payload snapshots.
 
 ## 13) Test plan (targeted MVP)
@@ -400,6 +426,8 @@ Transitions:
 8. `inspect codex --last` reports log discovery and parser confidence without requiring an active session.
 9. `review --pr` and `pr comment` produce concise PR Markdown without raw prompts or tool outputs.
 10. `mark` persists human context as a chained event in the active session.
+11. `replay --session <id>` emits verifier-facing JSON with `kind: "agentreceipt.session_replay"`.
+12. `replay --session <id> --bundle <path>` writes a portable replay package including `replay.json` and required artifacts.
 
 ## 14) Strict quality gates
 
