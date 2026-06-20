@@ -17,7 +17,11 @@ Plan source: `PLAN.md` (section "Replay Fix" implementation plan)
 Recent step validation:
 - `make build` ran successfully before replay baseline check.
 - `./agentreceipt replay --session ar_ses_1781632141211056000_114075a87efc` now runs from rebuilt binary.
-- Baseline replay output still reports `changed_file_count=0` and includes evidence gap `"No lint command detected."`.
+- Replay output is now factual and evidence-only for that historical session, with:
+  - `changed_file_count=4`
+  - `"risk_signals"` absent
+  - missing review-only gaps such as lint/typecheck/test detection removed from replay gaps
+  - verifier gaps limited to signature verification failure
 - `make verify` was executed and completed until coverage gate:
   - fails on repo-wide threshold due `github.com/ametel01/agentreceipt` total coverage `0.0%` (existing project-wide baseline behavior).
 - Replay smoke checks and plan step tracking are complete after validating factual output shape and component validity in docs + smoke script.
