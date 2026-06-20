@@ -303,23 +303,81 @@ func TestBuildCapturesMissingEvidenceGaps(t *testing.T) {
 func TestBuildMarksInvalidWhenArtifactsAreTampered(t *testing.T) {
 	t.Parallel()
 
-	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
-	if err := os.WriteFile(layout.FinalPatch, []byte("tampered patch\n"), 0o600); err != nil {
-		t.Fatalf("tamper final patch: %v", err)
+	cases := []struct {
+		name      string
+		tamper    func(t *testing.T, repoRoot string, sessionID string, layout storage.Layout)
+		expectGap string
+	}{
+		{
+			name: "events",
+			tamper: func(t *testing.T, repoRoot string, sessionID string, layout storage.Layout) {
+				t.Helper()
+				if err := os.WriteFile(layout.EventsJSONL, []byte("not-valid-jsonl\n"), 0o600); err != nil {
+					t.Fatalf("tamper events: %v", err)
+				}
+			},
+			expectGap: "Event chain verification failed",
+		},
+		{
+			name: "receipt",
+			tamper: func(t *testing.T, repoRoot string, sessionID string, layout storage.Layout) {
+				t.Helper()
+				decoded, err := receipt.Read(layout)
+				if err != nil {
+					t.Fatalf("read receipt: %v", err)
+				}
+				decoded.Verification.ReceiptHash = "sha256:tampered"
+				data, err := json.MarshalIndent(decoded, "", "  ")
+				if err != nil {
+					t.Fatalf("marshal receipt: %v", err)
+				}
+				if err := os.WriteFile(layout.ReceiptJSON, append(data, '\n'), 0o600); err != nil {
+					t.Fatalf("write receipt: %v", err)
+				}
+			},
+			expectGap: "Signature verification failed",
+		},
+		{
+			name: "manifest",
+			tamper: func(t *testing.T, repoRoot string, sessionID string, layout storage.Layout) {
+				t.Helper()
+				if err := os.WriteFile(layout.ManifestJSON, []byte("tampered manifest\n"), 0o600); err != nil {
+					t.Fatalf("tamper manifest: %v", err)
+				}
+			},
+			expectGap: "Manifest hash verification failed",
+		},
+		{
+			name: "final patch",
+			tamper: func(t *testing.T, repoRoot string, sessionID string, layout storage.Layout) {
+				t.Helper()
+				if err := os.WriteFile(layout.FinalPatch, []byte("tampered patch\n"), 0o600); err != nil {
+					t.Fatalf("tamper final patch: %v", err)
+				}
+			},
+			expectGap: "Final patch hash verification failed",
+		},
 	}
 
-	report, err := Build(context.Background(), Options{
-		RepoPath:  repo,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	if report.Verification.Valid {
-		t.Fatalf("expected invalid verification, got valid; report=%+v", report.Verification)
-	}
-	if !containsGap(report.Gaps, "Final patch hash verification failed") {
-		t.Fatalf("gaps = %+v", report.Gaps)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+			tc.tamper(t, repo, sessionID, layout)
+
+			report, err := Build(context.Background(), Options{
+				RepoPath:  repo,
+				SessionID: sessionID,
+			})
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if report.Verification.Valid {
+				t.Fatalf("expected invalid verification, got valid: %s", tc.name)
+			}
+			if !containsGap(report.Gaps, tc.expectGap) {
+				t.Fatalf("gaps for %s = %+v", tc.name, report.Gaps)
+			}
+		})
 	}
 }
 

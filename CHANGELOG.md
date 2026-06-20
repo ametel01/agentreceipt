@@ -22,6 +22,7 @@ and this project follows semantic versioning.
 - Added portable replay bundle generation for `agentreceipt replay` via `--bundle`, including required artifact packaging, normalized Codex trace copying, and `replay.json` manifest emission.
 - Added smoke-level replay coverage for `agentreceipt replay` JSON and bundle outputs, plus validation that replay requires `--session` and emits machine-readable output without raw provider logs.
 - Added replay workflow documentation updates in README and PRD/TECH_SPEC for verifier-only usage, artifact requirements, explicit-session behavior, and privacy constraints.
+- Added replay acceptance coverage in `internal/replay` for tampered `events.jsonl`, `manifest.json`, `receipt.json`, and `final.patch` to keep replay verification invalidation behavior explicit.
 
 ## [0.6.0] - 2026-06-18
 
