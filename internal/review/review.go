@@ -10,17 +10,15 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
-	"github.com/ametel01/agentreceipt/internal/commandrisk"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
+	"github.com/ametel01/agentreceipt/internal/evidence"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/providerevidence"
 	"github.com/ametel01/agentreceipt/internal/session"
@@ -54,12 +52,7 @@ type Report struct {
 	Git           GitSummary              `json:"git"`
 }
 
-type TimelineItem struct {
-	Seq    int64  `json:"seq"`
-	Time   string `json:"time"`
-	Source string `json:"source"`
-	Type   string `json:"type"`
-}
+type TimelineItem = evidence.TimelineItem
 
 type GitSummary struct {
 	Branch            string      `json:"branch"`
@@ -91,14 +84,6 @@ type DiffSummary struct {
 	StatLines  []string `json:"stat_lines,omitempty"`
 }
 
-var fallbackCommandKindPatterns = []struct {
-	kind    string
-	pattern *regexp.Regexp
-}{
-	{kind: "network", pattern: regexp.MustCompile(`\b(curl|wget|ssh|nc|aws|gcloud)\b`)},
-	{kind: "destructive", pattern: regexp.MustCompile(`\b(rm|dd|mkfs|shutdown|reboot)\b`)},
-}
-
 var shortStatPatterns = map[string]*regexp.Regexp{
 	"files":      regexp.MustCompile(`(\d+) files? changed`),
 	"insertions": regexp.MustCompile(`(\d+) insertions?\(\+\)`),
@@ -106,7 +91,6 @@ var shortStatPatterns = map[string]*regexp.Regexp{
 }
 
 const baseNotFoundText = "not found (looked for upstream, origin/HEAD, main/master/trunk/develop)"
-const maxRiskCommandSummaryRunes = 100
 
 func Build(ctx context.Context, options Options) (Report, error) {
 	repoRoot, sessionID, err := resolveSession(ctx, options)
@@ -790,422 +774,27 @@ func configForReview(cfg config.Config) config.Config {
 }
 
 func summarize(events []model.Event, cfg config.Config) model.Summary {
-	changedByPath := make(map[string]model.ChangedFile)
-	commandAttempts := make([]commandAttempt, 0)
-	resultsByCallID := make(map[string]string)
-	resultsByCommand := make(map[string]string)
-	for _, event := range events {
-		if event.Type == "fs.change" {
-			path := stringPayload(event.Payload, "path")
-			if path != "" {
-				changedByPath[path] = model.ChangedFile{
-					Path:       path,
-					Action:     stringPayload(event.Payload, "action"),
-					Sensitive:  boolPayload(event.Payload, "sensitive"),
-					Dependency: boolPayload(event.Payload, "dependency"),
-				}
-			}
-		}
-		if attempt, ok := providerevidence.CommandAttemptFromEvent(event); ok {
-			kind := commandKind(attempt.Command, cfg)
-			commandAttempts = append(commandAttempts, commandAttempt{
-				command: model.DetectedCommand{
-					Command:    attempt.Command,
-					Kind:       kind,
-					Status:     "unknown",
-					Source:     attempt.Source,
-					Confidence: model.ConfidenceMedium,
-				},
-				callID: attempt.CallID,
-			})
-		}
-		if result, ok := providerevidence.CommandResultFromEvent(event); ok {
-			if result.CallID != "" {
-				resultsByCallID[result.CallID] = result.Status
-			}
-			if result.Command != "" {
-				resultsByCommand[result.Command] = result.Status
-			}
-		}
-	}
-	commands := make([]model.DetectedCommand, 0, len(commandAttempts))
-	for _, attempt := range commandAttempts {
-		command := attempt.command
-		if attempt.callID != "" {
-			if status := resultsByCallID[attempt.callID]; status != "" {
-				command.Status = status
-			}
-		} else if status := resultsByCommand[attempt.command.Command]; status != "" {
-			command.Status = status
-		}
-		commands = append(commands, command)
-	}
-	changedFiles := make([]model.ChangedFile, 0, len(changedByPath))
-	for _, changed := range changedByPath {
-		changedFiles = append(changedFiles, changed)
-	}
-	sort.Slice(changedFiles, func(i, j int) bool {
-		return changedFiles[i].Path < changedFiles[j].Path
-	})
-	summary := model.Summary{ChangedFiles: changedFiles, DetectedCommands: commands}
-	for _, command := range commands {
-		switch command.Kind {
-		case "test":
-			summary.TestDetected = true
-		case "lint":
-			summary.LintDetected = true
-		case "typecheck":
-			summary.TypecheckDetected = true
-		}
-	}
-
-	return summary
-}
-
-func hasTypeScriptChanges(summary model.Summary) bool {
-	for _, changed := range summary.ChangedFiles {
-		path := strings.ToLower(changed.Path)
-		switch filepath.Ext(path) {
-		case ".ts", ".tsx", ".mts", ".cts":
-			return true
-		}
-	}
-
-	return false
-}
-
-func hasCodeChanges(summary model.Summary) bool {
-	for _, changed := range summary.ChangedFiles {
-		path := strings.ToLower(changed.Path)
-		switch filepath.Ext(path) {
-		case ".go",
-			".ts", ".tsx", ".mts", ".cts",
-			".js", ".jsx", ".mjs", ".cjs",
-			".py",
-			".rs",
-			".java", ".kt", ".kts", ".scala",
-			".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".m", ".mm",
-			".sh", ".bash", ".zsh",
-			".rb", ".php", ".swift":
-			return true
-		}
-	}
-
-	return false
-}
-
-func isAuthPath(path string) bool {
-	path = strings.ToLower(filepath.ToSlash(path))
-	for _, marker := range []string{"/auth/", "/authentication/", "/oauth/", "/jwt/"} {
-		if strings.Contains("/"+path+"/", marker) {
-			return true
-		}
-	}
-
-	return false
-}
-
-type commandAttempt struct {
-	command model.DetectedCommand
-	callID  string
+	return evidence.Summary(events, cfg)
 }
 
 func confidence(events []model.Event) model.CaptureConfidence {
-	confidence := model.CaptureConfidence{
-		GitDiff:            model.ConfidenceNone,
-		FilesystemWrites:   model.ConfidenceNone,
-		ProviderToolEvents: model.ConfidenceNone,
-		FileReads:          model.ConfidenceNone,
-		NetworkCalls:       model.ConfidenceLow,
-	}
-	for _, event := range events {
-		switch event.Source {
-		case "git_monitor":
-			confidence.GitDiff = model.ConfidenceHigh
-		case "fs_watcher":
-			confidence.FilesystemWrites = model.ConfidenceHigh
-		}
-		if providerevidence.IsProviderEvidenceSource(event) && providerevidence.IsToolEvidenceEvent(event) {
-			confidence.ProviderToolEvents = model.ConfidenceMedium
-		}
-	}
-
-	return confidence
+	return evidence.Confidence(events)
 }
 
 func risk(summary model.Summary, warnings []model.Warning, events []model.Event, cfg config.Config) model.Risk {
-	result := model.Risk{Level: model.RiskInfo}
-	for _, changed := range summary.ChangedFiles {
-		if changed.Sensitive && cfg.Review.FlagSecretPaths {
-			result.Level = maxRisk(result.Level, model.RiskMedium)
-			result.Reasons = append(result.Reasons, model.RiskReason{
-				Code:       "sensitive_path_changed",
-				Message:    "Sensitive path changed: " + changed.Path,
-				Level:      model.RiskMedium,
-				Confidence: model.ConfidenceHigh,
-			})
-		}
-		if isAuthPath(changed.Path) && cfg.Review.FlagAuthChanges {
-			result.Level = maxRisk(result.Level, model.RiskMedium)
-			result.Reasons = append(result.Reasons, model.RiskReason{
-				Code:       "auth_path_changed",
-				Message:    "Authentication-sensitive path changed: " + changed.Path,
-				Level:      model.RiskMedium,
-				Confidence: model.ConfidenceHigh,
-			})
-		}
-		if changed.Dependency && cfg.Review.FlagDependencyChanges {
-			result.Level = maxRisk(result.Level, model.RiskMedium)
-			result.Reasons = append(result.Reasons, model.RiskReason{
-				Code:       "dependency_changed",
-				Message:    "Dependency file changed: " + changed.Path,
-				Level:      model.RiskMedium,
-				Confidence: model.ConfidenceHigh,
-			})
-		}
-	}
-	for _, reason := range commandRiskReasons(summary.DetectedCommands) {
-		result.Level = maxRisk(result.Level, reason.Level)
-		result.Reasons = append(result.Reasons, reason)
-	}
-	for _, reason := range providerRiskReasons(events) {
-		result.Level = maxRisk(result.Level, reason.Level)
-		result.Reasons = append(result.Reasons, reason)
-	}
-	for _, warning := range warnings {
-		result.Level = maxRisk(result.Level, model.RiskLow)
-		result.Reasons = append(result.Reasons, model.RiskReason{
-			Code:       warning.Code,
-			Message:    warning.Message,
-			Level:      model.RiskLow,
-			Confidence: model.ConfidenceMedium,
-		})
-	}
-
-	return result
-}
-
-func commandRiskReasons(commands []model.DetectedCommand) []model.RiskReason {
-	reasons := make([]model.RiskReason, 0)
-	seen := map[string]bool{}
-	for _, command := range commands {
-		for _, classification := range commandrisk.Classify(command.Command) {
-			if classification.Level == model.RiskLow || classification.Level == model.RiskInfo || classification.Level == "" {
-				continue
-			}
-			code := "command_risk_" + riskCodeFragment(classification.Signal)
-			message := commandRiskMessage(classification, command.Command)
-			key := code + ":" + message
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			confidence := command.Confidence
-			if confidence == "" {
-				confidence = model.ConfidenceMedium
-			}
-			reasons = append(reasons, model.RiskReason{
-				Code:       code,
-				Message:    message,
-				Level:      classification.Level,
-				Confidence: confidence,
-			})
-		}
-	}
-
-	return reasons
-}
-
-func commandRiskMessage(classification commandrisk.Classification, command string) string {
-	label := classification.Signal
-	if label == "" {
-		label = "command"
-	}
-	details := classification.Reason
-	if details == "" {
-		details = "command matched a risk rule"
-	}
-
-	return "Command risk detected (" + label + "): " + details + " in command: " + commandSummary(command)
-}
-
-func providerRiskReasons(events []model.Event) []model.RiskReason {
-	reasons := make([]model.RiskReason, 0)
-	seen := map[string]bool{}
-	for _, event := range events {
-		for _, signal := range providerevidence.RiskSignalsFromEvent(event) {
-			if signal.Level == model.RiskLow || signal.Level == model.RiskInfo || signal.Level == "" {
-				continue
-			}
-			code := "provider_risk_" + riskCodeFragment(signal.Signal)
-			message := providerRiskMessage(signal)
-			key := code + ":" + message
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			reasons = append(reasons, model.RiskReason{
-				Code:       code,
-				Message:    message,
-				Level:      signal.Level,
-				Confidence: signal.Confidence,
-			})
-		}
-	}
-
-	return reasons
-}
-
-func providerRiskMessage(signal providerevidence.RiskSignal) string {
-	label := signal.Signal
-	if label == "" {
-		label = "provider"
-	}
-	details := signal.Details
-	if details == "" {
-		details = "provider classified the command as risky"
-	}
-	message := "Provider risk detected (" + label + "): " + details
-	if signal.Command != "" {
-		message += " in command: " + commandSummary(signal.Command)
-	}
-
-	return message
-}
-
-func commandSummary(command string) string {
-	return truncateRunes(normalizedCommand(command), maxRiskCommandSummaryRunes)
-}
-
-func truncateRunes(value string, maxRunes int) string {
-	if maxRunes <= 0 {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	if maxRunes <= 3 {
-		return string(runes[:maxRunes])
-	}
-
-	return string(runes[:maxRunes-3]) + "..."
-}
-
-func riskCodeFragment(value string) string {
-	value = strings.ToLower(value)
-	var builder strings.Builder
-	lastUnderscore := false
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
-			builder.WriteRune(char)
-			lastUnderscore = false
-			continue
-		}
-		if !lastUnderscore {
-			builder.WriteByte('_')
-			lastUnderscore = true
-		}
-	}
-	fragment := strings.Trim(builder.String(), "_")
-	if fragment == "" {
-		return "unknown"
-	}
-
-	return fragment
+	return evidence.Risk(summary, warnings, events, cfg)
 }
 
 func focus(summary model.Summary, risk model.Risk, cfg config.Config) []string {
-	items := make([]string, 0)
-	if len(risk.Reasons) == 0 {
-		items = append(items, "Review the final diff against the generated receipt.")
-	}
-	for _, reason := range risk.Reasons {
-		items = append(items, reason.Message)
-	}
-	if cfg.Review.RequireTestsForCodeChanges && hasCodeChanges(summary) && !summary.TestDetected {
-		items = append(items, "Confirm appropriate tests were run for code changes.")
-	}
-	if cfg.Review.RequireTypecheckForTS && hasTypeScriptChanges(summary) && !summary.TypecheckDetected {
-		items = append(items, "Confirm typecheck coverage where relevant.")
-	}
-
-	return items
+	return evidence.Focus(summary, risk, cfg)
 }
 
 func gaps(summary model.Summary, confidence model.CaptureConfidence, warnings []model.Warning, cfg config.Config) []string {
-	gaps := make([]string, 0)
-	if confidence.ProviderToolEvents == model.ConfidenceNone {
-		gaps = append(gaps, "No provider tool events were observed.")
-	}
-	if cfg.Review.RequireTestsForCodeChanges && hasCodeChanges(summary) && !summary.TestDetected {
-		gaps = append(gaps, "No test command detected.")
-	}
-	if !summary.LintDetected {
-		gaps = append(gaps, "No lint command detected.")
-	}
-	if cfg.Review.RequireTypecheckForTS && hasTypeScriptChanges(summary) && !summary.TypecheckDetected {
-		gaps = append(gaps, "No typecheck command detected for TypeScript changes.")
-	}
-	for _, warning := range warnings {
-		gaps = append(gaps, warning.Message)
-	}
-
-	return gaps
+	return evidence.Gaps(summary, confidence, warnings, cfg)
 }
 
 func timeline(events []model.Event) []TimelineItem {
-	items := make([]TimelineItem, 0, len(events))
-	for _, event := range events {
-		items = append(items, TimelineItem{
-			Seq:    event.Seq,
-			Time:   event.Timestamp.Format(time.RFC3339),
-			Source: event.Source,
-			Type:   event.Type,
-		})
-	}
-
-	return items
-}
-
-func commandKind(command string, cfg config.Config) string {
-	if kind := configuredCommandKind(command, cfg.TestCommands); kind != "" {
-		return kind
-	}
-	for _, matcher := range fallbackCommandKindPatterns {
-		if matcher.pattern.MatchString(command) {
-			return matcher.kind
-		}
-	}
-
-	return "command"
-}
-
-func configuredCommandKind(command string, configured []string) string {
-	command = normalizedCommand(command)
-	for _, candidate := range configured {
-		candidate = normalizedCommand(candidate)
-		if candidate == "" {
-			continue
-		}
-		if command != candidate && !strings.HasPrefix(command, candidate+" ") {
-			continue
-		}
-		switch {
-		case strings.Contains(candidate, "lint") || strings.Contains(candidate, "staticcheck") || strings.Contains(candidate, "go vet"):
-			return "lint"
-		case strings.Contains(candidate, "typecheck") || strings.Contains(candidate, "tsc") || strings.Contains(candidate, "pyright"):
-			return "typecheck"
-		default:
-			return "test"
-		}
-	}
-
-	return ""
-}
-
-func normalizedCommand(command string) string {
-	return strings.Join(strings.Fields(command), " ")
+	return evidence.Timeline(events)
 }
 
 func readState(layout storage.Layout) (session.State, error) {
@@ -1227,44 +816,8 @@ func readState(layout storage.Layout) (session.State, error) {
 
 	return state, nil
 }
-
-func stringPayload(payload map[string]any, key string) string {
-	if value, ok := payload[key].(string); ok {
-		return value
-	}
-
-	return ""
-}
-
-func boolPayload(payload map[string]any, key string) bool {
-	if value, ok := payload[key].(bool); ok {
-		return value
-	}
-
-	return false
-}
-
 func maxRisk(left model.RiskLevel, right model.RiskLevel) model.RiskLevel {
-	if riskRank(right) > riskRank(left) {
-		return right
-	}
-
-	return left
-}
-
-func riskRank(level model.RiskLevel) int {
-	switch level {
-	case model.RiskLow:
-		return 1
-	case model.RiskMedium:
-		return 2
-	case model.RiskHigh:
-		return 3
-	case model.RiskCritical:
-		return 4
-	default:
-		return 0
-	}
+	return evidence.MaxRisk(left, right)
 }
 
 func statusText(report Report) string {

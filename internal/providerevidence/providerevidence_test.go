@@ -48,6 +48,14 @@ func TestCommandEvidenceRoundTrip(t *testing.T) {
 	resultEvent := NewCommandResultEvent(meta, CommandResult{
 		CallID: "call_1",
 		Status: "failed",
+		ExitCode: func() *int {
+			exitCode := 7
+			return &exitCode
+		}(),
+		Stdout:          "very secret output",
+		StdoutTruncated: true,
+		StderrOrError:   "command returned non-zero",
+		FailedReason:    "command failed",
 	}, map[string]any{"line_no": 8})
 	result, ok := CommandResultFromEvent(resultEvent)
 	if !ok {
@@ -55,6 +63,15 @@ func TestCommandEvidenceRoundTrip(t *testing.T) {
 	}
 	if result.CallID != "call_1" || result.Status != "failed" {
 		t.Fatalf("result = %+v", result)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 7 {
+		t.Fatalf("result exit code = %+v", result)
+	}
+	if !result.StdoutTruncated || result.Stdout == "" {
+		t.Fatalf("result stdout/truncation = %+v", result)
+	}
+	if result.StderrOrError != "command returned non-zero" || result.FailedReason != "command failed" {
+		t.Fatalf("result failure info = %+v", result)
 	}
 }
 
@@ -132,6 +149,31 @@ func TestConstructorsAndReadersHandleFallbackShapes(t *testing.T) {
 	result, ok := CommandResultFromEvent(legacyResult)
 	if !ok || result.CallID != "call_legacy" || result.Status != "success" {
 		t.Fatalf("legacy result = %+v ok=%v", result, ok)
+	}
+	legacyResultWithCode := model.Event{
+		Type: TypeCommandResult,
+		Payload: map[string]any{
+			"call_id":          "legacy_code",
+			"status":           "failed",
+			"exit_code":        float64(42),
+			"stdout":           "some output",
+			"stdout_truncated": true,
+			"failed_reason":    "bad command",
+			"stderr_or_error":  "stderr",
+		},
+	}
+	result, ok = CommandResultFromEvent(legacyResultWithCode)
+	if !ok {
+		t.Fatal("legacy result with code parse failed")
+	}
+	if result.ExitCode == nil || *result.ExitCode != 42 {
+		t.Fatalf("legacy result exit_code = %+v", result)
+	}
+	if result.Stdout != "some output" || !result.StdoutTruncated {
+		t.Fatalf("legacy result stdout fields = %+v", result)
+	}
+	if result.FailedReason != "bad command" || result.StderrOrError != "stderr" {
+		t.Fatalf("legacy result failure fields = %+v", result)
 	}
 	if _, ok := CommandResultFromEvent(model.Event{Type: TypeCommandResult, Payload: map[string]any{"status": "ok"}}); ok {
 		t.Fatal("invalid command status produced a command result")

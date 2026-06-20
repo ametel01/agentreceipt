@@ -182,12 +182,24 @@ func CommandResultFromEvent(event model.Event) (CommandResult, bool) {
 	if status == "" {
 		return CommandResult{}, false
 	}
+	result := CommandResult{
+		CallID:          firstString(payload, "call_id"),
+		Command:         stringPayload(payload, "command"),
+		Status:          status,
+		Source:          event.Source,
+		Stdout:          stringPayload(payload, "stdout"),
+		StdoutTruncated: boolPayload(payload, "stdout_truncated"),
+		FailedReason:    firstString(payload, "failed_reason", "reason", "error"),
+		StderrOrError:   firstString(payload, "stderr_or_error", "stderr"),
+	}
+	if result.CallID == "" {
+		result.CallID = callIDFromPayload(event.Payload)
+	}
+	if exitCode, ok := intPayload(payload, "exit_code"); ok {
+		result.ExitCode = &exitCode
+	}
 
-	return CommandResult{
-		CallID:  stringPayload(payload, "call_id"),
-		Command: stringPayload(payload, "command"),
-		Status:  status,
-	}, true
+	return result, true
 }
 
 func RiskSignalsFromEvent(event model.Event) []RiskSignal {
@@ -416,4 +428,22 @@ func intPayload(payload map[string]any, key string) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func boolPayload(payload map[string]any, key string) bool {
+	if value, ok := payload[key].(bool); ok {
+		return value
+	}
+
+	return false
+}
+
+func firstString(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := stringPayload(payload, key); value != "" {
+			return value
+		}
+	}
+
+	return ""
 }
