@@ -39,6 +39,7 @@ func TestRootHelpListsCommandSurface(t *testing.T) {
 		"events",
 		"stop",
 		"review",
+		"replay",
 		"verify",
 		"export",
 		"import codex-jsonl",
@@ -97,6 +98,7 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		{"live"},
 		{"stop"},
 		{"review"},
+		{"replay"},
 		{"verify"},
 		{"verify", "bundle"},
 		{"export"},
@@ -151,6 +153,62 @@ func TestReviewModeFlags(t *testing.T) {
 		if review.Flags().Lookup(name) != nil {
 			t.Fatalf("inactive review flag %q is still registered", name)
 		}
+	}
+}
+
+func TestReplayModeFlags(t *testing.T) {
+	root := NewRootCommand("test")
+	replayCmd, _, err := root.Find([]string{"replay"})
+	if err != nil {
+		t.Fatalf("find replay command: %v", err)
+	}
+	if replayCmd.Flags().Lookup("session") == nil {
+		t.Fatal("replay flag \"session\" is not registered")
+	}
+	if replayCmd.Flags().Lookup("json") == nil {
+		t.Fatal("replay flag \"json\" is not registered")
+	}
+}
+
+func TestReplayCommandRequiresSession(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	if _, _, err := executeCommand(t, "--repo", repo, "replay"); err == nil {
+		t.Fatal("replay without --session returned nil error")
+	}
+}
+
+func TestReplayCommandOutputsJSON(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+
+	reportOutput, _, err := executeCommand(t, "--repo", repo, "replay", "--session", sessionID, "--json")
+	if err != nil {
+		t.Fatalf("replay returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(reportOutput), &payload); err != nil {
+		t.Fatalf("replay json decode failed: %v", err)
+	}
+	if payload["kind"] != "agentreceipt.session_replay" {
+		t.Fatalf("replay kind mismatch: %v", payload["kind"])
+	}
+	if payload["session_id"] != sessionID {
+		t.Fatalf("session id mismatch: %v", payload["session_id"])
+	}
+	if _, ok := payload["verification"]; !ok {
+		t.Fatal("missing verification section in replay output")
 	}
 }
 

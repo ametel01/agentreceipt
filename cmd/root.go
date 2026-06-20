@@ -22,6 +22,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
 	"github.com/ametel01/agentreceipt/internal/providerevidence"
 	"github.com/ametel01/agentreceipt/internal/receipt"
+	"github.com/ametel01/agentreceipt/internal/replay"
 	"github.com/ametel01/agentreceipt/internal/review"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/signing"
@@ -82,6 +83,7 @@ func NewRootCommand(version string) *cobra.Command {
 		newDeprecatedLiveCommand(),
 		newStopCommand(),
 		newReviewCommand(),
+		newReplayCommand(),
 		newVerifyCommand(),
 		newExportCommand(),
 		newImportCommand(),
@@ -153,6 +155,7 @@ Core commands:
   events
   stop
   review
+  replay
   verify
   export
   import codex-jsonl
@@ -1013,6 +1016,31 @@ func newReviewCommand() *cobra.Command {
 	return reviewCmd
 }
 
+func newReplayCommand() *cobra.Command {
+	replayCmd := &cobra.Command{
+		Use:   "replay",
+		Short: "Build a verifier-facing replay report",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options, err := replayOptionsFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			report, err := replay.Build(cmd.Context(), options)
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetIndent("", "  ")
+
+			return encoder.Encode(report)
+		},
+	}
+	replayCmd.Flags().String("session", "", "Replay a specific finalized session ID")
+	replayCmd.Flags().Bool("json", false, "Render replay output as JSON")
+
+	return replayCmd
+}
+
 func newVerifyCommand() *cobra.Command {
 	verify := &cobra.Command{
 		Use:   "verify",
@@ -1512,6 +1540,25 @@ func reviewOptionsFromCommand(cmd *cobra.Command) (review.Options, error) {
 	}
 
 	return review.Options{RepoPath: repoPath, SessionID: sessionID, Last: last, Security: security, Diff: diff, Config: cfg}, nil
+}
+
+func replayOptionsFromCommand(cmd *cobra.Command) (replay.Options, error) {
+	repoPath, err := repoRootFromCommand(cmd)
+	if err != nil {
+		return replay.Options{}, err
+	}
+	sessionID, err := cmd.Flags().GetString("session")
+	if err != nil {
+		return replay.Options{}, err
+	}
+	if sessionID == "" {
+		return replay.Options{}, errors.New("replay requires --session")
+	}
+	if err := storage.ValidateSessionID(sessionID); err != nil {
+		return replay.Options{}, err
+	}
+
+	return replay.Options{RepoPath: repoPath, SessionID: sessionID}, nil
 }
 
 func repoRootFromCommand(cmd *cobra.Command) (string, error) {

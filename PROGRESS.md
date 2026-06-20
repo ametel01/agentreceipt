@@ -8,16 +8,16 @@
 - [x] Step 1: Extract Replay-Safe Evidence Analysis
 - [x] Step 2: Add Artifact-Only Receipt Verification
 - [x] Step 3: Build Replay JSON Model and Session Builder
-- [ ] Step 4: Add the `agentreceipt replay` CLI Command
+- [x] Step 4: Add the `agentreceipt replay` CLI Command
 - [ ] Step 5: Implement Portable Replay Bundles
 - [ ] Step 6: Add End-to-End Replay Coverage and Smoke Checks
 - [ ] Step 7: Document Replay Usage and Contracts
 - [ ] Step 8: Final Replay Acceptance Audit
 
 ## Status
-- Current step: Step 4 (Replay command)
-- Last completed step: Step 3
-- Next step: Step 4
+- Current step: Step 5 (Replay bundles)
+- Last completed step: Step 4
+- Next step: Step 5
 - Rule: `PROGRESS.md` must be updated after each completed step with completed scope, validation output, commit reference, current status, and next step before the step’s commit.
 
 ## Update Log
@@ -97,5 +97,25 @@
   - `make verify` failed on the coverage gate.
 - Changelog update:
   - Added `Unreleased`/`Added` entry for the initial verifier replay JSON model and command builder.
-- Commit reference: `8f28f0b`
+- Commit reference: `e6483ae`
 - Next step: Step 4
+
+### 2026-06-21
+- Status: Step 4 completed.
+- Scope:
+  - Added `newReplayCommand` in `cmd/root.go` and registered `replay` in the root command tree and help text.
+- Validation:
+  - `make fmt` passed.
+  - `make fmt-check` passed.
+  - `make lint` passed.
+  - `make test` passed.
+  - `make test-race` passed.
+  - `make security` passed.
+  - `make build` passed.
+  - `make smoke` passed.
+  - `make coverage` failed: total coverage 77.9% (required 80.0%), blocking `make verify`.
+  - `make verify` failed on the coverage gate.
+- Changelog update:
+  - Added `Unreleased`/`Added` entry for the replay CLI command surface and JSON output contract.
+- Commit reference: pending
+- Next step: Step 5
