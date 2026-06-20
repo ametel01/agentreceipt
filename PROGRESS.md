@@ -6,7 +6,7 @@
 ## Plan
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Extract Replay-Safe Evidence Analysis
-- [ ] Step 2: Add Artifact-Only Receipt Verification
+- [x] Step 2: Add Artifact-Only Receipt Verification
 - [ ] Step 3: Build Replay JSON Model and Session Builder
 - [ ] Step 4: Add the `agentreceipt replay` CLI Command
 - [ ] Step 5: Implement Portable Replay Bundles
@@ -15,9 +15,9 @@
 - [ ] Step 8: Final Replay Acceptance Audit
 
 ## Status
-- Current step: Step 2 (Artifact-only receipt verification)
-- Last completed step: Step 1
-- Next step: Step 2
+- Current step: Step 3 (Replay JSON model and session builder)
+- Last completed step: Step 2
+- Next step: Step 3
 - Rule: `PROGRESS.md` must be updated after each completed step with completed scope, validation output, commit reference, current status, and next step before the step’s commit.
 
 ## Update Log
@@ -54,3 +54,26 @@
   - Added `Unreleased`/`Changed` entry for replay-safe evidence extraction refactor.
 - Commit reference: pending
 - Next step: Step 2
+
+### 2026-06-21
+- Status: Step 2 completed.
+- Scope:
+  - Added `verifyArtifacts(layout, keyDir, resolver)` in `internal/receipt/receipt.go` to centralize artifact-only verification.
+  - Updated `Verify` to reuse shared artifact validation, preserving current live-workspace diff comparison behavior.
+  - Updated `VerifyBundle` to use the shared verification path with embedded signer resolution.
+  - Expanded `internal/receipt/receipt_test.go` bundle tampering matrix with cases for tampered events, manifest, final patch, embedded signer material, receipt hash, and missing verification signature material.
+- Validation:
+  - `make fmt` passed.
+  - `make fmt-check` passed.
+  - `make lint` passed.
+  - `make test` passed.
+  - `make test-race` passed.
+  - `make security` passed.
+  - `make build` passed.
+  - `make smoke` passed.
+  - `make coverage` failed: total coverage 77.9% (required 80.0%), blocking `make verify`.
+  - `make verify` failed due coverage gate.
+- Changelog update:
+  - Added `Unreleased`/`Changed` entry for artifact-only receipt verification.
+- Commit reference: `dc9398a`
+- Next step: Step 3

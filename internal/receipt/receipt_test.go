@@ -383,6 +383,36 @@ func TestVerifyBundleDetectsTampering(t *testing.T) {
 				return !result.Signature && hasVerifyWarning(result.Warnings, "embedded signer public key")
 			},
 		},
+		{
+			name: "receipt hash",
+			tamper: func(t *testing.T, bundle string) {
+				receipt, err := readReceiptPath(filepath.Join(bundle, storage.ReceiptJSONFile))
+				if err != nil {
+					t.Fatalf("read receipt: %v", err)
+				}
+				receipt.Risk.Level = model.RiskCritical
+				if err := writeJSON(filepath.Join(bundle, storage.ReceiptJSONFile), receipt); err != nil {
+					t.Fatalf("write receipt: %v", err)
+				}
+			},
+			check: func(result VerifyResult) bool { return !result.ReceiptHash },
+		},
+		{
+			name: "missing signature material",
+			tamper: func(t *testing.T, bundle string) {
+				receipt, err := readReceiptPath(filepath.Join(bundle, storage.ReceiptJSONFile))
+				if err != nil {
+					t.Fatalf("read receipt: %v", err)
+				}
+				receipt.Verification.Signature = ""
+				if err := writeJSON(filepath.Join(bundle, storage.ReceiptJSONFile), receipt); err != nil {
+					t.Fatalf("write receipt: %v", err)
+				}
+			},
+			check: func(result VerifyResult) bool {
+				return !result.Signature
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

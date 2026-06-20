@@ -136,59 +136,17 @@ func Verify(ctx context.Context, options Options) (VerifyResult, error) {
 	if err != nil {
 		return VerifyResult{}, err
 	}
-	decoded, err := readDecodedReceiptPath(layout.ReceiptJSON)
+	result, receiptVerification, err := verifyArtifacts(layout, options.KeyDir, publicKeyForVerification)
 	if err != nil {
 		return VerifyResult{}, err
 	}
-	receipt := decoded.Receipt
-	result := VerifyResult{SessionID: sessionID, Valid: true}
-	chainHash, err := replayHash(layout.EventsJSONL)
-	result.EventChain = err == nil && chainHash == receipt.Verification.EventChainHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
-	manifestHash, err := fileHash(layout.ManifestJSON)
-	result.ManifestHash = err == nil && manifestHash == receipt.Verification.ManifestHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
-	finalPatchHash, err := fileHash(layout.FinalPatch)
-	result.FinalDiffHash = err == nil && finalPatchHash == receipt.Verification.DiffHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
+	result.SessionID = sessionID
 	currentDiffHash, err := currentDiffHash(ctx, repoRoot, sessionID, layout)
-	if err == nil && currentDiffHash != receipt.Verification.DiffHash {
+	if err == nil && currentDiffHash != receiptVerification.DiffHash {
 		result.FinalDiffHash = false
 		result.Warnings = append(result.Warnings, "current workspace diff does not match recorded final diff hash")
 	} else if err != nil {
 		result.Warnings = append(result.Warnings, err.Error())
-	}
-	receiptHash, err := unsignedReceiptHash(receipt)
-	result.ReceiptHash = err == nil && receiptHash == receipt.Verification.ReceiptHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
-	rejectUnknownReceiptFields(&result, decoded.UnknownFields)
-	signatureData, err := readFile(layout.ReceiptSignature)
-	if err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("read receipt signature: %v", err))
-	}
-	publicKey, signedBy, err := publicKeyForVerification(receipt.Verification, options.KeyDir)
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	} else {
-		payload, payloadErr := signaturePayload(receipt.Verification)
-		if payloadErr != nil {
-			result.Warnings = append(result.Warnings, payloadErr.Error())
-		} else {
-			signature := receipt.Verification.Signature
-			if len(bytes.TrimSpace(signatureData)) > 0 {
-				signature = string(bytes.TrimSpace(signatureData))
-			}
-			result.Signature = signing.Verify(publicKey, payload, signature)
-			result.SignedBy = signedBy
-		}
 	}
 	result.Valid = result.EventChain && result.Signature && result.FinalDiffHash && result.ManifestHash && result.ReceiptHash
 
@@ -203,46 +161,18 @@ func VerifyBundle(root string) (VerifyResult, error) {
 	manifestPath := filepath.Join(root, storage.ManifestFile)
 	eventsPath := filepath.Join(root, storage.EventsFile)
 	finalPatchPath := filepath.Join(root, storage.DiffsDir, storage.FinalPatchFile)
-	decoded, err := readDecodedReceiptPath(receiptPath)
+	layout := storage.Layout{
+		ReceiptJSON:  receiptPath,
+		ManifestJSON: manifestPath,
+		EventsJSONL:  eventsPath,
+		FinalPatch:   finalPatchPath,
+	}
+	result, _, err := verifyArtifacts(layout, "", func(verification model.Verification, _ string) (ed25519.PublicKey, string, error) {
+		return embeddedPublicKeyForVerification(verification)
+	})
 	if err != nil {
 		return VerifyResult{}, err
 	}
-	receipt := decoded.Receipt
-	result := VerifyResult{SessionID: receipt.SessionID, Valid: true}
-	chainHash, err := replayHash(eventsPath)
-	result.EventChain = err == nil && chainHash == receipt.Verification.EventChainHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
-	manifestHash, err := fileHash(manifestPath)
-	result.ManifestHash = err == nil && manifestHash == receipt.Verification.ManifestHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
-	finalPatchHash, err := fileHash(finalPatchPath)
-	result.FinalDiffHash = err == nil && finalPatchHash == receipt.Verification.DiffHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
-	receiptHash, err := unsignedReceiptHash(receipt)
-	result.ReceiptHash = err == nil && receiptHash == receipt.Verification.ReceiptHash
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	}
-	rejectUnknownReceiptFields(&result, decoded.UnknownFields)
-	publicKey, signedBy, err := embeddedPublicKeyForVerification(receipt.Verification)
-	if err != nil {
-		result.Warnings = append(result.Warnings, err.Error())
-	} else {
-		payload, payloadErr := signaturePayload(receipt.Verification)
-		if payloadErr != nil {
-			result.Warnings = append(result.Warnings, payloadErr.Error())
-		} else {
-			result.Signature = signing.Verify(publicKey, payload, receipt.Verification.Signature)
-			result.SignedBy = signedBy
-		}
-	}
-	result.Valid = result.EventChain && result.Signature && result.FinalDiffHash && result.ManifestHash && result.ReceiptHash
 
 	return result, nil
 }
@@ -687,6 +617,66 @@ func fileHash(path string) (string, error) {
 	}
 
 	return hashBytes(data), nil
+}
+
+type signatureVerifier func(verification model.Verification, keyDir string) (ed25519.PublicKey, string, error)
+
+func verifyArtifacts(layout storage.Layout, keyDir string, resolvePublicKey signatureVerifier) (VerifyResult, model.Verification, error) {
+	decoded, err := readDecodedReceiptPath(layout.ReceiptJSON)
+	if err != nil {
+		return VerifyResult{}, model.Verification{}, err
+	}
+	receipt := decoded.Receipt
+	result := VerifyResult{SessionID: receipt.SessionID, Valid: true}
+	chainHash, err := replayHash(layout.EventsJSONL)
+	result.EventChain = err == nil && chainHash == receipt.Verification.EventChainHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	manifestHash, err := fileHash(layout.ManifestJSON)
+	result.ManifestHash = err == nil && manifestHash == receipt.Verification.ManifestHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	finalPatchHash, err := fileHash(layout.FinalPatch)
+	result.FinalDiffHash = err == nil && finalPatchHash == receipt.Verification.DiffHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	receiptHash, err := unsignedReceiptHash(receipt)
+	result.ReceiptHash = err == nil && receiptHash == receipt.Verification.ReceiptHash
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+	rejectUnknownReceiptFields(&result, decoded.UnknownFields)
+
+	signature := receipt.Verification.Signature
+	if layout.ReceiptSignature != "" {
+		signatureData, err := readFile(layout.ReceiptSignature)
+		if err == nil {
+			if trimmed := bytes.TrimSpace(signatureData); len(trimmed) > 0 {
+				signature = string(trimmed)
+			}
+		} else {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("read receipt signature: %v", err))
+		}
+	}
+
+	publicKey, signedBy, err := resolvePublicKey(receipt.Verification, keyDir)
+	if err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	} else {
+		payload, payloadErr := signaturePayload(receipt.Verification)
+		if payloadErr != nil {
+			result.Warnings = append(result.Warnings, payloadErr.Error())
+		} else {
+			result.Signature = signing.Verify(publicKey, payload, signature)
+			result.SignedBy = signedBy
+		}
+	}
+	result.Valid = result.EventChain && result.Signature && result.FinalDiffHash && result.ManifestHash && result.ReceiptHash
+
+	return result, receipt.Verification, nil
 }
 
 func readFile(path string) ([]byte, error) {

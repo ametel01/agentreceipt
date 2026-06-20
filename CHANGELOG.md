@@ -12,6 +12,7 @@ and this project follows semantic versioning.
 - Deepened event-log append handling behind a transaction interface so session start, stop, provider import, manual markers, and filesystem watcher appends share one locked replay-and-append path.
 - Deepened Provider Evidence handling behind a typed module so Codex and Claude adapters construct the shared event-log shape in one place, while review, session confidence, and watch token baselines read provider commands, results, risk signals, labels, and token totals through one interface.
 - Refactored replay-safe evidence extraction into `internal/evidence` so reviewer replay and future verifier-facing replay can reuse deterministic event-derived summary, confidence, risk, gaps, and timeline logic without invoking git commands.
+- Added artifact-only receipt verification in `internal/receipt` so bundle and local verification share a single artifact-hash/signature validation path while local checks continue to include workspace diff parity validation.
 
 ### Added
 
