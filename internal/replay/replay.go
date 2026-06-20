@@ -1,12 +1,15 @@
 package replay
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -253,11 +256,88 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		Artifacts:     artifacts,
 	}
 
-	if options.BundleDir != "" {
-		_ = options.BundleDir
+	return report, nil
+}
+
+// WriteBundle writes a portable replay bundle at options.BundleDir and returns
+// the report written to replay.json.
+func WriteBundle(ctx context.Context, options Options) (Report, error) {
+	if strings.TrimSpace(options.BundleDir) == "" {
+		return Report{}, errors.New("bundle path is required")
+	}
+	if options.SessionID == "" {
+		return Report{}, errors.New("session ID is required")
 	}
 
-	return report, nil
+	repoRoot, err := gitRoot(ctx, options.RepoPath)
+	if err != nil {
+		return Report{}, err
+	}
+	layout, err := storage.NewLayout(repoRoot, options.SessionID)
+	if err != nil {
+		return Report{}, err
+	}
+
+	report, err := Build(ctx, options)
+	if err != nil {
+		return Report{}, err
+	}
+
+	if err := os.MkdirAll(options.BundleDir, 0o750); err != nil {
+		return Report{}, fmt.Errorf("create bundle directory: %w", err)
+	}
+
+	artifacts := make([]Artifact, 0, 8)
+	requiredArtifacts := []struct {
+		source string
+		rel    string
+		name   string
+	}{
+		{source: layout.EventsJSONL, rel: storage.EventsFile, name: storage.EventsFile},
+		{source: layout.ReceiptJSON, rel: storage.ReceiptJSONFile, name: storage.ReceiptJSONFile},
+		{source: layout.ManifestJSON, rel: storage.ManifestFile, name: storage.ManifestFile},
+		{source: layout.FinalPatch, rel: filepath.Join(storage.DiffsDir, storage.FinalPatchFile), name: storage.FinalPatchFile},
+	}
+	for _, artifactInfo := range requiredArtifacts {
+		artifactPath := filepath.Join(options.BundleDir, artifactInfo.rel)
+		artifact, err := copyArtifactFile(artifactInfo.source, artifactPath, artifactInfo.name, artifactInfo.rel)
+		if err != nil {
+			return Report{}, err
+		}
+		artifacts = append(artifacts, artifact)
+	}
+
+	traceArtifacts, err := copyCodexTraces(layout.ProviderCodexTraces, options.BundleDir)
+	if err != nil {
+		return Report{}, err
+	}
+	artifacts = append(artifacts, traceArtifacts...)
+
+	report.Artifacts = sortArtifacts(artifacts)
+
+	replayPayloadWithoutReplay, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return Report{}, err
+	}
+	replayArtifact := Artifact{
+		Name:   "replay.json",
+		Path:   "replay.json",
+		Hash:   "sha256:" + hashHex(replayPayloadWithoutReplay),
+		Exists: true,
+	}
+	replayReport := report
+	replayReport.Artifacts = append(append([]Artifact(nil), report.Artifacts...), replayArtifact)
+	replayReport.Artifacts = sortArtifacts(replayReport.Artifacts)
+	replayPayload, err := json.MarshalIndent(replayReport, "", "  ")
+	if err != nil {
+		return Report{}, err
+	}
+	replayPath := filepath.Join(options.BundleDir, "replay.json")
+	if err := writeAtomic(replayPath, append(replayPayload, '\n')); err != nil {
+		return Report{}, err
+	}
+
+	return replayReport, nil
 }
 
 func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string) {
@@ -800,6 +880,114 @@ func buildArtifacts(layout storage.Layout) []Artifact {
 		artifact(filepath.Base(layout.Session), "manifest.json", layout.ManifestJSON),
 		artifact(filepath.Base(layout.Session), filepath.Join("diffs", "final.patch"), layout.FinalPatch),
 	}
+}
+
+func copyArtifactFile(source, destination, name, path string) (Artifact, error) {
+	root, err := os.OpenRoot(filepath.Dir(source))
+	if err != nil {
+		return Artifact{}, fmt.Errorf("open artifact directory %q: %w", filepath.Dir(source), err)
+	}
+	defer func() { _ = root.Close() }()
+
+	data, err := root.ReadFile(filepath.Base(source))
+	if err != nil {
+		return Artifact{}, fmt.Errorf("read artifact %q: %w", source, err)
+	}
+	if err := writeAtomic(destination, data); err != nil {
+		return Artifact{}, fmt.Errorf("write artifact %q: %w", destination, err)
+	}
+
+	return Artifact{
+		Name:   name,
+		Path:   filepath.ToSlash(path),
+		Hash:   "sha256:" + hashHex(data),
+		Exists: true,
+	}, nil
+}
+
+func copyCodexTraces(traceRoot, bundleRoot string) ([]Artifact, error) {
+	_, err := os.Stat(traceRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("check codex trace directory: %w", err)
+	}
+
+	artifacts := make([]Artifact, 0)
+	err = filepath.WalkDir(traceRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		relative, err := filepath.Rel(traceRoot, path)
+		if err != nil {
+			return fmt.Errorf("compute trace artifact path: %w", err)
+		}
+		rel := filepath.ToSlash(relative)
+		destination := filepath.Join(bundleRoot, storage.ProviderDir, storage.ProviderCodexDir, storage.TracesDir, rel)
+		artifactPath := filepath.ToSlash(filepath.Join(storage.ProviderDir, storage.ProviderCodexDir, storage.TracesDir, rel))
+		artifact, err := copyArtifactFile(path, destination, artifactPath, artifactPath)
+		if err != nil {
+			return err
+		}
+		artifacts = append(artifacts, artifact)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("copy codex traces: %w", err)
+	}
+
+	return sortArtifacts(artifacts), nil
+}
+
+func writeAtomic(destination string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	temp, err := os.CreateTemp(filepath.Dir(destination), ".agentreceipt-")
+	if err != nil {
+		return fmt.Errorf("create temp file for %q: %w", destination, err)
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+	if _, err := io.Copy(temp, bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("write temp file for %q: %w", destination, err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temp file for %q: %w", destination, err)
+	}
+	if err := os.Chmod(tempPath, 0o600); err != nil {
+		return fmt.Errorf("chmod temp file for %q: %w", destination, err)
+	}
+	if err := os.Rename(tempPath, destination); err != nil {
+		return fmt.Errorf("write %q: %w", destination, err)
+	}
+	return nil
+}
+
+func sortArtifacts(artifacts []Artifact) []Artifact {
+	sorted := append([]Artifact(nil), artifacts...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Path == sorted[j].Path {
+			return sorted[i].Name < sorted[j].Name
+		}
+		return sorted[i].Path < sorted[j].Path
+	})
+	return sorted
+}
+
+func hashHex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func artifact(sessionRoot string, name string, path string) Artifact {

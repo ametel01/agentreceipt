@@ -15,9 +15,9 @@
 - [ ] Step 8: Final Replay Acceptance Audit
 
 ## Status
-- Current step: Step 5 (Replay bundles)
-- Last completed step: Step 4
-- Next step: Step 5
+- Current step: Step 6 (End-to-end coverage)
+- Last completed step: Step 5
+- Next step: Step 6
 - Rule: `PROGRESS.md` must be updated after each completed step with completed scope, validation output, commit reference, current status, and next step before the step’s commit.
 
 ## Update Log
@@ -119,3 +119,18 @@
   - Added `Unreleased`/`Added` entry for the replay CLI command surface and JSON output contract.
 - Commit reference: `2d3a652`
 - Next step: Step 5
+
+### 2026-06-21
+- Status: Step 5 completed.
+- Scope:
+  - Added `WriteBundle(ctx, options)` in `internal/replay` to build replay reports and materialize portable replay bundles.
+  - Wired `agentreceipt replay --bundle <path>` in `cmd/root.go` and added bundle generation test coverage in `cmd/root_test.go`.
+  - Added portable bundle regression tests in `internal/replay/replay_test.go` for artifact copy/hash behavior, optional trace handling, required artifact failures, and raw provider log exclusion.
+- Validation:
+  - `go test ./internal/replay ./cmd` passed.
+  - `go test ./...` passed.
+  - `make verify` failed at the coverage gate: total `78.6%` (threshold `80.0%`).
+- Changelog update:
+  - Added `Unreleased`/`Added` entry for portable replay bundle output.
+- Commit reference: `a5eadc8`
+- Next step: Step 6

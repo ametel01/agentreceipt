@@ -19,6 +19,7 @@ and this project follows semantic versioning.
 - Added replay implementation progress tracking (`PROGRESS.md`) and committed the first planning-control milestone for verifier-facing replay work.
 - Added verifier-facing replay report construction in `internal/replay`, including command pairing, command risk mapping, evidence gaps, risk-to-evidence references, and artifact hash metadata.
 - Added `agentreceipt replay` CLI command to emit machine-readable verifier JSON with required `--session` validation and JSON output mode.
+- Added portable replay bundle generation for `agentreceipt replay` via `--bundle`, including required artifact packaging, normalized Codex trace copying, and `replay.json` manifest emission.
 
 ## [0.6.0] - 2026-06-18
 

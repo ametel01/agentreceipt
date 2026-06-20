@@ -2,6 +2,8 @@ package replay
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -420,6 +422,140 @@ func TestBuildSortsTimelineAndCommandEvidenceRefs(t *testing.T) {
 	}
 }
 
+func TestWriteBundleCopiesArtifactsAndHashes(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	tracePath := filepath.Join(layout.ProviderCodexTraces, "test.trace.jsonl")
+	if err := os.MkdirAll(filepath.Dir(tracePath), 0o750); err != nil {
+		t.Fatalf("mkdir traces: %v", err)
+	}
+	if err := os.WriteFile(tracePath, []byte("trace payload\n"), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	bundleDir := t.TempDir()
+
+	_, err := WriteBundle(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+		BundleDir: bundleDir,
+	})
+	if err != nil {
+		t.Fatalf("WriteBundle() error = %v", err)
+	}
+
+	for _, path := range []string{
+		"replay.json",
+		storage.EventsFile,
+		storage.ReceiptJSONFile,
+		storage.ManifestFile,
+		filepath.Join(storage.DiffsDir, storage.FinalPatchFile),
+		filepath.Join(storage.ProviderDir, storage.ProviderCodexDir, storage.TracesDir, "test.trace.jsonl"),
+	} {
+		if _, err := os.Stat(filepath.Join(bundleDir, path)); err != nil {
+			t.Fatalf("bundle path %q missing: %v", path, err)
+		}
+	}
+
+	bundlePayload, err := os.ReadFile(filepath.Join(bundleDir, "replay.json"))
+	if err != nil {
+		t.Fatalf("read bundle replay.json: %v", err)
+	}
+	var bundledReport Report
+	if err := json.Unmarshal(bundlePayload, &bundledReport); err != nil {
+		t.Fatalf("unmarshal bundled report: %v", err)
+	}
+	if bundledReport.SessionID != sessionID {
+		t.Fatalf("bundled session id = %q", bundledReport.SessionID)
+	}
+	if len(bundledReport.Artifacts) == 0 {
+		t.Fatalf("bundled report has no artifacts")
+	}
+	for _, artifact := range bundledReport.Artifacts {
+		if artifact.Path == "replay.json" {
+			if artifact.Hash == "" {
+				t.Fatalf("replay artifact hash should be present")
+			}
+			continue
+		}
+		sourcePath := filepath.Join(bundleDir, filepath.FromSlash(artifact.Path))
+		if _, err := os.Stat(sourcePath); err != nil {
+			t.Fatalf("artifact path %q not found: %v", sourcePath, err)
+		}
+		if artifact.Hash != replayFileHash(sourcePath) {
+			t.Fatalf("artifact hash mismatch for %q: %q != %q", artifact.Path, artifact.Hash, replayFileHash(sourcePath))
+		}
+	}
+}
+
+func TestWriteBundleFailsForMissingRequiredArtifacts(t *testing.T) {
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	if err := os.Remove(layout.ManifestJSON); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove manifest: %v", err)
+	}
+	bundleDir := t.TempDir()
+
+	if _, err := WriteBundle(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+		BundleDir: bundleDir,
+	}); err == nil {
+		t.Fatal("WriteBundle() returned nil error with missing required artifact")
+	}
+}
+
+func TestWriteBundleSkipsMissingOptionalTraces(t *testing.T) {
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	if err := os.RemoveAll(layout.ProviderCodexTraces); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove traces: %v", err)
+	}
+	bundleDir := t.TempDir()
+
+	report, err := WriteBundle(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+		BundleDir: bundleDir,
+	})
+	if err != nil {
+		t.Fatalf("WriteBundle() error = %v", err)
+	}
+	if firstArtifact(report.Artifacts, "replay.json") == nil {
+		t.Fatal("replay artifact missing")
+	}
+	if _, err := os.Stat(filepath.Join(bundleDir, storage.ProviderDir, storage.ProviderCodexDir, storage.TracesDir)); err == nil {
+		entries, readErr := os.ReadDir(filepath.Join(bundleDir, storage.ProviderDir, storage.ProviderCodexDir, storage.TracesDir))
+		if readErr != nil {
+			t.Fatalf("read copied traces dir: %v", readErr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("copied traces directory should be empty when no source traces exist: %d", len(entries))
+		}
+	}
+}
+
+func TestWriteBundleExcludesRawProviderLogs(t *testing.T) {
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	if err := os.MkdirAll(filepath.Dir(layout.CodexImportedSession), 0o750); err != nil {
+		t.Fatalf("make provider dir: %v", err)
+	}
+	if err := os.WriteFile(layout.CodexImportedSession, []byte("raw-session-log\n"), 0o600); err != nil {
+		t.Fatalf("write raw codex log: %v", err)
+	}
+	bundleDir := t.TempDir()
+
+	if _, err := WriteBundle(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+		BundleDir: bundleDir,
+	}); err != nil {
+		t.Fatalf("WriteBundle() error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(bundleDir, storage.ProviderDir, storage.ProviderCodexDir, storage.CodexImportedSession)); err == nil {
+		t.Fatal("raw provider imported-session.jsonl should not be included in bundle")
+	}
+}
+
 func finalizedReplaySession(t *testing.T, events []model.Event, beforeStop func(string)) (repo string, sessionID string, layout storage.Layout) {
 	t.Helper()
 
@@ -534,6 +670,16 @@ func hasSecretLeak(reasons []Risk, secret string) bool {
 	}
 
 	return false
+}
+
+func replayFileHash(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(data)
+
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func firstArtifact(artifacts []Artifact, name string) *Artifact {

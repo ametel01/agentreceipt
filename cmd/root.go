@@ -1025,7 +1025,12 @@ func newReplayCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := replay.Build(cmd.Context(), options)
+			var report replay.Report
+			if options.BundleDir != "" {
+				report, err = replay.WriteBundle(cmd.Context(), options)
+			} else {
+				report, err = replay.Build(cmd.Context(), options)
+			}
 			if err != nil {
 				return err
 			}
@@ -1036,6 +1041,7 @@ func newReplayCommand() *cobra.Command {
 		},
 	}
 	replayCmd.Flags().String("session", "", "Replay a specific finalized session ID")
+	replayCmd.Flags().String("bundle", "", "Write replay artifacts to a bundle directory")
 	replayCmd.Flags().Bool("json", false, "Render replay output as JSON")
 
 	return replayCmd
@@ -1557,8 +1563,11 @@ func replayOptionsFromCommand(cmd *cobra.Command) (replay.Options, error) {
 	if err := storage.ValidateSessionID(sessionID); err != nil {
 		return replay.Options{}, err
 	}
-
-	return replay.Options{RepoPath: repoPath, SessionID: sessionID}, nil
+	bundleDir, err := cmd.Flags().GetString("bundle")
+	if err != nil {
+		return replay.Options{}, err
+	}
+	return replay.Options{RepoPath: repoPath, SessionID: sessionID, BundleDir: bundleDir}, nil
 }
 
 func repoRootFromCommand(cmd *cobra.Command) (string, error) {
