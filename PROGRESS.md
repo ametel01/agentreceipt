@@ -1,201 +1,30 @@
-# Replay Implementation Progress
+# Replay-Fix Plan Progress
 
-## Source Documents
-- `/Users/alexmetelli/source/agentreceipt/docs/REPLAY_SPECS.md`
-
-## Plan
-- [x] Step 0: Progress and Changelog Tracking Setup
-- [x] Step 1: Extract Replay-Safe Evidence Analysis
-- [x] Step 2: Add Artifact-Only Receipt Verification
-- [x] Step 3: Build Replay JSON Model and Session Builder
-- [x] Step 4: Add the `agentreceipt replay` CLI Command
-- [x] Step 5: Implement Portable Replay Bundles
-- [x] Step 6: Add End-to-End Replay Coverage and Smoke Checks
-- [x] Step 7: Document Replay Usage and Contracts
-- [x] Step 8: Final Replay Acceptance Audit
+Plan source: `PLAN.md` (section "Replay Fix" implementation plan)
 
 ## Status
-- Current step: Plan complete
-- Last completed step: Step 8
-- Next step: Plan complete
-- Rule: `PROGRESS.md` must be updated after each completed step with completed scope, validation output, commit reference, current status, and next step before the step’s commit.
 
-## Update Log
-
-### 2026-06-21
-- Status: Step 0 completed.
-- Scope: Created `PROGRESS.md` for replay implementation tracking.
-- Validation:
-  - `make verify` (initial baseline run) passed.
-- Changelog update:
-  - Added `Unreleased`/`Added` entry for progress tracking setup.
-- Commit reference: `4979234`
+- Current status: Step 0 complete
 - Next step: Step 1
+- Last updated: 2026-06-21T15:00:00Z
+- Validation command outcomes:
+  - `test -f PROGRESS.md`
+  - `test -f CHANGELOG.md`
+  - `rg -n "Replay Fix|Step 1|Step 6" PROGRESS.md`
+  - `rg -n "^# Changelog|^## \\[Unreleased\\]" CHANGELOG.md`
+  - All checks pass.
 
-### 2026-06-21
-- Status: Step 1 completed.
-- Scope:
-  - Added `internal/evidence/evidence.go` with replay-safe evidence extraction for summary/confidence/risk/focus/gaps/timeline and command pairing helpers.
-  - Updated `internal/review/review.go` to delegate these pure computations to `internal/evidence`.
-  - Extended `internal/providerevidence` command-result parsing with exit code/stdout/truncation/failure metadata.
-  - Added focused regression coverage in `internal/evidence/evidence_test.go` and `internal/providerevidence/providerevidence_test.go`.
-- Validation:
-  - `make fmt` passed.
-  - `make fmt-check` passed.
-  - `make lint` passed.
-  - `make test` passed.
-  - `make test-race` passed.
-  - `make security` passed.
-  - `make build` passed.
-  - `make smoke` passed.
-  - `make coverage` failed: total coverage 78.8% (required 80.0%), blocking `make verify`.
-  - `make verify` failed due coverage gate.
-- Changelog update:
-  - Added `Unreleased`/`Changed` entry for replay-safe evidence extraction refactor.
-- Commit reference: `2e5316d`
-- Next step: Step 2
+## Step Checklist
 
-### 2026-06-21
-- Status: Step 2 completed.
-- Scope:
-  - Added `verifyArtifacts(layout, keyDir, resolver)` in `internal/receipt/receipt.go` to centralize artifact-only verification.
-  - Updated `Verify` to reuse shared artifact validation, preserving current live-workspace diff comparison behavior.
-  - Updated `VerifyBundle` to use the shared verification path with embedded signer resolution.
-  - Expanded `internal/receipt/receipt_test.go` bundle tampering matrix with cases for tampered events, manifest, final patch, embedded signer material, receipt hash, and missing verification signature material.
-- Validation:
-  - `make fmt` passed.
-  - `make fmt-check` passed.
-  - `make lint` passed.
-  - `make test` passed.
-  - `make test-race` passed.
-  - `make security` passed.
-  - `make build` passed.
-  - `make smoke` passed.
-  - `make coverage` failed: total coverage 77.9% (required 80.0%), blocking `make verify`.
-  - `make verify` failed due coverage gate.
-- Changelog update:
-  - Added `Unreleased`/`Changed` entry for artifact-only receipt verification.
-- Commit reference: `898df5a`
-- Next step: Step 3
+- [x] Step 0: Progress and Changelog Tracking Setup
+- [ ] Step 1: Baseline Replay Characterization and Binary Rebuild
+- [ ] Step 2: Correct Codex Command Status Parsing
+- [ ] Step 3: Derive Replay Files From Final Patch
+- [ ] Step 4: Limit Replay Gaps to Factual Evidence Issues
+- [ ] Step 5: Add Component-Level Verification Details
+- [ ] Step 6: Document and Smoke-Test Evaluator Replay Contract
 
-### 2026-06-21
-- Status: Step 3 completed.
-- Scope:
-  - Added `internal/replay/replay.go` with verifier-facing JSON model/types, evidence ingestion from session artifacts, command pairing/gaps/report construction, risk mapping, and artifact hashing.
-  - Added `internal/replay/replay_test.go` regression suite for finalized sessions, failed command outputs, unpaired command handling, missing evidence, tamper detection, non-finalized sessions, stable ordering, and redaction checks.
-  - Ensured replay report construction does not invoke command execution or scoring and remains resilient when evidence is incomplete.
-- Validation:
-  - `make fmt` passed.
-  - `make fmt-check` passed.
-  - `make lint` passed.
-  - `make test` passed.
-  - `make test-race` passed.
-  - `make security` passed.
-  - `make build` passed.
-  - `make smoke` passed.
-  - `make coverage` failed (total 77.9%; threshold remains 80.0%).
-  - `make verify` failed on the coverage gate.
-- Changelog update:
-  - Added `Unreleased`/`Added` entry for the initial verifier replay JSON model and command builder.
-- Commit reference: `e6483ae`
-- Next step: Step 4
+## Activity Log
 
-### 2026-06-21
-- Status: Step 4 completed.
-- Scope:
-  - Added `newReplayCommand` in `cmd/root.go` and registered `replay` in the root command tree and help text.
-- Validation:
-  - `make fmt` passed.
-  - `make fmt-check` passed.
-  - `make lint` passed.
-  - `make test` passed.
-  - `make test-race` passed.
-  - `make security` passed.
-  - `make build` passed.
-  - `make smoke` passed.
-  - `make coverage` failed: total coverage 77.9% (required 80.0%), blocking `make verify`.
-  - `make verify` failed on the coverage gate.
-- Changelog update:
-  - Added `Unreleased`/`Added` entry for the replay CLI command surface and JSON output contract.
-- Commit reference: `2d3a652`
-- Next step: Step 5
-
-### 2026-06-21
-- Status: Step 5 completed.
-- Scope:
-  - Added `WriteBundle(ctx, options)` in `internal/replay` to build replay reports and materialize portable replay bundles.
-  - Wired `agentreceipt replay --bundle <path>` in `cmd/root.go` and added bundle generation test coverage in `cmd/root_test.go`.
-  - Added portable bundle regression tests in `internal/replay/replay_test.go` for artifact copy/hash behavior, optional trace handling, required artifact failures, and raw provider log exclusion.
-- Validation:
-  - `go test ./internal/replay ./cmd` passed.
-  - `go test ./...` passed.
-  - `make verify` failed at the coverage gate: total `78.6%` (threshold `80.0%`).
-- Changelog update:
-  - Added `Unreleased`/`Added` entry for portable replay bundle output.
-- Commit reference: `e8a3d48`
-- Next step: Step 6
-
-### 2026-06-21
-- Status: Step 6 completed.
-- Scope:
-  - Extended `scripts/smoke.sh` to execute replay end-to-end in JSON mode and bundle mode for the active smoke session.
-  - Added replay output assertions for JSON shape, session correlation, command evidence, valid verification state, artifact-backed output, and absence of raw provider log text.
-  - Added explicit assertion that `agentreceipt replay` fails when `--session` is omitted.
-  - Added bundle existence assertions for `replay.json`, `receipt.json`, `manifest.json`, `events.jsonl`, and `diffs/final.patch`.
-- Validation:
-  - `make fmt` passed.
-  - `make fmt-check` passed.
-  - `make lint` passed.
-  - `make test` passed.
-  - `make test-race` passed.
-  - `make security` passed.
-  - `make build` passed.
-  - `make smoke` passed.
-  - `make coverage` failed: total coverage 78.6% (required 80.0%), blocking `make verify`.
-  - `make verify` failed at coverage gate with the same total coverage shortfall.
-- Changelog update:
-  - Added `Unreleased`/`Added` entry for replay smoke coverage and explicit bundle verification.
-- Commit reference: `f2d461b`
-- Next step: Step 7
-
-### 2026-06-21
-- Status: Step 7 completed.
-- Scope:
-  - Documented replay usage and contracts in `README.md`, `docs/PRD.md`, and `docs/TECH_SPEC.md`.
-  - Added explicit verifier workflow docs for `agentreceipt replay --session <id>` including required explicit-session behavior and artifact-only, non-reexecution semantics.
-- Validation:
-  - `make fmt` passed.
-  - `make fmt-check` passed.
-  - `make lint` passed.
-  - `make test` passed.
-  - `make test-race` passed.
-  - `make security` passed.
-  - `make build` passed.
-  - `make smoke` passed.
-  - `make coverage` failed: total coverage 78.6% (required 80.0%), blocking `make verify`.
-  - `make verify` failed at the same coverage gate.
-- Changelog update:
-  - Added `Unreleased`/`Added` entry for replay documentation updates.
-- Commit reference: `32f1fe7`
-- Next step: Step 8
-
-### 2026-06-21
-- Status: Step 8 completed.
-- Scope:
-  - Audited every acceptance criterion in `docs/REPLAY_SPECS.md` against current implementation.
-  - Verified replay construction remains artifact-only (no command replay execution, no patch reapplication, no model calls, no workspace mutation).
-- Validation:
-  - `make fmt` passed.
-  - `make fmt-check` passed.
-  - `make lint` passed.
-  - `make test` passed.
-  - `make test-race` passed.
-  - `go test ./internal/replay ./cmd` passed.
-  - `make build` passed (via `make verify` pipeline).
-  - `make smoke` passed.
-  - `make coverage` failed: total coverage 77.6% in `internal/replay` (required 80.0%), blocking `make verify`.
-  - `make verify` failed at the same coverage gate.
-- Changelog update:
-  - No user-facing changes; added acceptance-test coverage for replay tamper coverage across all required artifacts.
-- Commit reference: `ac5e004`
-- Next step: Plan complete
+- Created this progress file and aligned it with `PLAN.md`.
+- Completed baseline validation checks from Step 0.
