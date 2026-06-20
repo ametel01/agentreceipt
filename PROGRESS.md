@@ -197,5 +197,5 @@
   - `make verify` failed at the same coverage gate.
 - Changelog update:
   - No user-facing changes; added acceptance-test coverage for replay tamper coverage across all required artifacts.
-- Commit reference: `8f47b61`
+- Commit reference: `ac5e004`
 - Next step: Plan complete
