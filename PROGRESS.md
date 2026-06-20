@@ -52,7 +52,7 @@
   - `make verify` failed due coverage gate.
 - Changelog update:
   - Added `Unreleased`/`Changed` entry for replay-safe evidence extraction refactor.
-- Commit reference: `2d3a652`
+- Commit reference: `2e5316d`
 - Next step: Step 2
 
 ### 2026-06-21
@@ -75,7 +75,7 @@
   - `make verify` failed due coverage gate.
 - Changelog update:
   - Added `Unreleased`/`Changed` entry for artifact-only receipt verification.
-- Commit reference: `dc9398a`
+- Commit reference: `898df5a`
 - Next step: Step 3
 
 ### 2026-06-21
@@ -117,5 +117,5 @@
   - `make verify` failed on the coverage gate.
 - Changelog update:
   - Added `Unreleased`/`Added` entry for the replay CLI command surface and JSON output contract.
-- Commit reference: pending
+- Commit reference: `2d3a652`
 - Next step: Step 5
