@@ -9,7 +9,7 @@
 - [x] Step 2: Add Artifact-Only Receipt Verification
 - [x] Step 3: Build Replay JSON Model and Session Builder
 - [x] Step 4: Add the `agentreceipt replay` CLI Command
-- [ ] Step 5: Implement Portable Replay Bundles
+- [x] Step 5: Implement Portable Replay Bundles
 - [ ] Step 6: Add End-to-End Replay Coverage and Smoke Checks
 - [ ] Step 7: Document Replay Usage and Contracts
 - [ ] Step 8: Final Replay Acceptance Audit
