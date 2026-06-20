@@ -185,7 +185,7 @@ func TestBuildIncludesUnpairedCommandResultGap(t *testing.T) {
 	}
 }
 
-func TestBuildRedactsSecretsFromCommandOutputsAndRiskMessages(t *testing.T) {
+func TestBuildRedactsCommandOutputWithoutReplayingRisk(t *testing.T) {
 	t.Parallel()
 
 	repo, sessionID, _ := finalizedReplaySession(
@@ -242,19 +242,64 @@ func TestBuildRedactsSecretsFromCommandOutputsAndRiskMessages(t *testing.T) {
 	if !strings.Contains(report.Commands[0].OutputSummary, "[REDACTED]") {
 		t.Fatalf("command output summary not redacted: %q", report.Commands[0].OutputSummary)
 	}
-	if len(report.Risks) == 0 {
+	if len(report.Risks) != 0 {
 		t.Fatalf("risks = %v", report.Risks)
 	}
-	if hasSecretLeak(report.Risks, "sk-really-secret-token") {
-		t.Fatalf("risk message leaks secret: %q", report.Risks)
+}
+
+func TestBuildDoesNotExposeProviderRiskSignalRawField(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_secret",
+						"command": "cat .env",
+					},
+					"risk_signals": []any{
+						map[string]any{
+							"level":      string(model.RiskHigh),
+							"signal":     "secret_access",
+							"command":    "cat .env",
+							"details":    "token=sk-really-secret-token",
+							"confidence": string(model.ConfidenceHigh),
+						},
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":         "call_secret",
+					"command":         "cat .env",
+					"status":          "failed",
+					"failed_reason":   "access denied for token=sk-really-secret-token",
+					"stderr_or_error": "authorization=Bearer sk-super-secret",
+				},
+			},
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
 	}
-	if len(report.Commands[0].RiskSignals) == 0 || strings.Contains(report.Commands[0].RiskSignals[0].Message, "sk-really-secret-token") {
-		t.Fatalf("command risk signal not redacted: %+v", report.Commands[0].RiskSignals)
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
 	}
-	for _, signal := range report.Commands[0].RiskSignals {
-		if !strings.Contains(signal.Message, "[REDACTED]") {
-			t.Fatalf("command risk signal not redacted: %+v", signal)
-		}
+	if strings.Contains(string(raw), "\"risk_signals\"") {
+		t.Fatalf("replay report should not expose raw risk_signals in JSON: %s", raw)
 	}
 }
 
@@ -718,16 +763,6 @@ func writeSessionStateForTest(path string, state session.State) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
-}
-
-func hasSecretLeak(reasons []Risk, secret string) bool {
-	for _, reason := range reasons {
-		if strings.Contains(reason.Message, secret) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func replayFileHash(path string) string {

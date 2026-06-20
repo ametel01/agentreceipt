@@ -106,18 +106,10 @@ type Command struct {
 	Kind            string           `json:"kind"`
 	Status          string           `json:"status"`
 	ExitCode        *int             `json:"exit_code,omitempty"`
-	RiskSignals     []RiskSignal     `json:"risk_signals"`
 	OutputSummary   string           `json:"output_summary"`
 	StdoutTruncated bool             `json:"stdout_truncated"`
 	Confidence      model.Confidence `json:"confidence"`
 	EvidenceRefs    []string         `json:"evidence_refs"`
-}
-
-type RiskSignal struct {
-	Code       string           `json:"code"`
-	Level      model.RiskLevel  `json:"level"`
-	Confidence model.Confidence `json:"confidence"`
-	Message    string           `json:"message,omitempty"`
 }
 
 type File struct {
@@ -145,13 +137,11 @@ type Artifact struct {
 }
 
 type commandAttempt struct {
-	command     string
-	rawCommand  string
-	kind        string
-	status      string
-	callID      string
-	seq         int64
-	riskSignals []RiskSignal
+	command string
+	kind    string
+	status  string
+	callID  string
+	seq     int64
 }
 
 type commandResultMeta struct {
@@ -201,7 +191,6 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	cfg := config.Default()
 	evidenceSummary := evidence.Summary(events, cfg)
 	evidenceConfidence := evidence.Confidence(events)
-	evidenceRisk := evidence.Risk(evidenceSummary, state.Warnings, events, cfg)
 	gaps = append(gaps, evidence.Gaps(evidenceSummary, evidenceConfidence, state.Warnings, cfg)...)
 
 	finalPatch, finalPatchErr := readText(layout.FinalPatch)
@@ -214,7 +203,6 @@ func Build(ctx context.Context, options Options) (Report, error) {
 
 	files := buildFiles(evidenceSummary.ChangedFiles, finalPatch, events)
 	timeline := buildTimeline(events, evidenceConfidence)
-	risks := buildRisks(evidenceRisk.Reasons, commands, files)
 
 	verification, verifyWarnings := buildVerification(layout, eventsErr == nil)
 	gaps = append(gaps, verifyWarnings...)
@@ -224,7 +212,6 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	}
 
 	artifacts := buildArtifacts(layout)
-	tasks := buildVerifierTasks(evidenceRisk, evidenceSummary, commands, files, gaps)
 
 	report := Report{
 		SchemaVersion: model.SchemaVersion,
@@ -245,14 +232,14 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			TestDetected:      evidenceSummary.TestDetected,
 			LintDetected:      evidenceSummary.LintDetected,
 			TypecheckDetected: evidenceSummary.TypecheckDetected,
-			FinalRisk:         evidenceRisk.Level,
+			FinalRisk:         model.RiskInfo,
 		},
 		Timeline:      timeline,
 		Commands:      commands,
 		Files:         files,
-		Risks:         risks,
+		Risks:         nil,
 		Gaps:          uniqueSorted(gaps),
-		VerifierTasks: uniqueSorted(tasks),
+		VerifierTasks: uniqueSorted(gaps),
 		Artifacts:     artifacts,
 	}
 
@@ -346,13 +333,11 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 	for _, event := range events {
 		if attempt, ok := providerevidence.CommandAttemptFromEvent(event); ok {
 			attempts = append(attempts, commandAttempt{
-				command:     evidence.CommandSummary(attempt.Command),
-				rawCommand:  attempt.Command,
-				kind:        evidence.CommandKind(attempt.Command, cfg),
-				status:      "unknown",
-				callID:      attempt.CallID,
-				seq:         event.Seq,
-				riskSignals: toRiskSignals(providerevidence.RiskSignalsFromEvent(event)),
+				command: evidence.CommandSummary(attempt.Command),
+				kind:    evidence.CommandKind(attempt.Command, cfg),
+				status:  "unknown",
+				callID:  attempt.CallID,
+				seq:     event.Seq,
 			})
 			continue
 		}
@@ -382,7 +367,6 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 			Command:      redact(attempt.command),
 			Kind:         attempt.kind,
 			Status:       status,
-			RiskSignals:  attempt.riskSignals,
 			Confidence:   model.ConfidenceMedium,
 			EvidenceRefs: []string{evidenceRef(attempt.seq)},
 		}
@@ -520,47 +504,6 @@ func commandOutputSummary(result commandResultMeta) string {
 	return truncate(strings.Join(parts, "; "), maxOutputSummaryRunes)
 }
 
-func toRiskSignals(signals []providerevidence.RiskSignal) []RiskSignal {
-	output := make([]RiskSignal, 0, len(signals))
-	seen := map[string]bool{}
-	for _, signal := range signals {
-		if signal.Level == "" {
-			continue
-		}
-		code := "provider_risk_" + evidence.RiskCodeFragment(signal.Signal)
-		message := signal.Details
-		if message == "" {
-			message = "provider risk: " + signal.Signal
-		}
-		if signal.Command != "" {
-			summary := evidence.CommandSummary(signal.Command)
-			if message == "" {
-				message = "provider risk in command: " + summary
-			} else {
-				message = message + " in command: " + summary
-			}
-		}
-		message = redact(truncate(message, 120))
-		finger := code + "\n" + message
-		if seen[finger] {
-			continue
-		}
-		seen[finger] = true
-		confidence := signal.Confidence
-		if confidence == "" {
-			confidence = model.ConfidenceMedium
-		}
-		output = append(output, RiskSignal{
-			Code:       code,
-			Level:      signal.Level,
-			Confidence: confidence,
-			Message:    message,
-		})
-	}
-
-	return output
-}
-
 func buildFiles(changed []model.ChangedFile, finalPatch string, events []model.Event) []File {
 	fileRefs := map[string][]string{}
 	for _, event := range events {
@@ -659,148 +602,6 @@ func timelineConfidence(event model.Event, confidence model.CaptureConfidence) m
 	default:
 		return model.ConfidenceNone
 	}
-}
-
-func buildRisks(reasons []model.RiskReason, commands []Command, files []File) []Risk {
-	commandRefs := map[string][]string{}
-	for _, command := range commands {
-		if command.Command == "" {
-			continue
-		}
-		commandRefs[command.Command] = append(commandRefs[command.Command], command.EvidenceRefs...)
-		commandRefs[evidence.CommandSummary(command.Command)] = append(commandRefs[evidence.CommandSummary(command.Command)], command.EvidenceRefs...)
-	}
-	fileRefs := map[string][]string{}
-	for _, file := range files {
-		if file.Path == "" {
-			continue
-		}
-		fileRefs[file.Path] = append(fileRefs[file.Path], file.EvidenceRefs...)
-	}
-
-	risks := make([]Risk, 0, len(reasons))
-	seen := map[string]bool{}
-	for _, reason := range reasons {
-		risk := Risk{
-			Code:       reason.Code,
-			Level:      reason.Level,
-			Confidence: reason.Confidence,
-			Message:    redact(reason.Message),
-		}
-		risk.EvidenceRefs = evidenceRefsFromRisk(risk, commandRefs, fileRefs)
-		if risk.Confidence == "" {
-			risk.Confidence = model.ConfidenceMedium
-		}
-		finger := risk.Code + "\x00" + risk.Message
-		if seen[finger] {
-			continue
-		}
-		seen[finger] = true
-		risks = append(risks, risk)
-	}
-
-	sort.SliceStable(risks, func(i, j int) bool {
-		if risks[i].Code == risks[j].Code {
-			return risks[i].Message < risks[j].Message
-		}
-		return risks[i].Code < risks[j].Code
-	})
-
-	return risks
-}
-
-func evidenceRefsFromRisk(risk Risk, commandRefs map[string][]string, fileRefs map[string][]string) []string {
-	if strings.Contains(risk.Code, "provider_risk_") || strings.HasPrefix(risk.Code, "command_risk_") {
-		if refs, ok := refsFromCommandMessage(risk.Message, commandRefs); ok {
-			return refs
-		}
-	}
-	if path, ok := pathFromMessage(risk.Message); ok {
-		if refs := fileRefs[path]; len(refs) > 0 {
-			return uniqueSorted(refs)
-		}
-	}
-	for key, refs := range commandRefs {
-		if len(refs) == 0 {
-			continue
-		}
-		if key == "" {
-			continue
-		}
-		for _, candidate := range []string{risk.Code, risk.Message} {
-			if strings.Contains(candidate, key) {
-				return uniqueSorted(refs)
-			}
-		}
-	}
-
-	return nil
-}
-
-func refsFromCommandMessage(message string, commandRefs map[string][]string) ([]string, bool) {
-	needle := ""
-	if idx := strings.LastIndex(message, "in command:"); idx >= 0 {
-		needle = strings.TrimSpace(message[idx+len("in command:"):])
-	}
-	if needle != "" {
-		for key, refs := range commandRefs {
-			if key == needle || strings.Contains(key, needle) || strings.Contains(needle, key) {
-				return uniqueSorted(refs), true
-			}
-		}
-	}
-	return nil, false
-}
-
-func pathFromMessage(message string) (string, bool) {
-	if strings.Contains(message, ": ") {
-		parts := strings.SplitN(message, ": ", 2)
-		candidate := strings.TrimSpace(parts[len(parts)-1])
-		if candidate != "" {
-			return filepath.ToSlash(candidate), true
-		}
-	}
-	for _, marker := range []string{" in ", "; ", " path "} {
-		if idx := strings.LastIndex(message, marker); idx >= 0 {
-			candidate := strings.TrimSpace(message[idx+len(marker):])
-			if candidate != "" {
-				return filepath.ToSlash(candidate), true
-			}
-		}
-	}
-	return "", false
-}
-
-func buildVerifierTasks(
-	evidenceRisk model.Risk,
-	evidenceSummary model.Summary,
-	commands []Command,
-	files []File,
-	gaps []string,
-) []string {
-	tasks := make([]string, 0)
-	tasks = append(tasks, gaps...)
-	tasks = append(tasks, evidence.Focus(evidenceSummary, evidenceRisk, config.Default())...)
-
-	for _, command := range commands {
-		switch command.Status {
-		case "failed":
-			tasks = append(tasks, "Inspect failed command: "+command.Command)
-		case "unknown":
-			tasks = append(tasks, "Confirm command result for: "+command.Command)
-		}
-	}
-
-	for _, file := range files {
-		if file.InFinalPatch && file.Sensitive {
-			tasks = append(tasks, "Review sensitive path changes: "+file.Path)
-		}
-		if file.InFinalPatch && file.Dependency {
-			tasks = append(tasks, "Review dependency file changes: "+file.Path)
-		}
-	}
-
-	return tasks
 }
 
 func buildVerification(layout storage.Layout, _ bool) (Verification, []string) {
