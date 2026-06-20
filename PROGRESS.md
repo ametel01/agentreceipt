@@ -7,7 +7,7 @@
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Extract Replay-Safe Evidence Analysis
 - [x] Step 2: Add Artifact-Only Receipt Verification
-- [ ] Step 3: Build Replay JSON Model and Session Builder
+- [x] Step 3: Build Replay JSON Model and Session Builder
 - [ ] Step 4: Add the `agentreceipt replay` CLI Command
 - [ ] Step 5: Implement Portable Replay Bundles
 - [ ] Step 6: Add End-to-End Replay Coverage and Smoke Checks
@@ -15,9 +15,9 @@
 - [ ] Step 8: Final Replay Acceptance Audit
 
 ## Status
-- Current step: Step 3 (Replay JSON model and session builder)
-- Last completed step: Step 2
-- Next step: Step 3
+- Current step: Step 4 (Replay command)
+- Last completed step: Step 3
+- Next step: Step 4
 - Rule: `PROGRESS.md` must be updated after each completed step with completed scope, validation output, commit reference, current status, and next step before the step’s commit.
 
 ## Update Log
@@ -77,3 +77,25 @@
   - Added `Unreleased`/`Changed` entry for artifact-only receipt verification.
 - Commit reference: `dc9398a`
 - Next step: Step 3
+
+### 2026-06-21
+- Status: Step 3 completed.
+- Scope:
+  - Added `internal/replay/replay.go` with verifier-facing JSON model/types, evidence ingestion from session artifacts, command pairing/gaps/report construction, risk mapping, and artifact hashing.
+  - Added `internal/replay/replay_test.go` regression suite for finalized sessions, failed command outputs, unpaired command handling, missing evidence, tamper detection, non-finalized sessions, stable ordering, and redaction checks.
+  - Ensured replay report construction does not invoke command execution or scoring and remains resilient when evidence is incomplete.
+- Validation:
+  - `make fmt` passed.
+  - `make fmt-check` passed.
+  - `make lint` passed.
+  - `make test` passed.
+  - `make test-race` passed.
+  - `make security` passed.
+  - `make build` passed.
+  - `make smoke` passed.
+  - `make coverage` failed (total 77.9%; threshold remains 80.0%).
+  - `make verify` failed on the coverage gate.
+- Changelog update:
+  - Added `Unreleased`/`Added` entry for the initial verifier replay JSON model and command builder.
+- Commit reference: `8f28f0b`
+- Next step: Step 4
