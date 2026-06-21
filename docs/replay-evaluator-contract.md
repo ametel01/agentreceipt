@@ -20,6 +20,13 @@ replay evidence (not a replacement for `replay`), with deterministic `verdict`, 
 `instruction_files` from replay is forwarded to focus output so loop callers can reconcile
 start-up policy files without re-parsing events.
 
+Replay output now defaults to a compact, queryable view:
+
+- `indexes` summarizes events, files, evidence, and contiguous timeline ranges using artifact refs.
+- `query` echoes `--full`, `--compact`, `--events`, `--file`, and `--evidence`.
+- `selected_events`, `selected_files`, and `selected_evidence` project the requested slices without forcing a full `timeline` load.
+- `timeline` remains available with `--full` for exhaustive inspection.
+
 `changed_files` entries are per-file dossiers with:
 
 - `path`

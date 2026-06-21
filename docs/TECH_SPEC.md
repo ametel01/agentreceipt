@@ -443,7 +443,7 @@ Transitions:
 8. `inspect codex --last` reports log discovery and parser confidence without requiring an active session.
 9. `review --pr` and `pr comment` produce concise PR Markdown without raw prompts or tool outputs.
 10. `mark` persists human context as a chained event in the active session.
-11. `replay --session <id>` emits verifier-facing JSON with `kind: "agentreceipt.session_replay"`.
+11. `replay --session <id>` emits verifier-facing JSON with `kind: "agentreceipt.session_replay"` and a compact default view.
 12. `replay --session <id> --bundle <path>` writes a portable replay package including `replay.json` and required artifacts.
 13. `focus --session <id>` and `focus --replay <path>` emit `kind: "agentreceipt.session_focus"` with deterministic exit codes.
 14. `schema replay`, `schema focus`, and `verify diff` cover the machine-loop contract surface without network calls.

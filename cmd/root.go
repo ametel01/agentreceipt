@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -1073,6 +1074,10 @@ func newReplayCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			outputOptions, err := replayOutputOptionsFromCommand(cmd)
+			if err != nil {
+				return invalidInputError(err)
+			}
 			var report replay.Report
 			if options.BundleDir != "" {
 				report, err = replay.WriteBundle(cmd.Context(), options)
@@ -1082,15 +1087,21 @@ func newReplayCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			output := replay.BuildReplayOutput(report, outputOptions)
 			encoder := json.NewEncoder(cmd.OutOrStdout())
 			encoder.SetIndent("", "  ")
 
-			return encoder.Encode(report)
+			return encoder.Encode(output)
 		},
 	}
 	replayCmd.Flags().String("session", "", "Replay a specific finalized session ID")
 	replayCmd.Flags().String("bundle", "", "Write replay artifacts to a bundle directory")
 	replayCmd.Flags().Bool("json", false, "Render replay output as JSON")
+	replayCmd.Flags().Bool("full", false, "Render the exhaustive replay report with inline evidence")
+	replayCmd.Flags().Bool("compact", false, "Render the compact replay view with indexes and query results")
+	replayCmd.Flags().StringArray("events", nil, "Select replay event ranges such as 80-120")
+	replayCmd.Flags().StringArray("file", nil, "Select replay files by path filter")
+	replayCmd.Flags().StringArray("evidence", nil, "Select replay evidence references")
 	replayCmd.Flags().StringArray("trusted-signer-key-id", nil, "Trusted signer key ID to apply when evaluating replay authenticity")
 
 	return replayCmd
@@ -2146,6 +2157,71 @@ func replayOptionsFromCommand(cmd *cobra.Command) (replay.Options, error) {
 	}
 
 	return replay.Options{RepoPath: repoPath, SessionID: sessionID, BundleDir: bundleDir, TrustedSignerKeyIDs: normalizedTrustedSignerKeyIDs}, nil
+}
+
+func replayOutputOptionsFromCommand(cmd *cobra.Command) (replay.ReplayOutputOptions, error) {
+	full, err := cmd.Flags().GetBool("full")
+	if err != nil {
+		return replay.ReplayOutputOptions{}, err
+	}
+	compact, err := cmd.Flags().GetBool("compact")
+	if err != nil {
+		return replay.ReplayOutputOptions{}, err
+	}
+	eventSpecs, err := cmd.Flags().GetStringArray("events")
+	if err != nil {
+		return replay.ReplayOutputOptions{}, err
+	}
+	fileFilters, err := cmd.Flags().GetStringArray("file")
+	if err != nil {
+		return replay.ReplayOutputOptions{}, err
+	}
+	evidenceRefs, err := cmd.Flags().GetStringArray("evidence")
+	if err != nil {
+		return replay.ReplayOutputOptions{}, err
+	}
+	eventRanges := make([]replay.ReplayEventRange, 0, len(eventSpecs))
+	for _, spec := range eventSpecs {
+		rng, parseErr := parseReplayEventRange(spec)
+		if parseErr != nil {
+			return replay.ReplayOutputOptions{}, parseErr
+		}
+		eventRanges = append(eventRanges, rng)
+	}
+	if !full && !compact {
+		compact = true
+	}
+
+	return replay.ReplayOutputOptions{
+		Full:         full,
+		Compact:      compact,
+		Events:       eventRanges,
+		FileFilters:  fileFilters,
+		EvidenceRefs: evidenceRefs,
+	}, nil
+}
+
+func parseReplayEventRange(spec string) (replay.ReplayEventRange, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return replay.ReplayEventRange{}, fmt.Errorf("empty event range")
+	}
+	startText, endText, ok := strings.Cut(spec, "-")
+	if !ok {
+		return replay.ReplayEventRange{}, fmt.Errorf("invalid event range %q: want start-end", spec)
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(startText), 10, 64)
+	if err != nil {
+		return replay.ReplayEventRange{}, fmt.Errorf("invalid event range %q: %w", spec, err)
+	}
+	end, err := strconv.ParseInt(strings.TrimSpace(endText), 10, 64)
+	if err != nil {
+		return replay.ReplayEventRange{}, fmt.Errorf("invalid event range %q: %w", spec, err)
+	}
+	if end < start {
+		return replay.ReplayEventRange{}, fmt.Errorf("invalid event range %q: end must be >= start", spec)
+	}
+	return replay.ReplayEventRange{Start: start, End: end}, nil
 }
 
 type focusOptions struct {

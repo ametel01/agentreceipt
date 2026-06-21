@@ -57,6 +57,8 @@ export_pr_output="$("$tmpdir/agentreceipt" --repo "$repo" export --pr)"
 export_json_output="$("$tmpdir/agentreceipt" --repo "$repo" export --json)"
 inspect_output="$("$tmpdir/agentreceipt" inspect codex --home "$tmpdir/missing-codex-home")"
 replay_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --json)"
+replay_full_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --full --json)"
+replay_query_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --events 1-2 --file README.md --evidence events.jsonl#seq=1 --json)"
 replay_bundle_dir="$tmpdir/replay-bundle"
 replay_bundle_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --json --bundle "$replay_bundle_dir")"
 schema_replay_output="$("$tmpdir/agentreceipt" schema replay)"
@@ -89,6 +91,9 @@ set -e
 [[ "$replay_output" == *"\"session_id\": \"$session_id\""* ]]
 [[ "$replay_output" == *"\"valid\": true"* ]]
 [[ "$replay_output" == *"\"commands\""* ]]
+[[ "$replay_output" == *"\"indexes\""* ]]
+[[ "$replay_output" == *"\"query\""* ]]
+[[ "$replay_output" == *"\"compact\": true"* ]]
 [[ "$replay_output" == *"go test ./..."* ]]
 [[ "$replay_output" != *"imported-session.jsonl"* ]]
 [[ "$replay_output" != *"\"risk_signals\""* ]]
@@ -100,6 +105,12 @@ set -e
 [[ "$replay_output" == *"\"receipt_hash_valid\": true"* ]]
 [[ "$replay_output" == *"\"path\": \"README.md\""* ]]
 [[ "$replay_output" == *"\"in_final_patch\": true"* ]]
+[[ "$replay_full_output" == *"\"timeline\""* ]]
+[[ "$replay_full_output" == *"\"normalized_type\""* ]]
+[[ "$replay_full_output" == *"\"observed\": true"* ]]
+[[ "$replay_query_output" == *"\"selected_events\""* ]]
+[[ "$replay_query_output" == *"\"selected_files\""* ]]
+[[ "$replay_query_output" == *"\"selected_evidence\""* ]]
 [[ "$focus_output" == *"\"kind\": \"agentreceipt.session_focus\""* ]]
 [[ "$focus_output" == *"\"session_id\": \"$session_id\""* ]]
 [[ "$focus_output" == *"\"review_tasks\""* ]]

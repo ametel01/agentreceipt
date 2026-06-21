@@ -204,12 +204,14 @@ type EvidenceEntry struct {
 }
 
 type TimelineItem struct {
-	Seq          int64            `json:"seq"`
-	Time         string           `json:"time"`
-	Source       string           `json:"source"`
-	Type         string           `json:"type"`
-	Confidence   model.Confidence `json:"confidence"`
-	EvidenceRefs []string         `json:"evidence_refs"`
+	Seq            int64            `json:"seq"`
+	Time           string           `json:"time"`
+	Source         string           `json:"source"`
+	Type           string           `json:"type"`
+	NormalizedType string           `json:"normalized_type,omitempty"`
+	Observed       bool             `json:"observed"`
+	Confidence     model.Confidence `json:"confidence"`
+	EvidenceRefs   []string         `json:"evidence_refs"`
 }
 
 type Command struct {
@@ -2013,12 +2015,14 @@ func buildTimeline(events []model.Event, confidence model.CaptureConfidence) []T
 	timeline := make([]TimelineItem, 0, len(events))
 	for _, event := range events {
 		timeline = append(timeline, TimelineItem{
-			Seq:          event.Seq,
-			Time:         event.Timestamp.Format(time.RFC3339),
-			Source:       event.Source,
-			Type:         event.Type,
-			Confidence:   timelineConfidence(event, confidence),
-			EvidenceRefs: []string{evidenceRef(event.Seq)},
+			Seq:            event.Seq,
+			Time:           event.Timestamp.Format(time.RFC3339),
+			Source:         event.Source,
+			Type:           event.Type,
+			NormalizedType: normalizeTimelineType(event),
+			Observed:       true,
+			Confidence:     timelineConfidence(event, confidence),
+			EvidenceRefs:   []string{evidenceRef(event.Seq)},
 		})
 	}
 
@@ -2027,6 +2031,19 @@ func buildTimeline(events []model.Event, confidence model.CaptureConfidence) []T
 	})
 
 	return timeline
+}
+
+func normalizeTimelineType(event model.Event) string {
+	switch {
+	case event.Source == "fs_watcher" && event.Type == "fs.change":
+		return "file.change"
+	case event.Source == "git_monitor" && strings.Contains(event.Type, "snapshot"):
+		return "git.snapshot"
+	case providerevidence.IsProviderEvidenceSource(event):
+		return "provider.evidence"
+	default:
+		return event.Type
+	}
 }
 
 func timelineConfidence(event model.Event, confidence model.CaptureConfidence) model.Confidence {

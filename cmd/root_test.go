@@ -388,8 +388,23 @@ func TestSchemaReplayCommandOutputsSchema(t *testing.T) {
 	if _, ok := properties["reviewability"].(map[string]any); !ok {
 		t.Fatal("schema replay missing reviewability object")
 	}
+	if _, ok := properties["indexes"].(map[string]any); !ok {
+		t.Fatal("schema replay missing indexes object")
+	}
+	if _, ok := properties["query"].(map[string]any); !ok {
+		t.Fatal("schema replay missing query object")
+	}
+	if _, ok := properties["selected_events"].(map[string]any); !ok {
+		t.Fatal("schema replay missing selected_events array")
+	}
+	if _, ok := properties["selected_files"].(map[string]any); !ok {
+		t.Fatal("schema replay missing selected_files array")
+	}
+	if _, ok := properties["selected_evidence"].(map[string]any); !ok {
+		t.Fatal("schema replay missing selected_evidence array")
+	}
 	required := requiredStringList(schema["required"])
-	if !containsString(required, "kind") || !containsString(required, "session_id") || !containsString(required, "process_contract") || !containsString(required, "reviewability") {
+	if !containsString(required, "kind") || !containsString(required, "session_id") || !containsString(required, "process_contract") || !containsString(required, "reviewability") || !containsString(required, "indexes") || !containsString(required, "query") {
 		t.Fatalf("schema replay missing required fields: %v", schema["required"])
 	}
 }
@@ -488,6 +503,11 @@ func TestReplayModeFlags(t *testing.T) {
 	}
 	if replayCmd.Flags().Lookup("bundle") == nil {
 		t.Fatal("replay flag \"bundle\" is not registered")
+	}
+	for _, name := range []string{"full", "compact", "events", "file", "evidence"} {
+		if replayCmd.Flags().Lookup(name) == nil {
+			t.Fatalf("replay flag %q is not registered", name)
+		}
 	}
 	if replayCmd.Flags().Lookup("trusted-signer-key-id") == nil {
 		t.Fatal("replay flag \"trusted-signer-key-id\" is not registered")
@@ -804,6 +824,122 @@ func TestReplayCommandOutputsJSON(t *testing.T) {
 	}
 	if _, ok := payload["verification"]; !ok {
 		t.Fatal("missing verification section in replay output")
+	}
+	if _, ok := payload["indexes"]; !ok {
+		t.Fatal("missing indexes section in compact replay output")
+	}
+	query, ok := payload["query"].(map[string]any)
+	if !ok {
+		t.Fatal("missing query section in compact replay output")
+	}
+	if query["compact"] != true {
+		t.Fatalf("expected compact query echo, got %#v", query["compact"])
+	}
+	if _, ok := query["full"]; ok {
+		t.Fatalf("expected full query flag to be omitted when false: %#v", query)
+	}
+	if _, ok := payload["timeline"]; ok {
+		t.Fatalf("compact replay output should omit timeline: %v", payload["timeline"])
+	}
+	if _, ok := payload["selected_events"]; ok {
+		t.Fatalf("compact replay output should omit selected_events without filters: %v", payload["selected_events"])
+	}
+}
+
+func TestReplayCommandSupportsQuerySelectionAndFullMode(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("write README diff: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+
+	compactOutput, _, err := executeCommand(t, "--repo", repo, "replay", "--session", sessionID, "--events", "1-2", "--file", "README.md", "--evidence", "events.jsonl#seq=1")
+	if err != nil {
+		t.Fatalf("compact replay query returned error: %v", err)
+	}
+	var compactPayload map[string]any
+	if err := json.Unmarshal([]byte(compactOutput), &compactPayload); err != nil {
+		t.Fatalf("compact replay json decode failed: %v", err)
+	}
+	if _, ok := compactPayload["selected_events"]; !ok {
+		t.Fatal("compact replay output missing selected_events")
+	}
+	if _, ok := compactPayload["selected_files"]; !ok {
+		t.Fatal("compact replay output missing selected_files")
+	}
+	if _, ok := compactPayload["selected_evidence"]; !ok {
+		t.Fatal("compact replay output missing selected_evidence")
+	}
+	query, ok := compactPayload["query"].(map[string]any)
+	if !ok || len(query) == 0 {
+		t.Fatalf("compact replay output missing query echo: %#v", compactPayload["query"])
+	}
+	if query["compact"] != true {
+		t.Fatalf("compact replay output query flags mismatch: %#v", query)
+	}
+	if _, exists := query["full"]; exists {
+		t.Fatalf("compact replay output should omit full when false: %#v", query)
+	}
+	if _, ok := compactPayload["timeline"]; ok {
+		t.Fatal("compact replay output should omit full timeline")
+	}
+	if selectedEvents, ok := compactPayload["selected_events"].([]any); !ok || len(selectedEvents) == 0 {
+		t.Fatalf("compact replay output missing selected event payload: %#v", compactPayload["selected_events"])
+	}
+	if selectedFiles, ok := compactPayload["selected_files"].([]any); !ok || len(selectedFiles) == 0 {
+		t.Fatalf("compact replay output missing selected file payload: %#v", compactPayload["selected_files"])
+	}
+	if selectedEvidence, ok := compactPayload["selected_evidence"].([]any); !ok || len(selectedEvidence) == 0 {
+		t.Fatalf("compact replay output missing selected evidence payload: %#v", compactPayload["selected_evidence"])
+	}
+
+	fullOutput, _, err := executeCommand(t, "--repo", repo, "replay", "--session", sessionID, "--full")
+	if err != nil {
+		t.Fatalf("full replay returned error: %v", err)
+	}
+	var fullPayload map[string]any
+	if err := json.Unmarshal([]byte(fullOutput), &fullPayload); err != nil {
+		t.Fatalf("full replay json decode failed: %v", err)
+	}
+	if _, ok := fullPayload["timeline"]; !ok {
+		t.Fatal("full replay output missing timeline")
+	}
+	if _, ok := fullPayload["selected_events"]; ok {
+		t.Fatalf("full replay output should omit selected_events without query: %v", fullPayload["selected_events"])
+	}
+	if query, ok := fullPayload["query"].(map[string]any); !ok || query["full"] != true {
+		t.Fatalf("full replay output query flags mismatch: %#v", fullPayload["query"])
+	}
+	if query, ok := fullPayload["query"].(map[string]any); ok {
+		if _, exists := query["compact"]; exists {
+			t.Fatalf("full replay output should omit compact when false: %#v", query)
+		}
+	}
+	timeline, ok := fullPayload["timeline"].([]any)
+	if !ok || len(timeline) == 0 {
+		t.Fatalf("full replay output has no timeline payload: %#v", fullPayload["timeline"])
+	}
+	firstItem, ok := timeline[0].(map[string]any)
+	if !ok {
+		t.Fatalf("full replay timeline item type mismatch: %#v", timeline[0])
+	}
+	if _, ok := firstItem["normalized_type"]; !ok {
+		t.Fatalf("full replay timeline item missing normalized_type: %#v", firstItem)
+	}
+	if observed, ok := firstItem["observed"].(bool); !ok || !observed {
+		t.Fatalf("full replay timeline item missing observed flag: %#v", firstItem)
 	}
 }
 

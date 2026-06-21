@@ -279,7 +279,7 @@ agentreceipt schema focus
 Replay reconstructs a verifier-facing JSON payload from one finalized session artifact set.
 
 - `--session` is required.
-- Output is machine-readable JSON and defaults to `agentreceipt.session_replay` structure.
+- Output is machine-readable JSON and defaults to a compact `agentreceipt.session_replay` structure with `indexes` and query selectors.
 - `--bundle <path>` writes `replay.json` plus required session artifacts and optional normalized Codex traces for offline verifier consumption.
 - Replay is artifact-only: it reads session artifacts, does not rerun commands, and does not call local or remote models.
 - `focus` emits a compact reviewer-agent projection with a deterministic verdict, ranked review tasks, file dossiers, failed gates, instruction-file evidence, workspace-change context, loop-health signals, and dereferenceable evidence references.

@@ -174,6 +174,8 @@ Receipts embed the signer public key and key ID, so verification works from shar
 ```bash
 agentreceipt replay --session <id>
 agentreceipt replay --session <id> --json
+agentreceipt replay --session <id> --full
+agentreceipt replay --session <id> --events 80-120 --file cmd/root.go --evidence events.jsonl#seq=88
 agentreceipt replay --session <id> --bundle ./replay-bundle
 agentreceipt focus --session <id>
 agentreceipt focus --replay ./replay.json
@@ -185,6 +187,7 @@ agentreceipt schema focus
 
 - `--session <id>` is required; there is no implicit latest/active-session replay.
 - Output is machine-readable JSON with `kind: "agentreceipt.session_replay"`.
+- Replay defaults to a compact, queryable view with `indexes`, `query`, and optional `selected_events` / `selected_files` / `selected_evidence` slices; pass `--full` to include the full `timeline`.
 - Replay is a factual evidence surface: it reports sequence events, commands, file evidence, integrity checks, and gaps, but it does not score the session or apply policy.
 - `evaluator_signals` includes factual reviewer-loop counters such as token totals, failed-command streaks, repeated file edits, read-to-edit ratio, and whether validation ran after the last edit. Missing provider token evidence stays at the zero value.
 - `--bundle <path>` writes a portable replay bundle containing:
@@ -197,6 +200,7 @@ agentreceipt schema focus
 - Replay is artifact-only: no command reruns, no patch application, no model calls, no workspace mutation.
 - Raw prompts, raw tool output, and raw provider logs are not included by default.
 - Evaluator conclusions should be inferred from command/output evidence and integrity status in `replay.json`, not by any built-in policy rule in this command.
+- `indexes.events`, `indexes.files`, and `indexes.evidence` point at stable artifact refs so downstream tools can load the full payload lazily.
 - `workspace_change_summary` identifies files that were already dirty at session start versus files introduced or modified during the session, so reviewers can separate local context from agent work.
 - Replay/focus report `top_reasons` and tasks include workspace-diff checks including whether final patch still matches the current workspace.
 - `focus --session <id>` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
@@ -231,7 +235,7 @@ agentreceipt schema focus
 agentreceipt verify diff --session <id> --against merge-base
 ```
 
-`replay` is the full factual evidence report. `focus` is a compact projection for loop control and ranked review tasks. `schema` prints the parser contracts, and `verify diff` checks that the finalized receipt patch is equivalent to the candidate patch under review. These commands are local-only and do not rank agents, score models, enforce policy, or orchestrate execution.
+`replay` is the full factual evidence report, with a compact default view and an optional exhaustive `--full` timeline. `focus` is a compact projection for loop control and ranked review tasks. `schema` prints the parser contracts, and `verify diff` checks that the finalized receipt patch is equivalent to the candidate patch under review. These commands are local-only and do not rank agents, score models, enforce policy, or orchestrate execution.
 
 ### 8) Export for PRs
 

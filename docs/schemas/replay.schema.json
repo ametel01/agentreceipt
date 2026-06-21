@@ -9,6 +9,8 @@
     "generated_at",
     "source",
     "verification",
+    "process_contract",
+    "reviewability",
     "summary",
     "evaluator_signals",
     "quality_gates",
@@ -18,11 +20,13 @@
     "privacy",
     "claims",
     "outcome",
-    "timeline",
+    "indexes",
+    "query",
     "commands",
     "files",
     "gaps",
-    "artifacts"
+    "artifacts",
+    "workspace_change_summary"
   ],
   "properties": {
     "schema_version": { "type": "integer" },
@@ -31,12 +35,33 @@
     "generated_at": { "type": "string", "format": "date-time" },
     "source": { "type": "object" },
     "verification": { "type": "object" },
+    "process_contract": {
+      "type": "object",
+      "properties": {
+        "exit_code": { "type": "integer" },
+        "meaning": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "reviewability": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ready", "partial", "blocked", "unverifiable"]
+        },
+        "blocking_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "can_evaluate_integrity": { "type": "boolean" },
+        "can_evaluate_code_quality": { "type": "boolean" },
+        "requires_rerun_validation": { "type": "boolean" },
+        "primary_blocker": { "type": "string" }
+      }
+    },
     "summary": { "type": "object" },
     "evaluator_signals": { "type": "object" },
-    "evidence_index": {
-      "type": "array",
-      "items": { "type": "object" }
-    },
     "quality_gates": { "type": "object" },
     "patch_summary": { "type": "object" },
     "policy_checks": {
@@ -53,11 +78,155 @@
       "items": { "type": "object" }
     },
     "outcome": { "type": "object" },
+    "indexes": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "artifact_ref": { "type": "string" },
+            "sha256": { "type": "string" }
+          }
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "artifact_ref": { "type": "string" },
+            "sha256": { "type": "string" },
+            "by_category": {
+              "type": "object",
+              "additionalProperties": { "type": "integer" }
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "artifact_ref": { "type": "string" },
+            "sha256": { "type": "string" }
+          }
+        },
+        "timeline_ranges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "range": { "type": "string" },
+              "normalized_type": { "type": "string" },
+              "count": { "type": "integer" },
+              "evidence_refs": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "query": {
+      "type": "object",
+      "properties": {
+        "full": { "type": "boolean" },
+        "compact": { "type": "boolean" },
+        "events": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "selected_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "seq": { "type": "integer" },
+          "time": { "type": "string" },
+          "source": { "type": "string" },
+          "type": { "type": "string" },
+          "normalized_type": { "type": "string" },
+          "observed": { "type": "boolean" },
+          "confidence": { "type": "string" },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "selected_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "action": { "type": "string" },
+          "sensitive": { "type": "boolean" },
+          "dependency": { "type": "boolean" },
+          "in_final_patch": { "type": "boolean" },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "selected_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": { "type": "string" },
+          "type": { "type": "string" },
+          "summary": { "type": "string" },
+          "time": { "type": "string" },
+          "command": { "type": "string" },
+          "exit_code": { "type": "integer" },
+          "path": { "type": "string" },
+          "artifact": { "type": "string" },
+          "confidence": { "type": "string" },
+          "redacted": { "type": "boolean" }
+        }
+      }
+    },
     "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "seq": { "type": "integer" },
+          "time": { "type": "string" },
+          "source": { "type": "string" },
+          "type": { "type": "string" },
+          "normalized_type": { "type": "string" },
+          "observed": { "type": "boolean" },
+          "confidence": { "type": "string" },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "commands": {
       "type": "array",
       "items": { "type": "object" }
     },
-    "commands": {
+    "files": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "evidence_index": {
       "type": "array",
       "items": { "type": "object" }
     },
@@ -74,6 +243,10 @@
       "items": { "type": "object" }
     },
     "gaps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "verifier_tasks": {
       "type": "array",
       "items": { "type": "string" }
     },
