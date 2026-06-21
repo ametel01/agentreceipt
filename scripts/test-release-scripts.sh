@@ -40,3 +40,73 @@ cmp -s "$expected_skill" "$extract_dir/agentreceipt-skill/SKILL.md"
 	cd "$tmpdir/dist"
 	shasum -a 256 -c SHA256SUMS
 )
+
+fake_dist="$tmpdir/fake-dist"
+fake_home="$tmpdir/fake-home"
+fake_bin="$fake_home/bin"
+mkdir -p "$fake_dist" "$fake_bin"
+cp "$tmpdir/dist/agentreceipt_linux_amd64.tar.gz" "$fake_dist/"
+cp "$tmpdir/dist/SHA256SUMS" "$fake_dist/"
+export FAKE_DIST="$fake_dist"
+
+cat > "$fake_bin/curl" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-o)
+			out="$2"
+			shift 2
+			;;
+		http*://*/*)
+			url="$1"
+			shift
+			;;
+		*)
+			shift
+			;;
+	esac
+done
+
+file="${url##*/}"
+if [ -z "${file:-}" ] || [ -z "${out:-}" ]; then
+	exit 1
+fi
+
+src="$FAKE_DIST/$file"
+test -f "$src" || exit 1
+cp "$src" "$out"
+EOF
+chmod +x "$fake_bin/curl"
+cat > "$fake_bin/uname" <<'EOF'
+#!/usr/bin/env sh
+if [ "$1" = "-s" ]; then
+  echo "Linux"
+  exit 0
+fi
+
+if [ "$1" = "-m" ]; then
+  echo "x86_64"
+  exit 0
+fi
+
+command uname "$@"
+EOF
+chmod +x "$fake_bin/uname"
+
+# noninteractive install requested fixture
+install_home="$tmpdir/installer-install"
+mkdir -p "$install_home"
+PATH="$fake_bin:$PATH" HOME="$install_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" sh "$script_dir/install.sh" --bin-dir "$install_home/bin" --install-skill --skill-dir "$install_home/skills"
+test -x "$install_home/bin/agentreceipt"
+cmp -s "$expected_skill" "$install_home/skills/agentreceipt/SKILL.md"
+
+# non-install fixture
+no_skill_home="$tmpdir/installer-no-skill"
+mkdir -p "$no_skill_home"
+PATH="$fake_bin:$PATH" HOME="$no_skill_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" sh "$script_dir/install.sh" --bin-dir "$no_skill_home/bin" --no-install-skill
+test -x "$no_skill_home/bin/agentreceipt"
+if [ -d "$no_skill_home/skills" ]; then
+	exit 1
+fi

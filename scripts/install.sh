@@ -4,6 +4,9 @@ set -eu
 repo="${AGENTRECEIPT_INSTALL_REPO:-ametel01/agentreceipt}"
 version="${AGENTRECEIPT_INSTALL_VERSION:-latest}"
 bin_dir="${AGENTRECEIPT_INSTALL_DIR:-}"
+install_skill="${AGENTRECEIPT_INSTALL_SKILL:-0}"
+skill_dir="${AGENTRECEIPT_SKILL_DIR:-}"
+no_install_skill=0
 
 usage() {
 	cat <<'USAGE'
@@ -15,6 +18,9 @@ Options:
   --version VERSION   Install a specific release tag or SemVer. Default: latest.
   --bin-dir DIR      Install directory. Default: /usr/local/bin if writable,
                      otherwise $HOME/.local/bin.
+  --install-skill    Install the AgentReceipt skill artifact non-interactively.
+  --no-install-skill Skip skill installation.
+  --skill-dir DIR    Install skill under DIR/agentreceipt/SKILL.md.
 USAGE
 }
 
@@ -60,6 +66,19 @@ while [ "$#" -gt 0 ]; do
 			bin_dir="$2"
 			shift 2
 			;;
+		--install-skill)
+			install_skill=1
+			shift
+			;;
+		--no-install-skill)
+			no_install_skill=1
+			shift
+			;;
+		--skill-dir)
+			[ "$#" -ge 2 ] || die "--skill-dir requires a value"
+			skill_dir="$2"
+			shift 2
+			;;
 		-h|--help)
 			usage
 			exit 0
@@ -69,6 +88,17 @@ while [ "$#" -gt 0 ]; do
 			;;
 	esac
 done
+
+if [ "$install_skill" != "1" ]; then
+	install_skill=0
+fi
+
+if [ "$install_skill" -ne 0 ] && [ "$no_install_skill" -ne 0 ]; then
+	die "--install-skill and --no-install-skill are mutually exclusive"
+fi
+if [ "$no_install_skill" -ne 0 ]; then
+	install_skill=0
+fi
 
 need() {
 	command -v "$1" >/dev/null 2>&1 || die "$1 is required"
@@ -150,11 +180,31 @@ print_step "downloaded ${asset}" 45 "#########" "..........."
 )
 print_step "verified checksum" 70 "##############" "......"
 
-mkdir -p "$bin_dir"
+	mkdir -p "$bin_dir"
 print_step "extracting archive" 85 "#################" "..."
-tar -C "$tmpdir" -xzf "$tmpdir/$asset" agentreceipt
+tar -C "$tmpdir" -xzf "$tmpdir/$asset" agentreceipt agentreceipt-skill/SKILL.md
 install -m 0755 "$tmpdir/agentreceipt" "$bin_dir/agentreceipt"
 print_step "installed binary" 100 "####################" ""
 
+if [ "$install_skill" -ne 0 ]; then
+	skill_archive_file="$tmpdir/agentreceipt-skill/SKILL.md"
+	if [ ! -f "$skill_archive_file" ]; then
+		die "release archive for ${base_url} is missing agentreceipt-skill/SKILL.md"
+	fi
+	if [ -z "$skill_dir" ]; then
+		skill_dir="${HOME}/.agents/skills"
+	fi
+	target_skill_dir="${skill_dir%/}/agentreceipt"
+	target_skill_file="$target_skill_dir/SKILL.md"
+	mkdir -p "$target_skill_dir"
+	if [ -f "$target_skill_file" ] && ! cmp -s "$skill_archive_file" "$target_skill_file"; then
+		die "existing skill at ${target_skill_file} differs; remove it first for noninteractive installs"
+	fi
+	cp "$skill_archive_file" "$target_skill_file"
+fi
+
 printf '\nInstalled agentreceipt to %s/agentreceipt\n' "$bin_dir"
+if [ "$install_skill" -ne 0 ]; then
+	printf 'Installed AgentReceipt coding-agent skill to %s\n' "$target_skill_file"
+fi
 printf 'Run: agentreceipt version\n'
