@@ -11,8 +11,8 @@
 - Step 3: Completed
 - Step 4: Completed
 - Step 5: Completed
-- Step 6: Next
-- Completed: Step 5
+- Step 6: Completed
+- Completed: Step 6
 - Last updated: 2026-06-22
 
 ## Checklist
@@ -22,7 +22,7 @@
 - [x] Step 3: Add Noninteractive Installer Controls
 - [x] Step 4: Add Interactive Skill Installer Onboarding
 - [x] Step 5: Fully Update the README
-- [ ] Step 6: Final Release-Path Validation and Cleanup
+- [x] Step 6: Final Release-Path Validation and Cleanup
 
 ## Update Log
 - 2026-06-22: Initialized rollout tracking scaffolding. Step 0 started based on `PLAN.md` requirements.
@@ -32,3 +32,4 @@
 - 2026-06-22: Step 3 completed (commit `42e6afb`). Added `scripts/install.sh` support for `--install-skill`, `--no-install-skill`, `--skill-dir` plus `AGENTRECEIPT_INSTALL_SKILL` and `AGENTRECEIPT_SKILL_DIR`; added noninteractive installer fixtures in `scripts/test-release-scripts.sh` and updated syntax checks.
 - 2026-06-22: Step 4 completed (commit `f3f9dee`). Added interactive onboarding in `scripts/install.sh` with `/dev/tty` [Y/n] prompt, no-TTY skip behavior, auto-root selection rules, overwrite prompt for existing skill files, and additional fixture coverage for env-driven install/no-tty/identical-divergent target handling.
 - 2026-06-22: Step 5 completed (commit `e477b7c`). Rewrote `README.md` for 0.9.0 agent-facing command surfaces and installer behavior, including optional skill install defaults, env/path controls, release archive contents, and limitation notes.
+- 2026-06-22: Step 6 completed (in-progress commit pending). Ran `scripts/test-release-scripts.sh` to validate release artifact generation, archive skill parity, and installer fixtures (install, no-install, no-tty, env-driven, identical and divergent skill targets). Manual note: no unrelated source artifacts modified during final check.
