@@ -175,8 +175,8 @@ Receipts embed the signer public key and key ID, so verification works from shar
 agentreceipt replay --session <id>
 agentreceipt replay --session <id> --json
 agentreceipt replay --session <id> --bundle ./replay-bundle
-agentreceipt focus --session <id> --json
-agentreceipt focus --replay ./replay.json --json
+agentreceipt focus --session <id>
+agentreceipt focus --replay ./replay.json
 agentreceipt schema replay
 agentreceipt schema focus
 ```
@@ -199,8 +199,8 @@ agentreceipt schema focus
 - Evaluator conclusions should be inferred from command/output evidence and integrity status in `replay.json`, not by any built-in policy rule in this command.
 - `workspace_change_summary` identifies files that were already dirty at session start versus files introduced or modified during the session, so reviewers can separate local context from agent work.
 - Replay/focus report `top_reasons` and tasks include workspace-diff checks including whether final patch still matches the current workspace.
-- `focus --session <id> --json` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
-- `focus --replay ./replay.json --json` emits the same compact focus result directly from a replay report.
+- `focus --session <id>` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
+- `focus --replay ./replay.json` emits the same compact focus result directly from a replay report.
 - `focus` review tasks are ranked (`P0` → `P3`) and include `id`, `kind`, `question`, `paths`, `symbols`, `evidence_refs`, `confidence`, and `source` so loop automation can prioritize work.
 - Replay and focus reports also include instruction-file evidence captured at session start (`AGENTS.md`, `CLAUDE.md`) under `instruction_files`.
 - `schema replay` and `schema focus` print machine-consumable JSON Schema definitions for contract consumers and loop validators.
@@ -224,8 +224,8 @@ Use this command set when another local tool or coding agent needs a determinist
 
 ```bash
 agentreceipt replay --session <id> --json
-agentreceipt focus --session <id> --json
-agentreceipt focus --replay replay.json --json
+agentreceipt focus --session <id>
+agentreceipt focus --replay replay.json
 agentreceipt schema replay
 agentreceipt schema focus
 agentreceipt verify diff --session <id> --against merge-base
@@ -379,7 +379,7 @@ The visible CLI surface is:
 | `agentreceipt review` | Build a reviewer-focused receipt summary. |
 | `agentreceipt focus` | Build a compact reviewer-agent JSON focus report from a session or existing `replay.json`. |
 | `agentreceipt schema replay` | Print the JSON Schema contract for `agentreceipt replay --json` output. |
-| `agentreceipt schema focus` | Print the JSON Schema contract for `agentreceipt focus --json` output. |
+| `agentreceipt schema focus` | Print the JSON Schema contract for `agentreceipt focus` output. |
 | `agentreceipt verify` | Verify receipt integrity and signatures. |
 | `agentreceipt verify bundle <path>` | Verify a local AgentReceipt artifact bundle. |
 | `agentreceipt verify diff` | Compare a finalized receipt patch against a candidate patch. |
@@ -422,8 +422,8 @@ agentreceipt review --md
 agentreceipt review --pr
 agentreceipt verify diff --session <id> --against merge-base --json
 agentreceipt verify diff --session <id> --against patch:<path>/final.patch --json
-agentreceipt focus --session <id> --json
-agentreceipt focus --replay ./replay.json --json
+agentreceipt focus --session <id>
+agentreceipt focus --replay ./replay.json
 agentreceipt verify
 agentreceipt verify --session <id>
 agentreceipt verify bundle ./agentreceipt

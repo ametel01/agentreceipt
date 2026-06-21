@@ -1105,13 +1105,6 @@ func newFocusCommand() *cobra.Command {
 			if err != nil {
 				return invalidInputError(err)
 			}
-			asJSON, err := cmd.Flags().GetBool("json")
-			if err != nil {
-				return invalidInputError(err)
-			}
-			if !asJSON {
-				return invalidInputError(fmt.Errorf("focus command requires --json"))
-			}
 
 			var report replay.Report
 			switch {
@@ -1149,7 +1142,6 @@ func newFocusCommand() *cobra.Command {
 	}
 	focusCmd.Flags().String("session", "", "Build focus from a specific finalized session ID")
 	focusCmd.Flags().String("replay", "", "Build focus from a replay.json file")
-	focusCmd.Flags().Bool("json", false, "Render focus output as JSON")
 	focusCmd.Flags().StringArray("trusted-signer-key-id", nil, "Trusted signer key ID to apply when evaluating replay authenticity")
 
 	return focusCmd

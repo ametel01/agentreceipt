@@ -476,10 +476,13 @@ func TestFocusModeFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find focus command: %v", err)
 	}
-	for _, name := range []string{"session", "replay", "json", "trusted-signer-key-id"} {
+	for _, name := range []string{"session", "replay", "trusted-signer-key-id"} {
 		if focusCmd.Flags().Lookup(name) == nil {
 			t.Fatalf("focus flag %q is not registered", name)
 		}
+	}
+	if focusCmd.Flags().Lookup("json") != nil {
+		t.Fatal("focus flag \"json\" should not be registered; focus emits JSON by default")
 	}
 }
 
@@ -502,7 +505,6 @@ func TestFocusCommandRejectsSessionAndReplayTogether(t *testing.T) {
 		"focus",
 		"--session", "ar_ses_focus",
 		"--replay", filepath.Join(t.TempDir(), "replay.json"),
-		"--json",
 	)
 	if err == nil || !strings.Contains(err.Error(), "provide exactly one of --session or --replay") {
 		t.Fatalf("expected source-conflict error, got %v", err)
@@ -512,27 +514,26 @@ func TestFocusCommandRejectsSessionAndReplayTogether(t *testing.T) {
 	}
 }
 
-func TestFocusCommandRequiresJSON(t *testing.T) {
-	repo := newCommandGitRepo(t)
-	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
-	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+func TestFocusCommandOutputsJSONByDefault(t *testing.T) {
+	reportPath := writeReplayJSON(t, replayReportFromOptions(func(report *replay.Report) {}))
+	output, _, err := executeCommand(t, "focus", "--replay", reportPath)
 	if err != nil {
-		t.Fatalf("start returned error: %v", err)
+		t.Fatalf("focus returned error: %v", err)
 	}
-	parts := strings.Fields(startOutput)
-	if len(parts) == 0 {
-		t.Fatalf("start output did not include session id: %q", startOutput)
+	var payload replay.FocusReport
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("focus default output is not JSON: %v", err)
 	}
-	sessionID := parts[len(parts)-1]
-	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
-		t.Fatalf("stop returned error: %v", err)
+	if payload.Kind != "agentreceipt.session_focus" {
+		t.Fatalf("focus kind = %q, want %q", payload.Kind, "agentreceipt.session_focus")
 	}
-	_, _, err = executeCommand(t, "--repo", repo, "focus", "--session", sessionID)
-	if err == nil || !strings.Contains(err.Error(), "focus command requires --json") {
-		t.Fatalf("expected JSON requirement error, got %v", err)
-	}
-	if exitCodeFromError(t, err) != exitCodeInvalidInput {
-		t.Fatalf("expected exit code %d for missing --json, got %d", exitCodeInvalidInput, exitCodeFromError(t, err))
+}
+
+func TestFocusCommandRejectsJSONFlag(t *testing.T) {
+	reportPath := writeReplayJSON(t, replayReportFromOptions(func(report *replay.Report) {}))
+	_, _, err := executeCommand(t, "focus", "--replay", reportPath, "--json")
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --json") {
+		t.Fatalf("expected removed --json flag error, got %v", err)
 	}
 }
 
@@ -540,7 +541,7 @@ func TestFocusCommandExitCodeMappingsFromReplay(t *testing.T) {
 	t.Run("pass", func(t *testing.T) {
 		t.Parallel()
 		reportPath := writeReplayJSON(t, replayReportFromOptions(func(report *replay.Report) {}))
-		_, _, err := executeCommand(t, "focus", "--replay", reportPath, "--json")
+		_, _, err := executeCommand(t, "focus", "--replay", reportPath)
 		if err != nil {
 			t.Fatalf("focus pass scenario returned error: %v", err)
 		}
@@ -555,7 +556,7 @@ func TestFocusCommandExitCodeMappingsFromReplay(t *testing.T) {
 			report.PatchSummary.ProductionChangedWithoutTestsChanged = true
 		})
 		reportPath := writeReplayJSON(t, report)
-		output, _, err := executeCommand(t, "focus", "--replay", reportPath, "--json")
+		output, _, err := executeCommand(t, "focus", "--replay", reportPath)
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodeReviewRequired {
 			t.Fatalf("expected review-required exit code %d, got %d", exitCodeReviewRequired, exitCode)
 		}
@@ -574,7 +575,7 @@ func TestFocusCommandExitCodeMappingsFromReplay(t *testing.T) {
 			report.QualityGates.Format.Status = "failed"
 		})
 		reportPath := writeReplayJSON(t, report)
-		_, _, err := executeCommand(t, "focus", "--replay", reportPath, "--json")
+		_, _, err := executeCommand(t, "focus", "--replay", reportPath)
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodeBlockerEvidence {
 			t.Fatalf("expected blocker exit code %d, got %d", exitCodeBlockerEvidence, exitCode)
 		}
@@ -587,7 +588,7 @@ func TestFocusCommandExitCodeMappingsFromReplay(t *testing.T) {
 			report.Verification.FinalPatchHashValid = false
 		})
 		reportPath := writeReplayJSON(t, report)
-		_, _, err := executeCommand(t, "focus", "--replay", reportPath, "--json")
+		_, _, err := executeCommand(t, "focus", "--replay", reportPath)
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodeIntegrity {
 			t.Fatalf("expected integrity exit code %d, got %d", exitCodeIntegrity, exitCode)
 		}
@@ -606,7 +607,7 @@ func TestFocusCommandExitCodeMappingsFromReplay(t *testing.T) {
 			}
 		})
 		reportPath := writeReplayJSON(t, report)
-		_, _, err := executeCommand(t, "focus", "--replay", reportPath, "--json")
+		_, _, err := executeCommand(t, "focus", "--replay", reportPath)
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodePatchMismatch {
 			t.Fatalf("expected patch-mismatch exit code %d, got %d", exitCodePatchMismatch, exitCode)
 		}
@@ -621,7 +622,7 @@ func TestFocusCommandExitCodeMappingsFromReplay(t *testing.T) {
 			report.Verification.SignerTrusted = false
 		})
 		reportPath := writeReplayJSON(t, report)
-		_, _, err := executeCommand(t, "focus", "--replay", reportPath, "--json")
+		_, _, err := executeCommand(t, "focus", "--replay", reportPath)
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodeUnverifiable {
 			t.Fatalf("expected unverifiable exit code %d, got %d", exitCodeUnverifiable, exitCode)
 		}
@@ -643,7 +644,7 @@ func TestFocusCommandOutputsSessionFocus(t *testing.T) {
 	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
 		t.Fatalf("stop returned error: %v", err)
 	}
-	reportOutput, _, err := executeCommand(t, "--repo", repo, "focus", "--session", sessionID, "--json")
+	reportOutput, _, err := executeCommand(t, "--repo", repo, "focus", "--session", sessionID)
 	if err != nil {
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodeReviewRequired {
 			t.Fatalf("focus returned unexpected error: %v", err)
@@ -689,13 +690,13 @@ func TestFocusCommandOutputsConsistentReportFromReplayFile(t *testing.T) {
 		t.Fatalf("write replay file: %v", err)
 	}
 
-	sessionFocusOutput, _, err := executeCommand(t, "--repo", repo, "focus", "--session", sessionID, "--json")
+	sessionFocusOutput, _, err := executeCommand(t, "--repo", repo, "focus", "--session", sessionID)
 	if err != nil {
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodeReviewRequired {
 			t.Fatalf("focus --session returned unexpected error: %v", err)
 		}
 	}
-	replayFocusOutput, _, err := executeCommand(t, "focus", "--replay", replayPath, "--json")
+	replayFocusOutput, _, err := executeCommand(t, "focus", "--replay", replayPath)
 	if err != nil {
 		if exitCode := exitCodeFromError(t, err); exitCode != exitCodeReviewRequired {
 			t.Fatalf("focus --replay returned unexpected error: %v", err)

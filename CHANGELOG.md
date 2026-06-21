@@ -11,14 +11,14 @@ and this project follows semantic versioning.
 
 - Added reviewer-agent implementation tracking for the loop-facing feature plan (Step 0), including `PLAN.md`-driven progress tracking setup.
 - Added internal compact focus reporting in `internal/replay` with deterministic verdicts (`pass`, `review_required`, `block`, `unverifiable`), capped evidence artifacts, and stable `review_tasks`/`top_reasons` generation.
-- Added `agentreceipt focus --json` command for loop-oriented focus report generation from `replay --session` or `--replay replay.json`.
+- Added `agentreceipt focus` command for loop-oriented JSON focus report generation from `replay --session` or `--replay replay.json`.
 - Added ranked structured `review_tasks` in focus reports with stable `P0`-`P3` priorities, task kinds (`integrity_failure`, `failed_gate`, `failed_command`, etc.), and deterministic task ordering/ID assignment.
 - Added Step 4 per-file evidence dossiers to focus reports, including dependency/symbol/policy status fields, explicit command/test associations, review reasons, and enriched file-level evidence references.
 - Added session-start instruction-file capture (`AGENTS.md`, `CLAUDE.md`) with deterministic metadata events, summary extraction, and non-regular/unreadable file warnings.
 - Added replay `instruction_files` output and focus report pass-through of captured instruction file evidence.
 - Added workspace change separation in replay/focus (`workspace_change_summary`) to distinguish pre-existing dirty files from session-introduced file changes, and added deterministic checks for final-patch/workspace parity.
 - Added `agentreceipt schema replay` and `agentreceipt schema focus` commands for deterministic JSON Schema output of machine-consumable replay/focus contracts.
-- Added deterministic process exit codes for `agentreceipt focus --json` to support loop automation:
+- Added deterministic process exit codes for `agentreceipt focus` to support loop automation:
   - `0` pass
   - `10` review required
   - `20` blocker evidence
@@ -34,6 +34,10 @@ and this project follows semantic versioning.
 - Added loop-health evaluator signals in replay and focus output, including token totals, failed-command streaks, repeated file edit counts, read-to-edit ratio, validation-after-last-edit state, and related review tasks.
 - Added dereferenceable replay/focus evidence index entries for events, commands, files, artifacts, and final patch references.
 - Hardened reviewer-loop documentation, CLI help wording, and smoke coverage for `focus`, `schema`, and `verify diff` contract paths.
+
+### Changed
+
+- Changed `agentreceipt focus` to emit JSON by default and removed the `--json` flag from the focus command surface.
 
 ## [0.7.0] - 2026-06-21
 

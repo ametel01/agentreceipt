@@ -133,7 +133,7 @@ Current implemented scope includes:
 - local artifact bundle verification
 - machine-readable verifier replay via `agentreceipt replay --session <id>`
 - portable replay bundles via `agentreceipt replay --session <id> --bundle <path>`
-- compact reviewer-loop focus reports via `agentreceipt focus --session <id> --json`
+- compact reviewer-loop focus reports via `agentreceipt focus --session <id>`
 - replay/focus JSON Schema output via `agentreceipt schema replay` and `agentreceipt schema focus`
 - local diff-equivalence verification via `agentreceipt verify diff`
 - GitHub CLI PR comment posting
@@ -270,8 +270,8 @@ agentreceipt verify diff --session <id> --against patch:<path>/final.patch --jso
 agentreceipt replay --session <id>
 agentreceipt replay --session <id> --json
 agentreceipt replay --session <id> --bundle ./replay-bundle
-agentreceipt focus --session <id> --json
-agentreceipt focus --replay ./replay.json --json
+agentreceipt focus --session <id>
+agentreceipt focus --replay ./replay.json
 agentreceipt schema replay
 agentreceipt schema focus
 ```
@@ -338,7 +338,7 @@ All commands inherit:
 | `agentreceipt verify diff` | Compares a finalized receipt patch against `HEAD`, `merge-base`, `patch:<path>`, or `pr.patch`. |
 | `agentreceipt replay` | Builds a machine-readable verifier replay report for `--session <id>`. |
 | `agentreceipt replay --session <id> --bundle <path>` | Writes a portable verifier replay bundle and exits non-zero when replay construction or required artifact checks fail. |
-| `agentreceipt focus` | Builds compact reviewer-agent JSON from `--session <id>` or `--replay <path>`. Requires `--json`. |
+| `agentreceipt focus` | Builds compact reviewer-agent JSON from `--session <id>` or `--replay <path>`. JSON is the default and only output format. |
 | `agentreceipt schema replay` | Prints the replay JSON Schema contract. |
 | `agentreceipt schema focus` | Prints the focus JSON Schema contract. |
 | `agentreceipt export --json|--md|--pr` | Exports a finalized receipt in one selected format. |
@@ -830,7 +830,7 @@ Current limitations are:
 - Review risk is heuristic and deterministic, not a security verdict.
 - `verify bundle` verifies local artifacts only; it does not contact GitHub or enforce CI policy.
 - `replay` is explicit-session only (`--session <id>`) and intentionally excludes raw prompts, raw tool output, and raw provider logs by default.
-- `focus` is JSON-only and requires exactly one source: `--session <id>` or `--replay <path>`.
+- `focus` is JSON-only, has no output-format flag, and requires exactly one source: `--session <id>` or `--replay <path>`.
 
 ## 17. Build, Test, Release
 

@@ -3,7 +3,7 @@
 `agentreceipt replay` builds a factual, machine-readable view of one finalized session from stored
 artifacts. It does not rerun commands, reapply patches, call models, or apply policy scoring.
 
-The new `agentreceipt focus --json` command consumes the same `replay.json` payload to emit a compact
+The `agentreceipt focus` command consumes the same `replay.json` payload to emit a compact
 `agentreceipt.session_focus` report for reviewer-agent loops. This focused payload is a projection of
 replay evidence (not a replacement for `replay`), with deterministic `verdict`, `top_reasons`,
 `review_tasks`, `changed_files`, `failed_gates`, and `evidence_refs`.
@@ -62,7 +62,7 @@ Task kind examples include:
 
 ## Focus Exit Codes
 
-`agentreceipt focus --json` uses deterministic process exit codes in addition to the `verdict` field:
+`agentreceipt focus` uses deterministic process exit codes in addition to the `verdict` field:
 
 - `0` when `verdict: "pass"`
 - `10` when `verdict: "review_required"`
@@ -70,7 +70,7 @@ Task kind examples include:
 - `30` when integrity failed
 - `40` when authenticity/trust signals are `unverifiable`/`not_trusted` while integrity is otherwise valid
 - `50` when final patch/workspace diff mismatch is detected
-- `60` for invalid input (for example missing required source flags or missing `--json`)
+- `60` for invalid input (for example missing required source flags)
 
 ## Report Shape
 

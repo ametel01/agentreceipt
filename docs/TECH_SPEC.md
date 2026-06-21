@@ -117,7 +117,7 @@ fs events + git signals + codex logs
 | `agentreceipt review` | Produce concise summary in terminal (`--last`, `--session <id>`, `--security`, `--diff`, `--codex-jsonl <path>`, `--json`, `--md`, `--pr`). |
 | `agentreceipt verify` | Validate chain, manifest, diff hash, signature. |
 | `agentreceipt replay` | Build machine-readable verifier report from a specified session and optional portable bundle output. Replay output is factual evidence only and carries no built-in policy decisions. |
-| `agentreceipt focus` | Build compact reviewer-agent JSON from a session or existing `replay.json`; requires `--json` and one explicit source. |
+| `agentreceipt focus` | Build compact reviewer-agent JSON from a session or existing `replay.json`; JSON is the default and only output format, and one explicit source is required. |
 | `agentreceipt schema replay` | Print the replay JSON Schema contract. |
 | `agentreceipt schema focus` | Print the focus JSON Schema contract. |
 | `agentreceipt verify diff` | Compare the finalized receipt patch against `HEAD`, `merge-base`, `patch:<path>`, or `pr.patch`. |
@@ -365,8 +365,8 @@ Replay and focus reports carry dereferenceable `evidence_index` entries for even
 
 ### 8.9 Focus, schemas, and diff verification
 
-- `agentreceipt focus --session <id> --json` builds replay from the named session and projects it into `agentreceipt.session_focus`.
-- `agentreceipt focus --replay <path> --json` reads an existing replay report and produces the same focus projection without session storage.
+- `agentreceipt focus --session <id>` builds replay from the named session and projects it into `agentreceipt.session_focus`.
+- `agentreceipt focus --replay <path>` reads an existing replay report and produces the same focus projection without session storage.
 - Focus output contains verdict, top reasons, ranked review tasks, per-file dossiers, failed gates, workspace-change summary, instruction-file evidence, evaluator signals, evidence index, and evidence refs.
 - `agentreceipt schema replay` and `agentreceipt schema focus` print embedded JSON Schema documents for contract consumers.
 - `agentreceipt verify diff` compares normalized finalized and candidate patches and returns machine-oriented exit codes for pass, integrity failure, mismatch, and invalid input.
@@ -445,7 +445,7 @@ Transitions:
 10. `mark` persists human context as a chained event in the active session.
 11. `replay --session <id>` emits verifier-facing JSON with `kind: "agentreceipt.session_replay"`.
 12. `replay --session <id> --bundle <path>` writes a portable replay package including `replay.json` and required artifacts.
-13. `focus --session <id> --json` and `focus --replay <path> --json` emit `kind: "agentreceipt.session_focus"` with deterministic exit codes.
+13. `focus --session <id>` and `focus --replay <path>` emit `kind: "agentreceipt.session_focus"` with deterministic exit codes.
 14. `schema replay`, `schema focus`, and `verify diff` cover the machine-loop contract surface without network calls.
 
 ## 14) Strict quality gates
