@@ -41,17 +41,18 @@ const (
 
 // FocusReport is a compact reviewer-agent output for a replay session.
 type FocusReport struct {
-	SchemaVersion    int                `json:"schema_version"`
-	Kind             string             `json:"kind"`
-	SessionID        string             `json:"session_id"`
-	GeneratedAt      time.Time          `json:"generated_at"`
-	Verdict          FocusVerdict       `json:"verdict"`
-	TopReasons       []string           `json:"top_reasons,omitempty"`
-	ReviewTasks      []ReviewTask       `json:"review_tasks,omitempty"`
-	ChangedFiles     []FocusChangedFile `json:"changed_files,omitempty"`
-	FailedGates      []FailedGate       `json:"failed_gates,omitempty"`
-	InstructionFiles []InstructionFile  `json:"instruction_files,omitempty"`
-	EvidenceRefs     []string           `json:"evidence_refs,omitempty"`
+	SchemaVersion    int                    `json:"schema_version"`
+	Kind             string                 `json:"kind"`
+	SessionID        string                 `json:"session_id"`
+	GeneratedAt      time.Time              `json:"generated_at"`
+	Verdict          FocusVerdict           `json:"verdict"`
+	TopReasons       []string               `json:"top_reasons,omitempty"`
+	ReviewTasks      []ReviewTask           `json:"review_tasks,omitempty"`
+	ChangedFiles     []FocusChangedFile     `json:"changed_files,omitempty"`
+	FailedGates      []FailedGate           `json:"failed_gates,omitempty"`
+	WorkspaceChanges WorkspaceChangeSummary `json:"workspace_change_summary"`
+	InstructionFiles []InstructionFile      `json:"instruction_files,omitempty"`
+	EvidenceRefs     []string               `json:"evidence_refs,omitempty"`
 }
 
 type FocusChangedFile struct {
@@ -107,6 +108,7 @@ func BuildFocusReport(replay Report) FocusReport {
 	focus.ChangedFiles = collectFocusChangedFiles(replay)
 	focus.InstructionFiles = replay.InstructionFiles
 	focus.FailedGates = collectFailedGates(replay.QualityGates)
+	focus.WorkspaceChanges = replay.WorkspaceChange
 
 	reasons, tasks := collectFocusReasonsAndTasks(replay, focus.FailedGates)
 	focus.Verdict = determineFocusVerdict(replay, reasons)
@@ -179,6 +181,62 @@ func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]Foc
 			nil,
 			[]string{finalPatchEvidenceRef},
 			model.ConfidenceHigh,
+			"verification",
+		)
+	}
+
+	if len(replay.WorkspaceChange.PreExistingDirtyFiles) > 0 {
+		addReason("Session started with pre-existing dirty files: "+strings.Join(replay.WorkspaceChange.PreExistingDirtyFiles, ", "), nil, focusReasonReview, true)
+		addTask(
+			"pre_existing_dirty",
+			focusTaskPriorityP2,
+			"Review pre-existing dirty files before evaluating agent changes.",
+			replay.WorkspaceChange.PreExistingDirtyFiles,
+			nil,
+			nil,
+			model.ConfidenceMedium,
+			"workspace",
+		)
+	}
+
+	if len(replay.WorkspaceChange.AgentTouchedPreExistingFiles) > 0 {
+		addReason("Session modified pre-existing dirty files: "+strings.Join(replay.WorkspaceChange.AgentTouchedPreExistingFiles, ", "), nil, focusReasonReview, true)
+		addTask(
+			"pre_existing_touched",
+			focusTaskPriorityP1,
+			"Review edits to pre-existing dirty files.",
+			replay.WorkspaceChange.AgentTouchedPreExistingFiles,
+			nil,
+			nil,
+			model.ConfidenceHigh,
+			"workspace",
+		)
+	}
+
+	if workspaceSummaryHasComparableChanges(replay.WorkspaceChange) && !replay.WorkspaceChange.FinalDiffMatchesWorkspace {
+		addReason("Final patch does not match the current workspace diff.", []string{finalPatchEvidenceRef}, focusReasonBlock, false)
+		addTask(
+			"diff_mismatch",
+			focusTaskPriorityP0,
+			"Resolve final patch mismatch against current workspace before review can continue.",
+			nil,
+			nil,
+			[]string{finalPatchEvidenceRef},
+			model.ConfidenceHigh,
+			"verification",
+		)
+	}
+
+	if workspaceSummaryHasComparableChanges(replay.WorkspaceChange) && !replay.WorkspaceChange.FinalDiffMatchesBranch {
+		addReason("Final patch does not match current branch workspace diff.", nil, focusReasonReview, true)
+		addTask(
+			"branch_diff_mismatch",
+			focusTaskPriorityP2,
+			"Review whether the final patch aligns with current branch diff expectations.",
+			nil,
+			nil,
+			[]string{finalPatchEvidenceRef},
+			model.ConfidenceMedium,
 			"verification",
 		)
 	}
@@ -440,6 +498,13 @@ func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]Foc
 	})
 
 	return reasons, uniqueTasks
+}
+
+func workspaceSummaryHasComparableChanges(summary WorkspaceChangeSummary) bool {
+	return len(summary.AgentCreatedChanges) > 0 ||
+		len(summary.AgentModifiedCleanFiles) > 0 ||
+		len(summary.AgentTouchedPreExistingFiles) > 0 ||
+		len(summary.PreExistingDirtyFiles) > 0
 }
 
 func determineFocusVerdict(replay Report, reasons []FocusReason) FocusVerdict {

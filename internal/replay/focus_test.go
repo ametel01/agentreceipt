@@ -61,6 +61,65 @@ func TestBuildFocusReportIncludesInstructionFiles(t *testing.T) {
 	}
 }
 
+func TestBuildFocusReportIncludesWorkspaceContextWithoutBlocking(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.WorkspaceChange = WorkspaceChangeSummary{
+		PreExistingDirtyFiles:     []string{"scratch.txt"},
+		FinalDiffMatchesWorkspace: true,
+		FinalDiffMatchesBranch:    true,
+	}
+
+	focus := BuildFocusReport(replay)
+	if focus.Verdict != focusVerdictReviewRequired {
+		t.Fatalf("verdict = %q, want %q", focus.Verdict, focusVerdictReviewRequired)
+	}
+	if focus.WorkspaceChanges.PreExistingDirtyFiles[0] != "scratch.txt" {
+		t.Fatalf("workspace change summary not propagated: %#v", focus.WorkspaceChanges)
+	}
+	hasTask := false
+	for _, task := range focus.ReviewTasks {
+		if task.Kind == "pre_existing_dirty" {
+			hasTask = true
+			if task.Priority == focusTaskPriorityP0 {
+				t.Fatalf("pre-existing dirty task incorrectly marked as block: %#v", task)
+			}
+		}
+	}
+	if !hasTask {
+		t.Fatalf("expected pre_existing_dirty task in focus output")
+	}
+}
+
+func TestBuildFocusReportFlagsWorkspaceDiffMismatchAsBlockingTask(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.WorkspaceChange = WorkspaceChangeSummary{
+		PreExistingDirtyFiles:     []string{"scratch.txt"},
+		FinalDiffMatchesWorkspace: false,
+		FinalDiffMatchesBranch:    true,
+	}
+	replay.Verification.IntegrityValid = true
+	replay.Verification.FinalPatchHashValid = true
+
+	focus := BuildFocusReport(replay)
+	if focus.Verdict != focusVerdictBlock {
+		t.Fatalf("verdict = %q, want %q", focus.Verdict, focusVerdictBlock)
+	}
+	hasMismatchTask := false
+	for _, task := range focus.ReviewTasks {
+		if task.Kind == "diff_mismatch" && task.Priority == focusTaskPriorityP0 {
+			hasMismatchTask = true
+			break
+		}
+	}
+	if !hasMismatchTask {
+		t.Fatalf("expected blocking diff_mismatch task: %#v", focus.ReviewTasks)
+	}
+}
+
 func TestBuildFocusReportBlockVerdict(t *testing.T) {
 	t.Parallel()
 

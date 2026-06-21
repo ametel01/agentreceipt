@@ -104,6 +104,197 @@ func TestBuildProducesVerifiedReplayWithPairedCommandAndChangedFiles(t *testing.
 	}
 }
 
+func TestBuildClassifiesWorkspaceChangesFromCleanStart(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		nil,
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Foo() { return 1 }\n"), 0o600); err != nil {
+				t.Fatalf("write modified main.go: %v", err)
+			}
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if len(report.WorkspaceChange.PreExistingDirtyFiles) != 0 {
+		t.Fatalf("pre-existing dirty files = %#v", report.WorkspaceChange.PreExistingDirtyFiles)
+	}
+	if len(report.WorkspaceChange.AgentModifiedCleanFiles) != 1 || report.WorkspaceChange.AgentModifiedCleanFiles[0] != "main.go" {
+		t.Fatalf("agent_modified_clean_files = %#v", report.WorkspaceChange.AgentModifiedCleanFiles)
+	}
+	if len(report.WorkspaceChange.AgentCreatedChanges) != 0 || len(report.WorkspaceChange.AgentTouchedPreExistingFiles) != 0 {
+		t.Fatalf("unexpected workspace changes: %+v", report.WorkspaceChange)
+	}
+	if !report.WorkspaceChange.FinalDiffMatchesWorkspace {
+		t.Fatalf("expected final patch to match workspace diff")
+	}
+}
+
+func TestBuildSeparatesDirtyStartAndAgentIntroducedFiles(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "scratch.txt"), []byte("scratch\n"), 0o600); err != nil {
+				t.Fatalf("write pre-existing scratch file: %v", err)
+			}
+		},
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Foo() { return 2 }\n"), 0o600); err != nil {
+				t.Fatalf("modify main.go: %v", err)
+			}
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if !containsString(report.WorkspaceChange.PreExistingDirtyFiles, "scratch.txt") {
+		t.Fatalf("pre-existing dirty files = %#v", report.WorkspaceChange.PreExistingDirtyFiles)
+	}
+	if len(report.WorkspaceChange.AgentTouchedPreExistingFiles) != 0 {
+		t.Fatalf("agent_touched_pre_existing_files should be empty: %#v", report.WorkspaceChange.AgentTouchedPreExistingFiles)
+	}
+	if len(report.WorkspaceChange.AgentModifiedCleanFiles) != 1 || report.WorkspaceChange.AgentModifiedCleanFiles[0] != "main.go" {
+		t.Fatalf("agent_modified_clean_files = %#v", report.WorkspaceChange.AgentModifiedCleanFiles)
+	}
+}
+
+func TestBuildClassifiesAgentTouchedPreExistingFiles(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Foo() { return 3 }\n"), 0o600); err != nil {
+				t.Fatalf("modify main.go before start: %v", err)
+			}
+		},
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Foo() { return 4 }\n"), 0o600); err != nil {
+				t.Fatalf("modify main.go during session: %v", err)
+			}
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if !containsString(report.WorkspaceChange.PreExistingDirtyFiles, "main.go") {
+		t.Fatalf("pre-existing dirty files = %#v", report.WorkspaceChange.PreExistingDirtyFiles)
+	}
+	if !containsString(report.WorkspaceChange.AgentTouchedPreExistingFiles, "main.go") {
+		t.Fatalf("agent_touched_pre_existing_files = %#v", report.WorkspaceChange.AgentTouchedPreExistingFiles)
+	}
+	if len(report.WorkspaceChange.AgentModifiedCleanFiles) != 0 {
+		t.Fatalf("agent_modified_clean_files should be empty: %#v", report.WorkspaceChange.AgentModifiedCleanFiles)
+	}
+}
+
+func TestBuildClassifiesUntrackedPreExistingFileAsContext(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "new.txt"), []byte("temp\n"), 0o600); err != nil {
+				t.Fatalf("write untracked file: %v", err)
+			}
+		},
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "new.txt"), []byte("temp\nupdated\n"), 0o600); err != nil {
+				t.Fatalf("modify untracked file: %v", err)
+			}
+			runReplayGit(t, repoRoot, "add", "new.txt")
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if !containsString(report.WorkspaceChange.PreExistingDirtyFiles, "new.txt") {
+		t.Fatalf("pre-existing dirty files = %#v", report.WorkspaceChange.PreExistingDirtyFiles)
+	}
+	if !containsString(report.WorkspaceChange.AgentTouchedPreExistingFiles, "new.txt") {
+		t.Fatalf("agent_touched_pre_existing_files = %#v", report.WorkspaceChange.AgentTouchedPreExistingFiles)
+	}
+}
+
+func TestBuildDetectsFinalPatchWorkspaceMismatch(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		nil,
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Foo() { return 6 }\n"), 0o600); err != nil {
+				t.Fatalf("modify main.go: %v", err)
+			}
+		},
+		nil,
+	)
+
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n\nfunc Foo() { return 7 }\n"), 0o600); err != nil {
+		t.Fatalf("mutate workspace after session: %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if report.WorkspaceChange.FinalDiffMatchesWorkspace {
+		t.Fatalf("final patch should not match workspace after post-session edit")
+	}
+
+	focus := BuildFocusReport(report)
+	if focus.Verdict != focusVerdictBlock {
+		t.Fatalf("focus verdict = %q, want %q", focus.Verdict, focusVerdictBlock)
+	}
+	hasDiffMismatch := false
+	for _, task := range focus.ReviewTasks {
+		if task.Kind == "diff_mismatch" && task.Priority == focusTaskPriorityP0 {
+			hasDiffMismatch = true
+			break
+		}
+	}
+	if !hasDiffMismatch {
+		t.Fatalf("expected diff_mismatch task for workspace diff mismatch")
+	}
+}
+
 func TestBuildRecordsFailedCommandExitCodeAndOutputSummary(t *testing.T) {
 	t.Parallel()
 

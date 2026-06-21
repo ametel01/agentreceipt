@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -55,30 +56,31 @@ type Options struct {
 
 // Report is the verifier-facing replay payload.
 type Report struct {
-	SchemaVersion        int                   `json:"schema_version"`
-	Kind                 string                `json:"kind"`
-	SessionID            string                `json:"session_id"`
-	GeneratedAt          time.Time             `json:"generated_at"`
-	Source               Source                `json:"source"`
-	Verification         Verification          `json:"verification"`
-	Summary              Summary               `json:"summary"`
-	EvaluatorSignals     EvaluatorSignals      `json:"evaluator_signals"`
-	QualityGates         QualityGates          `json:"quality_gates"`
-	PatchSummary         PatchSummary          `json:"patch_summary"`
-	PolicyChecks         []PolicyCheck         `json:"policy_checks"`
-	ReviewFocus          []ReviewFocusItem     `json:"review_focus"`
-	Privacy              PrivacyReport         `json:"privacy"`
-	Claims               []Claim               `json:"claims"`
-	Outcome              Outcome               `json:"outcome"`
-	Timeline             []TimelineItem        `json:"timeline"`
-	Commands             []Command             `json:"commands"`
-	InstructionFiles     []InstructionFile     `json:"instruction_files"`
-	Files                []File                `json:"files"`
-	Risks                []Risk                `json:"risks"`
-	FailedCommandDetails []FailedCommandDetail `json:"failed_command_details,omitempty"`
-	Gaps                 []string              `json:"gaps"`
-	VerifierTasks        []string              `json:"verifier_tasks"`
-	Artifacts            []Artifact            `json:"artifacts"`
+	SchemaVersion        int                    `json:"schema_version"`
+	Kind                 string                 `json:"kind"`
+	SessionID            string                 `json:"session_id"`
+	GeneratedAt          time.Time              `json:"generated_at"`
+	Source               Source                 `json:"source"`
+	Verification         Verification           `json:"verification"`
+	Summary              Summary                `json:"summary"`
+	EvaluatorSignals     EvaluatorSignals       `json:"evaluator_signals"`
+	QualityGates         QualityGates           `json:"quality_gates"`
+	PatchSummary         PatchSummary           `json:"patch_summary"`
+	PolicyChecks         []PolicyCheck          `json:"policy_checks"`
+	ReviewFocus          []ReviewFocusItem      `json:"review_focus"`
+	Privacy              PrivacyReport          `json:"privacy"`
+	Claims               []Claim                `json:"claims"`
+	Outcome              Outcome                `json:"outcome"`
+	Timeline             []TimelineItem         `json:"timeline"`
+	Commands             []Command              `json:"commands"`
+	InstructionFiles     []InstructionFile      `json:"instruction_files"`
+	Files                []File                 `json:"files"`
+	WorkspaceChange      WorkspaceChangeSummary `json:"workspace_change_summary"`
+	Risks                []Risk                 `json:"risks"`
+	FailedCommandDetails []FailedCommandDetail  `json:"failed_command_details,omitempty"`
+	Gaps                 []string               `json:"gaps"`
+	VerifierTasks        []string               `json:"verifier_tasks"`
+	Artifacts            []Artifact             `json:"artifacts"`
 }
 
 type Source struct {
@@ -211,6 +213,15 @@ type File struct {
 	Dependency   bool     `json:"dependency"`
 	InFinalPatch bool     `json:"in_final_patch"`
 	EvidenceRefs []string `json:"evidence_refs"`
+}
+
+type WorkspaceChangeSummary struct {
+	PreExistingDirtyFiles        []string `json:"pre_existing_dirty_files"`
+	AgentTouchedPreExistingFiles []string `json:"agent_touched_pre_existing_files"`
+	AgentCreatedChanges          []string `json:"agent_created_changes"`
+	AgentModifiedCleanFiles      []string `json:"agent_modified_clean_files"`
+	FinalDiffMatchesWorkspace    bool     `json:"final_diff_matches_workspace"`
+	FinalDiffMatchesBranch       bool     `json:"final_diff_matches_branch"`
 }
 
 type InstructionFile struct {
@@ -349,6 +360,9 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		gaps = append(gaps, "Unable to read final patch: "+finalPatchErr.Error())
 	}
 
+	workspaceSummary, workspaceSummaryGaps := buildWorkspaceChangeSummary(ctx, events, finalPatch, repoRoot)
+	gaps = append(gaps, workspaceSummaryGaps...)
+
 	classifier := fswatcher.NewClassifier(cfg)
 	patchSummary, patchGaps := buildPatchSummary(finalPatch, classifier)
 	gaps = append(gaps, patchGaps...)
@@ -399,6 +413,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		PatchSummary:         patchSummary,
 		PolicyChecks:         policyChecks,
 		ReviewFocus:          reviewFocus,
+		WorkspaceChange:      workspaceSummary,
 		Privacy:              privacyReport,
 		FailedCommandDetails: failedCommandDetails,
 		Timeline:             timeline,
@@ -1172,6 +1187,190 @@ type patchFile struct {
 	Action string
 }
 
+type workspaceSnapshot struct {
+	phase  string
+	branch string
+	head   string
+	dirty  bool
+	status []gitmonitor.StatusEntry
+}
+
+func buildWorkspaceChangeSummary(ctx context.Context, events []model.Event, finalPatch string, repoRoot string) (WorkspaceChangeSummary, []string) {
+	summary := WorkspaceChangeSummary{
+		FinalDiffMatchesWorkspace: true,
+		FinalDiffMatchesBranch:    true,
+	}
+	gaps := make([]string, 0)
+	startSnapshot, hasStartSnapshot, finalSnapshot, hasFinalSnapshot := workspaceSnapshots(events)
+
+	preExistingDirty := map[string]string{}
+	for _, entry := range startSnapshot.status {
+		path := filepath.ToSlash(strings.TrimSpace(entry.Path))
+		if path == "" {
+			continue
+		}
+		preExistingDirty[path] = strings.TrimSpace(entry.Code)
+		summary.PreExistingDirtyFiles = append(summary.PreExistingDirtyFiles, path)
+	}
+
+	if !hasStartSnapshot {
+		gaps = append(gaps, "Missing git start snapshot in session events.")
+	}
+	if !hasFinalSnapshot {
+		gaps = append(gaps, "Missing git final snapshot in session events.")
+	}
+
+	finalPatchFiles := parseFinalPatchFiles(finalPatch)
+	changedActionsByPath := map[string]string{}
+	for _, file := range finalPatchFiles {
+		path := filepath.ToSlash(strings.TrimSpace(file.Path))
+		if path == "" {
+			continue
+		}
+		if _, exists := changedActionsByPath[path]; !exists {
+			changedActionsByPath[path] = strings.TrimSpace(file.Action)
+		}
+	}
+
+	for path := range changedActionsByPath {
+		action := changedActionsByPath[path]
+		if _, dirtyAtStart := preExistingDirty[path]; dirtyAtStart {
+			summary.AgentTouchedPreExistingFiles = append(summary.AgentTouchedPreExistingFiles, path)
+			continue
+		}
+		if action == "add" {
+			summary.AgentCreatedChanges = append(summary.AgentCreatedChanges, path)
+			continue
+		}
+		summary.AgentModifiedCleanFiles = append(summary.AgentModifiedCleanFiles, path)
+	}
+
+	summary.PreExistingDirtyFiles = uniqueSorted(summary.PreExistingDirtyFiles)
+	summary.AgentTouchedPreExistingFiles = uniqueSorted(summary.AgentTouchedPreExistingFiles)
+	summary.AgentCreatedChanges = uniqueSorted(summary.AgentCreatedChanges)
+	summary.AgentModifiedCleanFiles = uniqueSorted(summary.AgentModifiedCleanFiles)
+
+	if finalPatch == "" {
+		return summary, uniqueSorted(gaps)
+	}
+
+	finalPatchHash := hashHex([]byte(finalPatch))
+	currentWorkspaceHash, err := workspaceDiffHash(ctx, repoRoot)
+	if err != nil {
+		gaps = append(gaps, "Unable to compare final patch against current workspace: "+err.Error())
+	} else {
+		summary.FinalDiffMatchesWorkspace = finalPatchHash == currentWorkspaceHash
+	}
+
+	branch := finalSnapshot.branch
+	if branch == "" {
+		branch = startSnapshot.branch
+	}
+	if branch == "" {
+		gaps = append(gaps, "Unable to compare final patch against branch: missing branch snapshot.")
+	} else {
+		branchWorkspaceHash, err := branchDiffHash(ctx, repoRoot, branch)
+		if err != nil {
+			gaps = append(gaps, "Unable to compare final patch against branch "+branch+": "+err.Error())
+		} else {
+			summary.FinalDiffMatchesBranch = finalPatchHash == branchWorkspaceHash
+		}
+	}
+
+	return summary, uniqueSorted(gaps)
+}
+
+func workspaceSnapshots(events []model.Event) (start workspaceSnapshot, hasStart bool, final workspaceSnapshot, hasFinal bool) {
+	for _, event := range events {
+		if event.Source != gitmonitor.Source || event.Type != "git.snapshot" {
+			continue
+		}
+		snapshot, ok := parseWorkspaceSnapshot(event.Payload)
+		if !ok {
+			continue
+		}
+		switch snapshot.phase {
+		case "start":
+			start = snapshot
+			hasStart = true
+		case "final":
+			final = snapshot
+			hasFinal = true
+		}
+	}
+
+	return start, hasStart, final, hasFinal
+}
+
+func parseWorkspaceSnapshot(payload map[string]any) (workspaceSnapshot, bool) {
+	if payload == nil {
+		return workspaceSnapshot{}, false
+	}
+	phase := stringFromEventPayload(payload, "phase")
+	if phase == "" {
+		return workspaceSnapshot{}, false
+	}
+	snapshot := workspaceSnapshot{
+		phase:  phase,
+		branch: strings.TrimSpace(stringFromEventPayload(payload, "branch")),
+		head:   strings.TrimSpace(stringFromEventPayload(payload, "head")),
+		dirty:  boolFromEventPayload(payload, "dirty"),
+		status: parseWorkspaceStatus(payload),
+	}
+
+	return snapshot, true
+}
+
+func parseWorkspaceStatus(payload map[string]any) []gitmonitor.StatusEntry {
+	rawStatus, ok := payload["status"].([]any)
+	if !ok {
+		return nil
+	}
+	status := make([]gitmonitor.StatusEntry, 0, len(rawStatus))
+	for _, raw := range rawStatus {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		status = append(status, gitmonitor.StatusEntry{
+			Code: strings.TrimSpace(stringFromEventPayload(entry, "code")),
+			Path: filepath.ToSlash(stringFromEventPayload(entry, "path")),
+		})
+	}
+
+	return status
+}
+
+func workspaceDiffHash(ctx context.Context, repoRoot string) (string, error) {
+	patch, err := gitDiffPatch(ctx, repoRoot, "HEAD")
+	if err != nil {
+		return "", err
+	}
+
+	return hashHex([]byte(patch)), nil
+}
+
+func branchDiffHash(ctx context.Context, repoRoot string, branch string) (string, error) {
+	patch, err := gitDiffPatch(ctx, repoRoot, branch)
+	if err != nil {
+		return "", err
+	}
+
+	return hashHex([]byte(patch)), nil
+}
+
+func gitDiffPatch(ctx context.Context, repoRoot string, compareTo string) (string, error) {
+	args := []string{"diff", "--binary", compareTo}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff --binary %s: %w: %s", compareTo, err, strings.TrimSpace(string(output)))
+	}
+
+	return string(output), nil
+}
+
 func buildFiles(classifier fswatcher.Classifier, changed []model.ChangedFile, finalPatch string, events []model.Event) []File {
 	fileRefs := map[string][]string{}
 	for _, event := range events {
@@ -1837,6 +2036,27 @@ func stringFromEventPayload(payload map[string]any, key string) string {
 		return ""
 	}
 	return txt
+}
+
+func boolFromEventPayload(payload map[string]any, key string) bool {
+	if payload == nil {
+		return false
+	}
+	value := payload[key]
+	boolean, ok := value.(bool)
+	if ok {
+		return boolean
+	}
+	number, ok := value.(float64)
+	if ok {
+		return number != 0
+	}
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	return normalized == "true" || normalized == "1" || normalized == "yes"
 }
 
 func int64FromEventPayload(payload map[string]any, key string) int64 {

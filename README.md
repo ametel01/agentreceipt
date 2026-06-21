@@ -192,6 +192,8 @@ agentreceipt focus --replay ./replay.json --json
 - Replay is artifact-only: no command reruns, no patch application, no model calls, no workspace mutation.
 - Raw prompts, raw tool output, and raw provider logs are not included by default.
 - Evaluator conclusions should be inferred from command/output evidence and integrity status in `replay.json`, not by any built-in policy rule in this command.
+- `workspace_change_summary` identifies files that were already dirty at session start versus files introduced or modified during the session, so reviewers can separate local context from agent work.
+- Replay/focus report `top_reasons` and tasks include workspace-diff checks including whether final patch still matches the current workspace.
 - `focus --session <id> --json` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
 - `focus --replay ./replay.json --json` emits the same compact focus result directly from a replay report.
 - `focus` review tasks are ranked (`P0` → `P3`) and include `id`, `kind`, `question`, `paths`, `symbols`, `evidence_refs`, `confidence`, and `source` so loop automation can prioritize work.

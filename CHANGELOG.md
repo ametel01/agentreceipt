@@ -16,6 +16,7 @@ and this project follows semantic versioning.
 - Added Step 4 per-file evidence dossiers to focus reports, including dependency/symbol/policy status fields, explicit command/test associations, review reasons, and enriched file-level evidence references.
 - Added session-start instruction-file capture (`AGENTS.md`, `CLAUDE.md`) with deterministic metadata events, summary extraction, and non-regular/unreadable file warnings.
 - Added replay `instruction_files` output and focus report pass-through of captured instruction file evidence.
+- Added workspace change separation in replay/focus (`workspace_change_summary`) to distinguish pre-existing dirty files from session-introduced file changes, and added deterministic checks for final-patch/workspace parity.
 
 ## [0.7.0] - 2026-06-21
 

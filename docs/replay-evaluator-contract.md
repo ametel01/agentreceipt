@@ -62,6 +62,7 @@ evaluator-facing sections:
 - `instruction_files`
 - `quality_gates`
 - `patch_summary`
+- `workspace_change_summary`
 - `policy_checks`
 - `review_focus`
 - `privacy`
@@ -150,6 +151,17 @@ It includes:
 - `production_changed_without_tests_changed`
 
 The existing `files` array remains available for direct file lookup.
+
+`workspace_change_summary` separates workspace state at session start from changes introduced during the session:
+
+- `pre_existing_dirty_files`
+- `agent_touched_pre_existing_files`
+- `agent_created_changes`
+- `agent_modified_clean_files`
+- `final_diff_matches_workspace`
+- `final_diff_matches_branch`
+
+The pre-existing file lists are review context and are not automatic blockers on their own.
 
 ## Policy Checks And Review Focus
 

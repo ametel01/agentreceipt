@@ -15,7 +15,7 @@ Source documents:
 - [x] Step 3: Add ranked structured review tasks
 - [x] Step 4: Add per-file evidence dossiers
 - [x] Step 5: Capture coding-agent instruction files at session start
-- [ ] Step 6: Separate pre-existing and agent-introduced changes
+- [x] Step 6: Separate pre-existing and agent-introduced changes
 - [ ] Step 7: Add stable JSON schema output
 - [ ] Step 8: Add machine-oriented exit codes for loop-facing commands
 - [ ] Step 9: Add first-class diff equivalence verification
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 5` completed
-- Next step: `Step 6`
+- Current phase: `Step 6` completed
+- Next step: `Step 7`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -110,6 +110,31 @@ Source documents:
   - Updated session tests to assert start capture behavior and warning persistence for invalid instruction paths.
   - Validation:
     - `gofmt -w internal/capture/instructions/instructions.go internal/replay/replay.go internal/replay/focus.go internal/replay/focus_test.go internal/replay/replay_test.go internal/session/session.go internal/session/session_test.go docs/replay-evaluator-contract.md README.md CHANGELOG.md`
-    - `go test ./internal/session ./internal/replay ./internal/capture/instructions`
-    - `go test ./...`
+  - `go test ./internal/session ./internal/replay ./internal/capture/instructions`
+  - `go test ./...`
   - Commit: not committed
+
+- 2026-06-21 — Completed Step 6 for workspace change separation.
+  - Added replay-side workspace change classification from git snapshots and final patch evidence:
+    - `pre_existing_dirty_files`
+    - `agent_touched_pre_existing_files`
+    - `agent_created_changes`
+    - `agent_modified_clean_files`
+    - `final_diff_matches_workspace`
+    - `final_diff_matches_branch`
+  - Added focus propagation of workspace context and blocker tasks when final patch mismatch with current workspace is detected.
+  - Added replay and focus unit tests for clean-start, pre-existing dirty, touched pre-existing, untracked-start, and final diff mismatch scenarios.
+  - Updated evaluator contract and README to document start-state vs agent-introduced change distinctions.
+  - Validation:
+    - `gofmt -w internal/replay/replay.go internal/replay/focus.go internal/replay/replay_test.go internal/replay/focus_test.go docs/replay-evaluator-contract.md README.md PROGRESS.md`
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `go test -race ./...` (fails reproducibly in this run: `TestBuildMergesFinalPatchAndFilesystemEvidence` reports `git rev-parse --show-toplevel: signal: segmentation fault`)
+    - `make security` (fails on pre-existing/high-confidence findings in `internal/replay/replay.go` and `internal/capture/instructions/instructions.go`)
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `go test ./internal/replay`
+    - `make verify` (fails in this run during `test-race`/`security` phase)
+  - Commit: `2ce3071`
