@@ -21,12 +21,12 @@ Source documents:
 - [x] Step 9: Add first-class diff equivalence verification
 - [x] Step 10: Add loop-health evaluator signals
 - [x] Step 11: Add evidence reference dereferencing
-- [ ] Step 12: Final documentation and contract hardening
+- [x] Step 12: Final documentation and contract hardening
 
 ## Status
 
-- Current phase: `Step 11` completed
-- Next step: `Step 12`
+- Current phase: `Step 12` completed
+- Next step: `complete`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -233,3 +233,16 @@ Source documents:
     - `go test ./internal/replay ./cmd`
     - `make verify`
   - Commit: `b6db531`
+
+- 2026-06-21 — Completed Step 12 for final documentation and contract hardening.
+  - Added a README coding-agent reviewer-loop workflow covering replay, focus, schema, and diff-equivalence commands.
+  - Updated PRD, TECH_SPEC, and evaluator contract docs to describe implemented focus reports, review tasks, file dossiers, instruction evidence, workspace separation, exit codes, diff verification, loop-health signals, and evidence indexes.
+  - Expanded smoke coverage for focus JSON, replay/focus schemas, and verify-diff happy paths.
+  - Tightened schema command help wording and finalized the Unreleased changelog entry for contract hardening.
+  - Validation:
+    - `bash -n scripts/smoke.sh`
+    - `go test ./cmd`
+    - `./scripts/smoke.sh`
+    - `go test ./internal/replay -run TestBuildProducesVerifiedReplayWithPairedCommandAndChangedFiles -count=1 -coverprofile=/tmp/agentreceipt-replay-cover.out`
+    - `make verify`
+  - Commit: this step

@@ -56,6 +56,7 @@ Structured logging is a runtime stream concern, not the default rendering mechan
   - `--pr`
 - PR workflow support through generated Markdown and a GitHub CLI convenience command.
 - Verifier replay reporting and portable replay bundles.
+- Reviewer-loop focus reporting, schema output, diff-equivalence verification, loop-health signals, and evidence-index references.
 - Future GitHub PR check variants are documented in [GitHub PR Workflow Design](GITHUB_PR_WORKFLOW_DESIGN.md); they are not active CI gates in the Codex-first MVP.
 - Codex provider research/diagnostic command for validating local log evidence before full capture.
 - Policy-driven redaction for export/review payloads
@@ -65,7 +66,7 @@ Structured logging is a runtime stream concern, not the default rendering mechan
 - Auto-start on Codex execution
 - Wrapped/managed agent execution
 - Multi-agent comparison, trust scoring, cloud policy enforcement
-- Hook-based Claude integration as primary path (deferred integration only)
+- Claude live watch and full transcript import as primary paths
 
 ## 4) Architecture
 
@@ -107,7 +108,7 @@ fs events + git signals + codex logs
 | --- | --- |
 | `agentreceipt init` | Bootstrap global AgentReceipt storage and keys under `~/.agentreceipt/` if missing; does not write repo-local files. |
 | `agentreceipt install codex` | Read-only detection of Codex log directories and next-step watch guidance. |
-| `agentreceipt install claude` | Deferred roadmap path; command may explain that Claude hook installation is not active in Codex-first MVP. |
+| `agentreceipt install claude` | Install or dry-run an MVP Claude hook entry in local Claude settings. |
 | `agentreceipt start` | Fail-fast if git monitor or filesystem watcher cannot initialize. Create session, persist `manifest.json`, begin capture. |
 | `agentreceipt status` | Show current session health and event summary counts. |
 | `agentreceipt sessions` | List known sessions for the current repository, ordered by most recently updated. |
@@ -116,6 +117,10 @@ fs events + git signals + codex logs
 | `agentreceipt review` | Produce concise summary in terminal (`--last`, `--session <id>`, `--security`, `--diff`, `--codex-jsonl <path>`, `--json`, `--md`, `--pr`). |
 | `agentreceipt verify` | Validate chain, manifest, diff hash, signature. |
 | `agentreceipt replay` | Build machine-readable verifier report from a specified session and optional portable bundle output. Replay output is factual evidence only and carries no built-in policy decisions. |
+| `agentreceipt focus` | Build compact reviewer-agent JSON from a session or existing `replay.json`; requires `--json` and one explicit source. |
+| `agentreceipt schema replay` | Print the replay JSON Schema contract. |
+| `agentreceipt schema focus` | Print the focus JSON Schema contract. |
+| `agentreceipt verify diff` | Compare the finalized receipt patch against `HEAD`, `merge-base`, `patch:<path>`, or `pr.patch`. |
 | `agentreceipt export --json|--md|--pr` | Rehydrate finalized receipt in requested format. |
 | `agentreceipt import codex-jsonl <path>` | Optional parser path for non-interactive Codex JSONL. |
 | `agentreceipt inspect codex --last` | Provider research harness that reports Codex log discovery, parseability, candidate sessions, command/tool extraction coverage, and confidence. |
@@ -258,8 +263,8 @@ Key fields:
             receipt.sig
 ```
 
-Event log is append-only. Parsed Codex files should be treated as untrusted input and normalized with warnings.
-Claude directories are reserved for roadmap compatibility and should not imply active Claude hook support in the Codex-first MVP. The deferred Claude contract is documented in [Claude Provider Design](CLAUDE_PROVIDER_DESIGN.md) before implementation.
+Event log is append-only. Parsed Codex and Claude hook inputs should be treated as untrusted input and normalized with warnings.
+Claude hook events are stored under provider-specific session paths when active; full Claude transcript import remains outside the current MVP.
 Large provider payloads and command outputs should be stored as content-addressed local blobs when retained, with redacted references in exported reports.
 
 A replay bundle produced by `agentreceipt replay --bundle <path>` reuses required artifacts from session storage and writes:
@@ -277,6 +282,8 @@ provider/
 ```
 
 Raw provider logs such as `provider/codex/imported-session.jsonl` are intentionally omitted from the default replay bundle.
+
+Replay and focus reports carry dereferenceable `evidence_index` entries for events, commands, files, artifacts, and final patch references. Entries include confidence and redaction metadata so downstream reviewer loops can follow evidence refs without reading raw provider logs.
 
 ## 8) Component design
 
@@ -356,6 +363,15 @@ Raw provider logs such as `provider/codex/imported-session.jsonl` are intentiona
 - Replay output is strictly factual: it reports observed sequence, command, file, integrity, and gap data for evaluators; it does not output quality-policy recommendations.
 - `--bundle` writes a portable bundle using only portable artifacts and optional normalized Codex traces.
 
+### 8.9 Focus, schemas, and diff verification
+
+- `agentreceipt focus --session <id> --json` builds replay from the named session and projects it into `agentreceipt.session_focus`.
+- `agentreceipt focus --replay <path> --json` reads an existing replay report and produces the same focus projection without session storage.
+- Focus output contains verdict, top reasons, ranked review tasks, per-file dossiers, failed gates, workspace-change summary, instruction-file evidence, evaluator signals, evidence index, and evidence refs.
+- `agentreceipt schema replay` and `agentreceipt schema focus` print embedded JSON Schema documents for contract consumers.
+- `agentreceipt verify diff` compares normalized finalized and candidate patches and returns machine-oriented exit codes for pass, integrity failure, mismatch, and invalid input.
+- These loop-facing surfaces are local and deterministic; they do not rank agents, score models, enforce policy, or orchestrate execution.
+
 ## 9) Session state machine
 
 ```
@@ -429,6 +445,8 @@ Transitions:
 10. `mark` persists human context as a chained event in the active session.
 11. `replay --session <id>` emits verifier-facing JSON with `kind: "agentreceipt.session_replay"`.
 12. `replay --session <id> --bundle <path>` writes a portable replay package including `replay.json` and required artifacts.
+13. `focus --session <id> --json` and `focus --replay <path> --json` emit `kind: "agentreceipt.session_focus"` with deterministic exit codes.
+14. `schema replay`, `schema focus`, and `verify diff` cover the machine-loop contract surface without network calls.
 
 ## 14) Strict quality gates
 

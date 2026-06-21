@@ -133,6 +133,9 @@ Current implemented scope includes:
 - local artifact bundle verification
 - machine-readable verifier replay via `agentreceipt replay --session <id>`
 - portable replay bundles via `agentreceipt replay --session <id> --bundle <path>`
+- compact reviewer-loop focus reports via `agentreceipt focus --session <id> --json`
+- replay/focus JSON Schema output via `agentreceipt schema replay` and `agentreceipt schema focus`
+- local diff-equivalence verification via `agentreceipt verify diff`
 - GitHub CLI PR comment posting
 - release packaging and installer scripts
 
@@ -251,11 +254,15 @@ agentreceipt review --pr
 agentreceipt verify
 agentreceipt verify --session <id>
 agentreceipt verify bundle ./agentreceipt
+agentreceipt verify diff --session <id> --against merge-base --json
+agentreceipt verify diff --session <id> --against patch:<path>/final.patch --json
 ```
 
 `verify` checks receipt integrity for a local finalized session.
 
 `verify bundle` checks a local artifact bundle path and does not contact GitHub.
+
+`verify diff` compares a finalized receipt patch with a candidate patch target (`HEAD`, `merge-base`, `patch:<path>`, or `pr.patch`) and exits with deterministic loop-oriented codes for pass, integrity failure, patch mismatch, or invalid input.
 
 ### Replay
 
@@ -263,6 +270,10 @@ agentreceipt verify bundle ./agentreceipt
 agentreceipt replay --session <id>
 agentreceipt replay --session <id> --json
 agentreceipt replay --session <id> --bundle ./replay-bundle
+agentreceipt focus --session <id> --json
+agentreceipt focus --replay ./replay.json --json
+agentreceipt schema replay
+agentreceipt schema focus
 ```
 
 Replay reconstructs a verifier-facing JSON payload from one finalized session artifact set.
@@ -271,6 +282,8 @@ Replay reconstructs a verifier-facing JSON payload from one finalized session ar
 - Output is machine-readable JSON and defaults to `agentreceipt.session_replay` structure.
 - `--bundle <path>` writes `replay.json` plus required session artifacts and optional normalized Codex traces for offline verifier consumption.
 - Replay is artifact-only: it reads session artifacts, does not rerun commands, and does not call local or remote models.
+- `focus` emits a compact reviewer-agent projection with a deterministic verdict, ranked review tasks, file dossiers, failed gates, instruction-file evidence, workspace-change context, loop-health signals, and dereferenceable evidence references.
+- `schema replay` and `schema focus` print JSON Schema contracts for machine consumers.
 
 ### Export And PR Comment
 
@@ -322,8 +335,12 @@ All commands inherit:
 | `agentreceipt review` | Builds a reviewer-focused report from a finalized or selected session. |
 | `agentreceipt verify` | Verifies local receipt integrity and exits non-zero when invalid. |
 | `agentreceipt verify bundle <path>` | Verifies a local artifact bundle and exits non-zero when invalid. |
+| `agentreceipt verify diff` | Compares a finalized receipt patch against `HEAD`, `merge-base`, `patch:<path>`, or `pr.patch`. |
 | `agentreceipt replay` | Builds a machine-readable verifier replay report for `--session <id>`. |
 | `agentreceipt replay --session <id> --bundle <path>` | Writes a portable verifier replay bundle and exits non-zero when replay construction or required artifact checks fail. |
+| `agentreceipt focus` | Builds compact reviewer-agent JSON from `--session <id>` or `--replay <path>`. Requires `--json`. |
+| `agentreceipt schema replay` | Prints the replay JSON Schema contract. |
+| `agentreceipt schema focus` | Prints the focus JSON Schema contract. |
 | `agentreceipt export --json|--md|--pr` | Exports a finalized receipt in one selected format. |
 | `agentreceipt import codex-jsonl <path>` | Parses a Codex JSONL trace. If a session is active, writes Codex traces and appends provider events. Otherwise runs as a preview import. |
 | `agentreceipt inspect codex` | Lists local Codex evidence candidates and warnings. |
@@ -427,6 +444,13 @@ Replay surfaces explicit verifier fields for:
 - validation status and warnings
 - missing evidence gaps
 - verifier tasks derived from evidence gaps and risks
+- quality gate, policy check, privacy, claim, and outcome fields
+- instruction-file metadata captured at session start
+- workspace change separation for pre-existing dirty files versus session-introduced changes
+- loop-health `evaluator_signals`
+- deduplicated `evidence_index` entries for events, commands, files, artifacts, and final patches
+
+Focus reports project replay evidence into compact reviewer-loop fields: `verdict`, `top_reasons`, ranked `review_tasks`, per-file dossiers, failed gates, workspace-change summary, instruction files, evaluator signals, evidence index, and top-level evidence refs. Focus is a workflow signal, not a trust score.
 
 ## 8. Confidence And Risk
 
@@ -770,6 +794,8 @@ Markdown and PR output are concise review summaries. JSON output emits the struc
 
 `agentreceipt replay` checks the same artifact hashes and signature state through the local replay path, but it is intentionally artifact-only and does not require a current workspace diff check.
 
+`agentreceipt verify diff` performs patch-equivalence checks between the finalized receipt patch and a candidate target (`HEAD`, `merge-base`, `patch:<path>`, or `pr.patch`). It does not contact GitHub and does not apply the patch.
+
 New receipts embed signer public key and signer key ID. Verification can therefore work without the signer's local key directory. Legacy verification can still fall back to the local public key.
 
 Invalid verification prints a rendered verification result and exits non-zero.
@@ -804,6 +830,7 @@ Current limitations are:
 - Review risk is heuristic and deterministic, not a security verdict.
 - `verify bundle` verifies local artifacts only; it does not contact GitHub or enforce CI policy.
 - `replay` is explicit-session only (`--session <id>`) and intentionally excludes raw prompts, raw tool output, and raw provider logs by default.
+- `focus` is JSON-only and requires exactly one source: `--session <id>` or `--replay <path>`.
 
 ## 17. Build, Test, Release
 

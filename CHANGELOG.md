@@ -33,6 +33,7 @@ and this project follows semantic versioning.
   - `60` invalid input
 - Added loop-health evaluator signals in replay and focus output, including token totals, failed-command streaks, repeated file edit counts, read-to-edit ratio, validation-after-last-edit state, and related review tasks.
 - Added dereferenceable replay/focus evidence index entries for events, commands, files, artifacts, and final patch references.
+- Hardened reviewer-loop documentation, CLI help wording, and smoke coverage for `focus`, `schema`, and `verify diff` contract paths.
 
 ## [0.7.0] - 2026-06-21
 

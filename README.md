@@ -218,6 +218,21 @@ Replay JSON now includes explicit contract fields for verification, quality gate
 policy checks, review focus, privacy, claims, and final outcome. The detailed contract is documented
 in [docs/replay-evaluator-contract.md](docs/replay-evaluator-contract.md).
 
+### Coding-agent reviewer loop
+
+Use this command set when another local tool or coding agent needs a deterministic pass/review/block signal from one recorded session:
+
+```bash
+agentreceipt replay --session <id> --json
+agentreceipt focus --session <id> --json
+agentreceipt focus --replay replay.json --json
+agentreceipt schema replay
+agentreceipt schema focus
+agentreceipt verify diff --session <id> --against merge-base
+```
+
+`replay` is the full factual evidence report. `focus` is a compact projection for loop control and ranked review tasks. `schema` prints the parser contracts, and `verify diff` checks that the finalized receipt patch is equivalent to the candidate patch under review. These commands are local-only and do not rank agents, score models, enforce policy, or orchestrate execution.
+
 ### 8) Export for PRs
 
 ```bash

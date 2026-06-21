@@ -106,6 +106,16 @@ integrity and do not form a score:
 
 `evidence_index` is a deduplicated list of all known evidence references (`events`, `commands`, `files`, and `artifacts`), with redaction and confidence annotations so downstream reviewers can dereference entries deterministically.
 
+Each entry has:
+
+- `ref`: the dereferenceable reference string, such as `events.jsonl#seq=1`, `commands/0001`, `files/README.md`, or `diffs/final.patch`
+- `type`: `event`, `command`, `file`, or `artifact`
+- `path`: the related local artifact path when one exists
+- `redacted`: whether the referenced evidence was redacted before export
+- `confidence`: the confidence level attached to the evidence source
+
+Focus output carries the same `evidence_index` so compact reviewer loops can resolve `evidence_refs` without loading full replay details first.
+
 `instruction_files` includes metadata captured from `AGENTS.md` and `CLAUDE.md` at session start:
 
 - `path`

@@ -59,11 +59,20 @@ inspect_output="$("$tmpdir/agentreceipt" inspect codex --home "$tmpdir/missing-c
 replay_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --json)"
 replay_bundle_dir="$tmpdir/replay-bundle"
 replay_bundle_output="$("$tmpdir/agentreceipt" --repo "$repo" replay --session "$session_id" --json --bundle "$replay_bundle_dir")"
+schema_replay_output="$("$tmpdir/agentreceipt" schema replay)"
+schema_focus_output="$("$tmpdir/agentreceipt" schema focus)"
 
 if "$tmpdir/agentreceipt" --repo "$repo" replay; then
     echo "expected replay without --session to fail" >&2
     exit 1
 fi
+
+set +e
+focus_output="$("$tmpdir/agentreceipt" --repo "$repo" focus --session "$session_id" --json 2>"$tmpdir/focus-session.err")"
+focus_status=$?
+focus_replay_output="$("$tmpdir/agentreceipt" focus --replay "$replay_bundle_dir/replay.json" --json 2>"$tmpdir/focus-replay.err")"
+focus_replay_status=$?
+set -e
 
 [[ "$init_output" == *"Initialized global AgentReceipt storage"* ]]
 [[ "$session_id" == ar_ses_* ]]
@@ -91,6 +100,17 @@ fi
 [[ "$replay_output" == *"\"receipt_hash_valid\": true"* ]]
 [[ "$replay_output" == *"\"path\": \"README.md\""* ]]
 [[ "$replay_output" == *"\"in_final_patch\": true"* ]]
+[[ "$focus_output" == *"\"kind\": \"agentreceipt.session_focus\""* ]]
+[[ "$focus_output" == *"\"session_id\": \"$session_id\""* ]]
+[[ "$focus_output" == *"\"review_tasks\""* ]]
+[[ "$focus_replay_output" == *"\"kind\": \"agentreceipt.session_focus\""* ]]
+[[ "$focus_replay_output" == *"\"session_id\": \"$session_id\""* ]]
+[[ "$schema_replay_output" == *"\"title\": \"AgentReceipt Replay Report\""* ]]
+[[ "$schema_replay_output" == *"\"const\": \"agentreceipt.session_replay\""* ]]
+[[ "$schema_focus_output" == *"\"title\": \"AgentReceipt Focus Report\""* ]]
+[[ "$schema_focus_output" == *"\"const\": \"agentreceipt.session_focus\""* ]]
+case "$focus_status" in 0|10|20|30|40|50) ;; *) echo "unexpected focus status $focus_status" >&2; exit 1 ;; esac
+case "$focus_replay_status" in 0|10|20|30|40|50) ;; *) echo "unexpected replay focus status $focus_replay_status" >&2; exit 1 ;; esac
 
 test -s "$keydir/default.ed25519"
 test -s "$keydir/default.pub"
@@ -98,6 +118,9 @@ test ! -e "$repo/.agentreceipt"
 test ! -e "$repo/.agentreceipt.yml"
 session_dir="$(find "$home/repos" -path "*/sessions/$session_id" -type d -print -quit)"
 test -n "$session_dir"
+verify_diff_output="$("$tmpdir/agentreceipt" --repo "$repo" verify diff --session "$session_id" --against "patch:$session_dir/diffs/final.patch" --json)"
+[[ "$verify_diff_output" == *"\"equivalent\": true"* ]]
+[[ "$verify_diff_output" == *"\"against\": \"patch:"* ]]
 test -s "$session_dir/receipt.json"
 test -s "$session_dir/review.md"
 test -s "$session_dir/signatures/receipt.sig"

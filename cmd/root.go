@@ -1158,7 +1158,7 @@ func newFocusCommand() *cobra.Command {
 func newSchemaCommand() *cobra.Command {
 	schema := &cobra.Command{
 		Use:   "schema",
-		Short: "Print schema artifacts for machine consumers",
+		Short: "Print JSON schemas for replay and focus contracts",
 	}
 	schema.AddCommand(
 		newSchemaReplayCommand(),
