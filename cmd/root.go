@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1221,8 +1223,59 @@ func newVerifyCommand() *cobra.Command {
 	}
 	verify.Flags().String("session", "", "Verify a specific session ID")
 	verify.AddCommand(newVerifyBundleCommand())
+	verify.AddCommand(newVerifyDiffCommand())
 
 	return verify
+}
+
+func newVerifyDiffCommand() *cobra.Command {
+	diff := &cobra.Command{
+		Use:   "diff",
+		Short: "Compare a finalized receipt patch against a candidate patch",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			r, exitCode, err := buildVerifyDiffResult(cmd)
+			if err != nil {
+				if exitCode == exitCodeInvalidInput {
+					return invalidInputError(err)
+				}
+				return &ExitError{
+					Code: exitCode,
+					Err:  err,
+				}
+			}
+			asJSON, err := cmd.Flags().GetBool("json")
+			if err != nil {
+				return invalidInputError(err)
+			}
+			if asJSON {
+				data, marshalErr := json.MarshalIndent(r, "", "  ")
+				if marshalErr != nil {
+					return marshalErr
+				}
+				if _, writeErr := fmt.Fprint(cmd.OutOrStdout(), string(data)); writeErr != nil {
+					return writeErr
+				}
+			} else {
+				if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "equivalent=%t\nreason=%s\nagainst=%s\n", r.Equivalent, r.Reason, r.Against); writeErr != nil {
+					return writeErr
+				}
+			}
+			if exitCode == exitCodePass {
+				return nil
+			}
+
+			return &ExitError{
+				Code: exitCode,
+				Err:  fmt.Errorf("verify diff command exit code: %d", exitCode),
+			}
+		},
+	}
+	diff.Flags().String("session", "", "Session ID for local verification")
+	diff.Flags().String("bundle", "", "Portable receipt bundle path for local verification")
+	diff.Flags().String("against", "", "Candidate patch target: HEAD, merge-base, patch:<path>, or pr.patch")
+	diff.Flags().Bool("json", false, "Render JSON output")
+
+	return diff
 }
 
 func newVerifyBundleCommand() *cobra.Command {
@@ -1245,6 +1298,374 @@ func newVerifyBundleCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+type verifyDiffReport struct {
+	Equivalent         bool     `json:"equivalent"`
+	Against            string   `json:"against"`
+	FinalPatchHash     string   `json:"final_patch_hash"`
+	CandidatePatchHash string   `json:"candidate_patch_hash"`
+	Reason             string   `json:"reason"`
+	EvidenceRefs       []string `json:"evidence_refs"`
+}
+
+type verifyDiffOptions struct {
+	SessionID  string
+	BundlePath string
+	Against    string
+	RepoRoot   string
+}
+
+func buildVerifyDiffResult(cmd *cobra.Command) (verifyDiffReport, int, error) {
+	options, err := verifyDiffOptionsFromCommand(cmd)
+	if err != nil {
+		return verifyDiffReport{}, exitCodeInvalidInput, err
+	}
+
+	finalPatchPath, evidenceRefs, verifyCode, err := resolveVerifyDiffFinalPatch(cmd.Context(), options)
+	if err != nil {
+		return verifyDiffReport{}, verifyCode, err
+	}
+	if verifyCode != exitCodePass {
+		return verifyDiffReport{
+			Equivalent:   false,
+			Reason:       "receipt integrity verification failed",
+			EvidenceRefs: evidenceRefs,
+		}, verifyCode, nil
+	}
+
+	repoRoot := options.RepoRoot
+
+	finalPatch, err := readFileByPath(finalPatchPath)
+	if err != nil {
+		return verifyDiffReport{}, exitCodeInvalidInput, err
+	}
+	candidatePatch, _, candidateEvidenceRefs, candidateLabel, patchErr := verifyDiffCandidate(cmd.Context(), verifyDiffCandidateInput{
+		Options:  options,
+		RepoRoot: repoRoot,
+	})
+	if patchErr.err != nil {
+		return verifyDiffReport{}, patchErr.code, patchErr.err
+	}
+	finalNormalized := normalizeDiffPatch(finalPatch)
+	candidateNormalized := normalizeDiffPatch(candidatePatch)
+	equivalent := string(finalNormalized) == string(candidateNormalized)
+	evidence := append(append([]string{}, evidenceRefs...), candidateEvidenceRefs...)
+	report := verifyDiffReport{
+		Equivalent:         equivalent,
+		Against:            candidateLabel,
+		FinalPatchHash:     hashBytes(finalNormalized),
+		CandidatePatchHash: hashBytes(candidateNormalized),
+		EvidenceRefs:       evidence,
+	}
+	if equivalent {
+		report.Reason = "final patch is equivalent to candidate"
+		return report, exitCodePass, nil
+	}
+	report.Reason = "final patch does not match candidate"
+	return report, exitCodePatchMismatch, nil
+}
+
+type verifyDiffCandidateInput struct {
+	Options  verifyDiffOptions
+	RepoRoot string
+}
+
+type verifyDiffCandidateError struct {
+	code int
+	err  error
+}
+
+func verifyDiffCandidate(ctx context.Context, input verifyDiffCandidateInput) ([]byte, string, []string, string, *verifyDiffCandidateError) {
+	against := input.Options.Against
+	if against == "" {
+		err := fmt.Errorf("--against is required")
+		return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: err}
+	}
+	against = strings.TrimSpace(against)
+	if against == "HEAD" {
+		if input.RepoRoot == "" {
+			return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: fmt.Errorf("--against HEAD requires --session and --repo")}
+		}
+		patch, err := gitDiffBinary(ctx, input.RepoRoot, "HEAD")
+		if err != nil {
+			return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: err}
+		}
+		return patch, hashDiff(patch), []string{"git diff --binary HEAD"}, "HEAD", &verifyDiffCandidateError{}
+	}
+	if against == "merge-base" {
+		base, err := detectMergeBaseRef(ctx, input.RepoRoot)
+		if err != nil {
+			return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: err}
+		}
+		revision := base + "...HEAD"
+		patch, diffErr := gitDiffBinary(ctx, input.RepoRoot, revision)
+		if diffErr != nil {
+			return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: diffErr}
+		}
+		evidence := []string{"git diff --binary " + revision}
+		return patch, hashDiff(patch), evidence, "merge-base:" + base, &verifyDiffCandidateError{}
+	}
+	if strings.HasPrefix(against, "patch:") {
+		path := strings.TrimPrefix(against, "patch:")
+		if path == "" {
+			err := fmt.Errorf("--against patch: path is required")
+			return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: err}
+		}
+		if !filepath.IsAbs(path) {
+			if input.RepoRoot != "" {
+				path = filepath.Join(input.RepoRoot, path)
+			}
+		}
+		patch, err := readFileByPath(path)
+		if err != nil {
+			return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: err}
+		}
+		return patch, hashDiff(patch), []string{"file://" + path}, "patch:" + path, &verifyDiffCandidateError{}
+	}
+	if against == "pr.patch" {
+		basePath := input.RepoRoot
+		if basePath == "" {
+			basePath = input.Options.BundlePath
+		}
+		path := filepath.Join(basePath, "pr.patch")
+		patch, err := readFileByPath(path)
+		if err != nil {
+			return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: err}
+		}
+		return patch, hashDiff(patch), []string{"file://" + path}, "pr.patch", &verifyDiffCandidateError{}
+	}
+
+	err := fmt.Errorf("unsupported --against value %q", against)
+	return nil, "", nil, "", &verifyDiffCandidateError{code: exitCodeInvalidInput, err: err}
+}
+
+func resolveVerifyDiffFinalPatch(ctx context.Context, options verifyDiffOptions) (string, []string, int, error) {
+	if options.BundlePath != "" {
+		result, err := receipt.VerifyBundle(options.BundlePath)
+		if err != nil {
+			return "", []string{"diffs/final.patch"}, exitCodeInvalidInput, err
+		}
+		if !result.Valid {
+			return "", []string{"diffs/final.patch"}, exitCodeIntegrity, nil
+		}
+
+		finalPatchPath := filepath.Join(options.BundlePath, storage.DiffsDir, storage.FinalPatchFile)
+		return finalPatchPath, []string{"diffs/final.patch"}, exitCodePass, nil
+	}
+
+	result, err := receipt.Verify(ctx, receipt.Options{RepoPath: options.RepoRoot, SessionID: options.SessionID, Last: false})
+	if err != nil {
+		return "", []string{"diffs/final.patch"}, exitCodeInvalidInput, err
+	}
+	layout, err := storage.NewLayout(options.RepoRoot, options.SessionID)
+	if err != nil {
+		return "", []string{"diffs/final.patch"}, exitCodeInvalidInput, err
+	}
+	if !result.Valid {
+		return layout.FinalPatch, []string{"diffs/final.patch"}, exitCodeIntegrity, nil
+	}
+
+	return layout.FinalPatch, []string{"diffs/final.patch"}, exitCodePass, nil
+}
+
+func verifyDiffOptionsFromCommand(cmd *cobra.Command) (verifyDiffOptions, error) {
+	sessionID, err := cmd.Flags().GetString("session")
+	if err != nil {
+		return verifyDiffOptions{}, err
+	}
+	bundlePath, err := cmd.Flags().GetString("bundle")
+	if err != nil {
+		return verifyDiffOptions{}, err
+	}
+	against, err := cmd.Flags().GetString("against")
+	if err != nil {
+		return verifyDiffOptions{}, err
+	}
+	if sessionID == "" && bundlePath == "" {
+		return verifyDiffOptions{}, fmt.Errorf("provide exactly one of --session or --bundle")
+	}
+	if sessionID != "" && bundlePath != "" {
+		return verifyDiffOptions{}, fmt.Errorf("provide only one of --session or --bundle")
+	}
+	if sessionID != "" {
+		if err := storage.ValidateSessionID(sessionID); err != nil {
+			return verifyDiffOptions{}, err
+		}
+	}
+	if against == "" {
+		return verifyDiffOptions{}, fmt.Errorf("--against is required")
+	}
+	repoRoot := ""
+	if sessionID != "" {
+		r, err := repoRootFromCommand(cmd)
+		if err != nil {
+			return verifyDiffOptions{}, err
+		}
+		repoRoot = r
+	}
+
+	return verifyDiffOptions{
+		SessionID:  sessionID,
+		BundlePath: bundlePath,
+		Against:    against,
+		RepoRoot:   repoRoot,
+	}, nil
+}
+
+func isSafeGitBaseRef(ref string) bool {
+	if ref == "" || strings.HasPrefix(ref, "-") {
+		return false
+	}
+	if strings.ContainsAny(ref, " \t\r\n~^:?*[\\") || strings.Contains(ref, "..") || strings.Contains(ref, "//") {
+		return false
+	}
+	if strings.HasSuffix(ref, ".lock") || strings.Contains(ref, "@{") {
+		return false
+	}
+	for _, char := range ref {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
+			continue
+		}
+		switch char {
+		case '/', '.', '_', '-':
+			continue
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+func isSafeGitDiffRevision(revision string) bool {
+	if revision == "HEAD" {
+		return true
+	}
+	base, ok := strings.CutSuffix(revision, "...HEAD")
+	return ok && isSafeGitBaseRef(base)
+}
+
+func normalizeDiffPatch(data []byte) []byte {
+	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	return []byte(strings.TrimRight(normalized, "\n"))
+}
+
+func hashDiff(data []byte) string {
+	normalized := normalizeDiffPatch(data)
+	return hashBytes(normalized)
+}
+
+func hashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func readFileByPath(path string) ([]byte, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+
+	return root.ReadFile(filepath.Base(path))
+}
+
+func gitDiffBinary(ctx context.Context, repoRoot string, revision string) ([]byte, error) {
+	if !isSafeGitDiffRevision(revision) {
+		return nil, fmt.Errorf("unsupported git diff revision %q", revision)
+	}
+	// #nosec G204 -- revision is validated and passed as a single git argument without a shell.
+	cmd := exec.CommandContext(ctx, "git", "diff", "--binary", revision)
+	cmd.Dir = repoRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --binary %s: %w: %s", revision, err, strings.TrimSpace(string(output)))
+	}
+
+	return output, nil
+}
+
+func gitCommandOutput(cmd *exec.Cmd, description string) (string, error) {
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w: %s", description, err, strings.TrimSpace(string(output)))
+	}
+
+	return string(output), nil
+}
+
+func detectMergeBaseRef(ctx context.Context, repoRoot string) (string, error) {
+	if repoRoot == "" {
+		return "", fmt.Errorf("--against merge-base requires --session and --repo")
+	}
+	candidates := make([]string, 0, 10)
+	if upstream, err := gitCurrentUpstream(ctx, repoRoot); err == nil {
+		candidates = append(candidates, strings.TrimSpace(upstream))
+	}
+	if originHead, err := gitOriginHead(ctx, repoRoot); err == nil {
+		candidates = append(candidates, strings.TrimSpace(originHead))
+	}
+	candidates = append(candidates, "main", "master", "trunk", "develop", "origin/main", "origin/master", "origin/trunk", "origin/develop")
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		if _, err := gitVerifyBase(ctx, repoRoot, candidate); err == nil {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to determine merge-base reference")
+}
+
+func gitCurrentUpstream(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	cmd.Dir = dir
+	output, err := gitCommandOutput(cmd, "git rev-parse --abbrev-ref --symbolic-full-name @{upstream}")
+	if err != nil {
+		return "", err
+	}
+	upstream := strings.TrimSpace(output)
+	if upstream == "" {
+		return "", fmt.Errorf("upstream is not configured")
+	}
+
+	return upstream, nil
+}
+
+func gitOriginHead(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	cmd.Dir = dir
+	output, err := gitCommandOutput(cmd, "git symbolic-ref --quiet --short refs/remotes/origin/HEAD")
+	if err != nil {
+		return "", err
+	}
+	ref := strings.TrimSpace(output)
+	if ref == "" {
+		return "", fmt.Errorf("origin/HEAD is not configured")
+	}
+
+	return strings.TrimPrefix(ref, "origin/"), nil
+}
+
+func gitVerifyBase(ctx context.Context, dir string, ref string) (string, error) {
+	if !isSafeGitBaseRef(ref) {
+		return "", fmt.Errorf("unsupported base ref %q", ref)
+	}
+	commitRef := ref + "^{commit}"
+	// #nosec G204 -- ref is constrained by isSafeGitBaseRef and passed as one git argument.
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", commitRef)
+	cmd.Dir = dir
+	if _, err := gitCommandOutput(cmd, "git rev-parse --verify --quiet "+commitRef); err != nil {
+		return "", err
+	}
+
+	return ref, nil
 }
 
 func newExportCommand() *cobra.Command {

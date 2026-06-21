@@ -18,15 +18,15 @@ Source documents:
 - [x] Step 6: Separate pre-existing and agent-introduced changes
 - [x] Step 7: Add stable JSON schema output
 - [x] Step 8: Add machine-oriented exit codes for loop-facing commands
-- [ ] Step 9: Add first-class diff equivalence verification
+- [x] Step 9: Add first-class diff equivalence verification
 - [ ] Step 10: Add loop-health evaluator signals
 - [ ] Step 11: Add evidence reference dereferencing
 - [ ] Step 12: Final documentation and contract hardening
 
 ## Status
 
-- Current phase: `Step 8` completed
-- Next step: `Step 9`
+- Current phase: `Step 9` completed
+- Next step: `Step 10`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -179,4 +179,30 @@ Source documents:
     - `make build`
     - `make smoke`
     - `make verify` (fails on existing high-confidence `make security` findings)
+  - Commit: `48447a5`
+
+- 2026-06-21 — Completed Step 9 for first-class diff equivalence verification.
+  - Added `verify diff` with session and bundle verification modes and candidate targets (`HEAD`, `merge-base`, `patch:<path>`, `pr.patch`).
+  - Added deterministic patch-equivalence reports (`equivalent`, `reason`, `against`, `final_patch_hash`, `candidate_patch_hash`, `evidence_refs`) and exit-code semantics (`0`, `50`, `30`, `60`) for local workflow automation.
+  - Implemented safe Git revision validation and diff normalization before comparing final and candidate patches.
+  - Added command-tree coverage and command-level tests for:
+    - matching diff input
+    - mismatch diff input
+    - invalid bundle integrity
+    - missing patch file
+    - unsupported `--against` modes
+  - Updated README quick command reference and documentation (`docs/replay-evaluator-contract.md`, `docs/GITHUB_PR_WORKFLOW_DESIGN.md`) for `verify diff` usage.
+  - Hardened instruction-file reads and replay git-diff subprocess annotations so the repository-wide security gate passes cleanly.
+  - Validation:
+    - `gofmt -w cmd/root.go cmd/root_test.go`
+    - `go test ./cmd`
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `make test-race`
+    - `make security`
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `make verify`
   - Commit: this step

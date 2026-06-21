@@ -26,6 +26,11 @@ and this project follows semantic versioning.
   - `40` unverifiable authenticity/trust
   - `50` workspace diff mismatch
   - `60` invalid command input
+- Added `agentreceipt verify diff` to compare a finalized receipt patch against candidate patch sources (`patch:<path>`, `HEAD`, `merge-base`, `pr.patch`) with deterministic machine-readable output and exit codes:
+  - `0` pass
+  - `30` integrity failure
+  - `50` patch mismatch
+  - `60` invalid input
 
 ## [0.7.0] - 2026-06-21
 

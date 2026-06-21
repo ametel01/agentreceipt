@@ -1361,6 +1361,7 @@ func branchDiffHash(ctx context.Context, repoRoot string, branch string) (string
 
 func gitDiffPatch(ctx context.Context, repoRoot string, compareTo string) (string, error) {
 	args := []string{"diff", "--binary", compareTo}
+	// #nosec G204 -- compareTo is supplied by internal replay diff targets and passed as one git argument.
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()

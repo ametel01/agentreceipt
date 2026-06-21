@@ -110,6 +110,7 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		{"schema", "focus"},
 		{"verify"},
 		{"verify", "bundle"},
+		{"verify", "diff"},
 		{"export"},
 		{"import", "codex-jsonl"},
 		{"inspect", "codex"},
@@ -128,6 +129,234 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 	}
 	if !live.Hidden {
 		t.Fatalf("live command should be a hidden compatibility alias")
+	}
+}
+
+func TestVerifyCommandTreeIncludesDiffSubcommand(t *testing.T) {
+	t.Parallel()
+
+	root := NewRootCommand("test")
+	verifyDiff, _, err := root.Find([]string{"verify", "diff"})
+	if err != nil || verifyDiff == nil {
+		t.Fatalf("verify diff command missing: %v", err)
+	}
+	if verifyDiff.Flags().Lookup("against") == nil {
+		t.Fatalf("verify diff --against flag missing")
+	}
+}
+
+func TestVerifyDiffCommandMatchingDiff(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("write README diff: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("new layout: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "--repo", repo, "verify", "diff", "--session", sessionID, "--against", "patch:"+layout.FinalPatch, "--json")
+	if err != nil {
+		t.Fatalf("verify diff matching patch returned error: %v", err)
+	}
+	var report verifyDiffReport
+	if unmarshalErr := json.Unmarshal([]byte(stdout), &report); unmarshalErr != nil {
+		t.Fatalf("verify diff JSON decode: %v", unmarshalErr)
+	}
+	if !report.Equivalent {
+		t.Fatalf("verify diff expected equivalent report, got %+v", report)
+	}
+	if report.Reason != "final patch is equivalent to candidate" {
+		t.Fatalf("unexpected reason: %q", report.Reason)
+	}
+}
+
+func TestVerifyDiffCommandMismatch(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("write README diff: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+	mismatchPatch := filepath.Join(t.TempDir(), "mismatch.patch")
+	if err := os.WriteFile(mismatchPatch, []byte("diff --git a/README.md b/README.md\nindex 0000000..1111111 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-hello\n+hello mismatch\n"), 0o600); err != nil {
+		t.Fatalf("write mismatch patch: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "--repo", repo, "verify", "diff", "--session", sessionID, "--against", "patch:"+mismatchPatch, "--json")
+	if err == nil {
+		t.Fatalf("verify diff expected mismatch error, got nil (output=%q)", stdout)
+	}
+	if exitCode := exitCodeFromError(t, err); exitCode != exitCodePatchMismatch {
+		t.Fatalf("expected exit code %d, got %d", exitCodePatchMismatch, exitCode)
+	}
+	var report verifyDiffReport
+	if unmarshalErr := json.Unmarshal([]byte(stdout), &report); unmarshalErr != nil {
+		t.Fatalf("verify diff JSON decode: %v", unmarshalErr)
+	}
+	if report.Equivalent {
+		t.Fatalf("verify diff expected non-equivalent report, got %+v", report)
+	}
+}
+
+func TestVerifyDiffCommandInvalidBundleIntegrity(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("write README diff: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("new layout: %v", err)
+	}
+	bundle := copyCommandReceiptBundle(t, layout.Session)
+	if err := os.WriteFile(filepath.Join(bundle, storage.DiffsDir, storage.FinalPatchFile), []byte("tampered\n"), 0o600); err != nil {
+		t.Fatalf("tamper bundle: %v", err)
+	}
+	mismatchPatch := filepath.Join(bundle, storage.DiffsDir, storage.FinalPatchFile)
+
+	_, _, err = executeCommand(t, "verify", "diff", "--bundle", bundle, "--against", "patch:"+mismatchPatch, "--json")
+	if err == nil {
+		t.Fatalf("expected verify diff integrity error with tampered bundle")
+	}
+	if exitCode := exitCodeFromError(t, err); exitCode != exitCodeIntegrity {
+		t.Fatalf("expected exit code %d, got %d", exitCodeIntegrity, exitCode)
+	}
+}
+
+func TestVerifyDiffCommandBundlePRPatch(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("write README diff: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("new layout: %v", err)
+	}
+	bundle := copyCommandReceiptBundle(t, layout.Session)
+	finalPatch, err := os.ReadFile(filepath.Join(bundle, storage.DiffsDir, storage.FinalPatchFile))
+	if err != nil {
+		t.Fatalf("read final patch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "pr.patch"), finalPatch, 0o600); err != nil {
+		t.Fatalf("write pr.patch: %v", err)
+	}
+
+	stdout, _, err := executeCommand(t, "verify", "diff", "--bundle", bundle, "--against", "pr.patch", "--json")
+	if err != nil {
+		t.Fatalf("verify diff bundle pr.patch returned error: %v", err)
+	}
+	var report verifyDiffReport
+	if unmarshalErr := json.Unmarshal([]byte(stdout), &report); unmarshalErr != nil {
+		t.Fatalf("verify diff JSON decode: %v", unmarshalErr)
+	}
+	if !report.Equivalent || report.Against != "pr.patch" {
+		t.Fatalf("verify diff expected equivalent pr.patch report, got %+v", report)
+	}
+}
+
+func TestVerifyDiffCommandMissingPatchFile(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("write README diff: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+
+	_, _, err = executeCommand(t, "--repo", repo, "verify", "diff", "--session", sessionID, "--against", "patch:"+filepath.Join(repo, "does-not-exist.patch"), "--json")
+	if err == nil {
+		t.Fatalf("expected missing patch file error")
+	}
+	if exitCode := exitCodeFromError(t, err); exitCode != exitCodeInvalidInput {
+		t.Fatalf("expected exit code %d, got %d", exitCodeInvalidInput, exitCode)
+	}
+}
+
+func TestVerifyDiffCommandUnsupportedAgainst(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+		t.Fatalf("write README diff: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+
+	_, _, err = executeCommand(t, "--repo", repo, "verify", "diff", "--session", sessionID, "--against", "weirdmode", "--json")
+	if err == nil {
+		t.Fatalf("expected unsupported --against error")
+	}
+	if exitCode := exitCodeFromError(t, err); exitCode != exitCodeInvalidInput {
+		t.Fatalf("expected exit code %d, got %d", exitCodeInvalidInput, exitCode)
 	}
 }
 

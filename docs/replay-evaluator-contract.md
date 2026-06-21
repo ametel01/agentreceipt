@@ -10,6 +10,12 @@ replay evidence (not a replacement for `replay`), with deterministic `verdict`, 
 
 `agentreceipt schema replay` and `agentreceipt schema focus` print stable JSON Schema documents for each contract so loop validators can pin parsing behavior to versioned fields.
 
+`agentreceipt verify diff` is the local diff-equivalence primitive for this contract:
+
+- it checks final patch integrity first from either a session (`--session`) or a portable bundle (`--bundle`);
+- it compares that final patch with a candidate source selected by `--against` (`HEAD`, `merge-base`, `patch:<path>`, `pr.patch`);
+- it emits deterministic `verify.diff`-style output (`equivalent`, `reason`, `against`, `final_patch_hash`, `candidate_patch_hash`, `evidence_refs`) for automation to evaluate directly.
+
 `instruction_files` from replay is forwarded to focus output so loop callers can reconcile
 start-up policy files without re-parsing events.
 

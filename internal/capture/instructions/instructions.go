@@ -43,9 +43,14 @@ func CaptureInstructionFiles(repoRoot string, sessionID string) ([]model.Event, 
 
 	events := make([]model.Event, 0, len(instructionFiles))
 	warnings := make([]model.Warning, 0)
+	root, err := os.OpenRoot(repoRoot)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open repo root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
 	for _, instructionFile := range instructionFiles {
-		path := filepath.Join(repoRoot, instructionFile)
-		info, err := os.Stat(path)
+		info, err := root.Stat(instructionFile)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -64,7 +69,7 @@ func CaptureInstructionFiles(repoRoot string, sessionID string) ([]model.Event, 
 			continue
 		}
 
-		content, err := os.ReadFile(path)
+		content, err := root.ReadFile(instructionFile)
 		if err != nil {
 			warnings = append(warnings, model.Warning{
 				Code:    formatWarningCode(warningCodeUnreadableInstructionFileTemplate, instructionFile),

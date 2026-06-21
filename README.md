@@ -162,6 +162,8 @@ agentreceipt review
 ```bash
 agentreceipt verify
 agentreceipt verify bundle ./agentreceipt
+agentreceipt verify diff --session <id> --against patch:/path/to/final.patch
+agentreceipt verify diff --session <id> --against merge-base --json
 ```
 
 Receipts embed the signer public key and key ID, so verification works from shared artifacts without the signer's local key directory.
@@ -364,6 +366,7 @@ The visible CLI surface is:
 | `agentreceipt schema focus` | Print the JSON Schema contract for `agentreceipt focus --json` output. |
 | `agentreceipt verify` | Verify receipt integrity and signatures. |
 | `agentreceipt verify bundle <path>` | Verify a local AgentReceipt artifact bundle. |
+| `agentreceipt verify diff` | Compare a finalized receipt patch against a candidate patch. |
 | `agentreceipt replay` | Build a machine-readable verifier replay report from a specific session and optionally write a portable replay bundle. Replay reports evidence facts only; no session scoring or policy decisions are made. |
 | `agentreceipt export` | Export finalized receipt artifacts. |
 | `agentreceipt import codex-jsonl <path>` | Import a Codex JSONL trace into the active session. |
@@ -401,6 +404,8 @@ agentreceipt review --codex-jsonl ./codex-run.jsonl
 agentreceipt review --json
 agentreceipt review --md
 agentreceipt review --pr
+agentreceipt verify diff --session <id> --against merge-base --json
+agentreceipt verify diff --session <id> --against patch:<path>/final.patch --json
 agentreceipt focus --session <id> --json
 agentreceipt focus --replay ./replay.json --json
 agentreceipt verify

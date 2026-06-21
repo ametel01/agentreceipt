@@ -148,6 +148,14 @@ Current implementation spike:
 - It verifies embedded signer material and does not require the signer's local key directory.
 - It does not yet compare against a GitHub pull request diff, publish a GitHub Check, upload artifacts, or enforce repository policy.
 
+Local deterministic diff comparison is also available through:
+
+- `agentreceipt verify diff --bundle <path> --against pr.patch`
+- `agentreceipt verify diff --session <id> --against merge-base`
+
+Current implementation checks final patch integrity first, then compares candidates with
+`agentreceipt verify diff` semantics for workflow-local parity checks.
+
 ## Deterministic Policy
 
 The workflow must not compute an agent trust score, model score, or developer score.
