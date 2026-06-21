@@ -8,6 +8,32 @@ The new `agentreceipt focus --json` command consumes the same `replay.json` payl
 replay evidence (not a replacement for `replay`), with deterministic `verdict`, `top_reasons`,
 `review_tasks`, `changed_files`, `failed_gates`, and `evidence_refs`.
 
+`review_tasks` entries are structured and ranked with:
+
+- `id`
+- `priority` (`P0`, `P1`, `P2`, `P3`)
+- `kind`
+- `question`
+- `paths`
+- `symbols`
+- `evidence_refs`
+- `confidence`
+- `source`
+
+Task kind examples include:
+
+- `integrity_failure`
+- `authenticity_unverifiable`
+- `failed_gate`
+- `failed_command`
+- `risky_file`
+- `missing_test`
+- `diff_mismatch`
+- `dependency_change`
+- `sensitive_change`
+- `generated_change`
+- `evidence_gap`
+
 ## Report Shape
 
 The top-level `replay.json` payload is additive and keeps the existing verifier fields while adding

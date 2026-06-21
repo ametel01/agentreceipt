@@ -194,6 +194,7 @@ agentreceipt focus --replay ./replay.json --json
 - Evaluator conclusions should be inferred from command/output evidence and integrity status in `replay.json`, not by any built-in policy rule in this command.
 - `focus --session <id> --json` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
 - `focus --replay ./replay.json --json` emits the same compact focus result directly from a replay report.
+- `focus` review tasks are ranked (`P0` → `P3`) and include `id`, `kind`, `question`, `paths`, `symbols`, `evidence_refs`, `confidence`, and `source` so loop automation can prioritize work.
 - Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
 Replay JSON now includes explicit contract fields for verification, quality gates, patch summary,

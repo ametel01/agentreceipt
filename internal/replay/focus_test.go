@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -186,6 +187,168 @@ func TestBuildFocusReportEvidenceReferencesAreDeterministicAndCapped(t *testing.
 	if !strings.Contains(stringMustJSON(t, focus), "task_001") {
 		t.Fatalf("expected task IDs after cap: %#v", focus.ReviewTasks)
 	}
+}
+
+func TestBuildFocusReportTaskRankingByPriority(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.Verification.IntegrityValid = false
+	replay.QualityGates = qualityGates(qualityGateStatusFailed)
+	replay.PolicyChecks = []PolicyCheck{
+		{Name: "destructive_command_used", Status: policyCheckStatusWarn, Message: "Destructive commands were used.", Confidence: model.ConfidenceHigh, EvidenceRefs: []string{"events.jsonl#seq=120"}},
+		{Name: "generated_file_changed", Status: policyCheckStatusWarn, Message: "Generated or unknown file changed.", Confidence: model.ConfidenceMedium, EvidenceRefs: []string{"events.jsonl#seq=121"}},
+		{Name: "commit_created", Status: policyCheckStatusWarn, Message: "Commit command was observed.", Confidence: model.ConfidenceMedium, EvidenceRefs: []string{"events.jsonl#seq=122"}},
+	}
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{Path: "main.go", Category: patchCategoryProduction, Symbols: []string{"BuildMain"}, EvidenceRefs: []string{"files/main.go"}},
+			{Path: "go.mod", Category: patchCategoryDependency, Dependency: true, EvidenceRefs: []string{"files/go.mod"}},
+		},
+		ProductionChangedWithoutTestsChanged: true,
+	}
+	replay.Files = []File{
+		{Path: "go.mod", Dependency: true, EvidenceRefs: []string{"files/go.mod"}},
+	}
+	replay.Commands = []Command{
+		{Command: "go test ./...", Status: "failed", EvidenceRefs: []string{"events.jsonl#seq=123"}},
+	}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.ReviewTasks) == 0 {
+		t.Fatal("expected review tasks for ranked focus report")
+	}
+
+	priority := focusTaskPriorityRank(focusTaskPriorityP0)
+	for index := range focus.ReviewTasks {
+		current := focusTaskPriorityRank(focus.ReviewTasks[index].Priority)
+		if current < priority {
+			t.Fatalf("tasks are not ranked by priority at index %d: %#v", index, focus.ReviewTasks)
+		}
+		priority = current
+	}
+
+	hasFailedCommand := false
+	for _, task := range focus.ReviewTasks {
+		if task.Kind == "failed_command" {
+			hasFailedCommand = true
+			break
+		}
+	}
+	if !hasFailedCommand {
+		t.Fatal("expected failed_command task with P0 priority")
+	}
+}
+
+func TestBuildFocusReportTaskOrderAndIDsAreStable(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.Verification.IntegrityValid = false
+	replay.QualityGates = qualityGates(qualityGateStatusFailed)
+	replay.PolicyChecks = []PolicyCheck{{Name: "generated_file_changed", Status: policyCheckStatusWarn, Message: "Generated or unknown file changed.", Confidence: model.ConfidenceHigh, EvidenceRefs: []string{"events.jsonl#seq=10"}}}
+	replay.ReviewFocus = []ReviewFocusItem{
+		{Message: "Session metadata was incomplete.", Confidence: model.ConfidenceLow},
+		{Message: "Runtime context changed.", Confidence: model.ConfidenceLow},
+	}
+
+	first := BuildFocusReport(replay)
+	second := BuildFocusReport(replay)
+
+	if !reflect.DeepEqual(first.ReviewTasks, second.ReviewTasks) {
+		t.Fatalf("review tasks are not stable across runs:\nfirst=%#v\nsecond=%#v", first.ReviewTasks, second.ReviewTasks)
+	}
+	if first.ReviewTasks[0].ID == "" || second.ReviewTasks[0].ID == "" {
+		t.Fatal("expected stable ranked IDs to be assigned")
+	}
+	if first.ReviewTasks[0].ID != "task_001" {
+		t.Fatalf("first task ID = %q, want %q", first.ReviewTasks[0].ID, "task_001")
+	}
+}
+
+func TestBuildFocusReportNonInformationalTasksHaveEvidenceRefs(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.Verification.IntegrityValid = false
+	replay.QualityGates = qualityGates(qualityGateStatusFailed)
+	replay.PolicyChecks = []PolicyCheck{
+		{Name: "destructive_command_used", Status: policyCheckStatusWarn, Message: "Destructive commands were used.", Confidence: model.ConfidenceHigh, EvidenceRefs: []string{"events.jsonl#seq=10"}},
+	}
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{Path: "main.go", Category: patchCategoryProduction, Symbols: []string{"BuildMain"}, EvidenceRefs: []string{"files/main.go"}},
+		},
+		ProductionChangedWithoutTestsChanged: true,
+	}
+	replay.Files = []File{{Path: "main.go", EvidenceRefs: []string{"files/main.go"}, Action: "modify"}}
+	replay.Commands = []Command{{Command: "make test", Status: "failed", EvidenceRefs: []string{"events.jsonl#seq=11"}}}
+
+	focus := BuildFocusReport(replay)
+	for _, task := range focus.ReviewTasks {
+		if task.Priority == focusTaskPriorityP3 {
+			continue
+		}
+		if task.Kind == "evidence_gap" && len(task.EvidenceRefs) == 0 {
+			continue
+		}
+		if len(task.EvidenceRefs) == 0 {
+			t.Fatalf("non-informational task %q should include evidence refs: %#v", task.Kind, task)
+		}
+	}
+}
+
+func TestBuildFocusReportFailedCommandTaskIncludesPathsAndSymbols(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.Commands = []Command{
+		{
+			Command:      "cat main.go",
+			Status:       "failed",
+			EvidenceRefs: []string{"events.jsonl#seq=300"},
+		},
+	}
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{
+				Path:         "main.go",
+				Category:     patchCategoryProduction,
+				Symbols:      []string{"BuildMain"},
+				EvidenceRefs: []string{"files/main.go"},
+			},
+		},
+		ProductionChangedWithoutTestsChanged: false,
+	}
+	replay.Files = []File{{Path: "main.go", Action: "modify", EvidenceRefs: []string{"files/main.go"}}}
+
+	focus := BuildFocusReport(replay)
+	found := false
+	for _, task := range focus.ReviewTasks {
+		if task.Kind != "failed_command" || !strings.HasPrefix(task.Question, "Failed command: cat main.go") {
+			continue
+		}
+		found = true
+		if !containsSlice(task.Paths, "main.go") {
+			t.Fatalf("expected failed command task to include changed file path: %#v", task.Paths)
+		}
+		if !containsSlice(task.Symbols, "BuildMain") {
+			t.Fatalf("expected failed command task to include symbol hints: %#v", task.Symbols)
+		}
+		break
+	}
+	if !found {
+		t.Fatal("expected failed command task for cat main.go")
+	}
+}
+
+func containsSlice(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 func focusBaseReplayReport() Report {

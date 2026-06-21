@@ -12,7 +12,7 @@ Source documents:
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Add the compact focus report model
 - [x] Step 2: Add `agentreceipt focus --json`
-- [ ] Step 3: Add ranked structured review tasks
+- [x] Step 3: Add ranked structured review tasks
 - [ ] Step 4: Add per-file evidence dossiers
 - [ ] Step 5: Capture coding-agent instruction files at session start
 - [ ] Step 6: Separate pre-existing and agent-introduced changes
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 2` completed
-- Next step: `Step 3`
+- Current phase: `Step 3` completed
+- Next step: `Step 4`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -67,3 +67,21 @@ Source documents:
     - `make smoke`
     - `make verify`
   - Commit: `8805e41`
+
+- 2026-06-21 — Completed Step 3 for ranked structured review tasks.
+  - Added task priorities (`P0`/`P1`/`P2`/`P3`) and stable task kinds in focus task generation.
+  - Added evidence-aware task ranking and deterministic deduplication keyed by kind/priority/question.
+  - Added helper mapping for policy checks, changed symbols/paths, command-file associations, and comparator-based ordering.
+  - Added tests for ranked output order, deterministic task IDs, evidence coverage, and failed-command path/symbol extraction.
+  - Updated `docs/replay-evaluator-contract.md` and `README.md` to describe structured ranking fields.
+  - Validation:
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `make test-race`
+    - `make security`
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `make verify`
+  - Commit: `ed82226`

@@ -2,7 +2,9 @@ package replay
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/model"
@@ -18,6 +20,13 @@ const (
 const (
 	focusReasonBlock  = "block"
 	focusReasonReview = "review"
+)
+
+const (
+	focusTaskPriorityP0 = "P0"
+	focusTaskPriorityP1 = "P1"
+	focusTaskPriorityP2 = "P2"
+	focusTaskPriorityP3 = "P3"
 )
 
 type FocusVerdict string
@@ -66,9 +75,11 @@ type FocusReason struct {
 
 type ReviewTask struct {
 	ID           string           `json:"id,omitempty"`
+	Priority     string           `json:"priority"`
 	Kind         string           `json:"kind"`
 	Question     string           `json:"question"`
 	Paths        []string         `json:"paths,omitempty"`
+	Symbols      []string         `json:"symbols,omitempty"`
 	EvidenceRefs []string         `json:"evidence_refs,omitempty"`
 	Confidence   model.Confidence `json:"confidence,omitempty"`
 	Source       string           `json:"source,omitempty"`
@@ -102,6 +113,8 @@ func BuildFocusReport(replay Report) FocusReport {
 func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]FocusReason, []ReviewTask) {
 	reasons := make([]FocusReason, 0)
 	tasks := make([]ReviewTask, 0)
+	symbolsByPath := patchSymbolsByPath(replay.PatchSummary.ChangedFiles)
+	replayFiles := replay.Files
 
 	addReason := func(message string, refs []string, kind string, fromMissing bool) {
 		if message == "" {
@@ -115,155 +128,294 @@ func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]Foc
 		})
 	}
 
+	addTask := func(kind string, priority string, question string, paths []string, symbols []string, refs []string, confidence model.Confidence, source string) {
+		if question == "" {
+			return
+		}
+		tasks = append(tasks, ReviewTask{
+			Priority:     priority,
+			Kind:         kind,
+			Question:     question,
+			Paths:        uniqueSorted(paths),
+			Symbols:      uniqueSorted(symbols),
+			EvidenceRefs: uniqueSorted(refs),
+			Confidence:   confidence,
+			Source:       source,
+		})
+	}
+
 	if !replay.Verification.IntegrityValid {
 		addReason("Integrity verification failed.", verificationEvidenceRefs(), focusReasonBlock, false)
-		tasks = append(tasks, ReviewTask{
-			Kind:         "integrity_failure",
-			Question:     "Inspect integrity evidence before using this focus report.",
-			Confidence:   model.ConfidenceHigh,
-			Source:       "verification",
-			EvidenceRefs: verificationEvidenceRefs(),
-		})
+		addTask(
+			"integrity_failure",
+			focusTaskPriorityP0,
+			"Inspect integrity evidence before using this focus report.",
+			nil,
+			nil,
+			verificationEvidenceRefs(),
+			model.ConfidenceHigh,
+			"verification",
+		)
 	}
 
 	if replay.Verification.IntegrityValid && !replay.Verification.FinalPatchHashValid {
 		addReason("Final patch mismatch detected.", []string{finalPatchEvidenceRef}, focusReasonBlock, false)
-		tasks = append(tasks, ReviewTask{
-			Kind:         "diff_mismatch",
-			Question:     "Resolve final patch mismatch before review can continue.",
-			Confidence:   model.ConfidenceHigh,
-			Source:       "verification",
-			EvidenceRefs: []string{finalPatchEvidenceRef},
-		})
+		addTask(
+			"diff_mismatch",
+			focusTaskPriorityP0,
+			"Resolve final patch mismatch before review can continue.",
+			nil,
+			nil,
+			[]string{finalPatchEvidenceRef},
+			model.ConfidenceHigh,
+			"verification",
+		)
 	}
 
 	for _, gate := range failedGates {
 		addReason("Quality gate "+gate.Name+" failed.", gate.EvidenceRefs, focusReasonBlock, false)
-		tasks = append(tasks, ReviewTask{
-			Kind:         "failed_gate",
-			Question:     "Resolve failed quality gate: " + gate.Name + ".",
-			EvidenceRefs: gate.EvidenceRefs,
-			Confidence:   model.ConfidenceHigh,
-			Source:       "quality_gate",
-		})
+		addTask(
+			"failed_gate",
+			focusTaskPriorityP0,
+			"Resolve failed quality gate: "+gate.Name+".",
+			nil,
+			nil,
+			gate.EvidenceRefs,
+			model.ConfidenceHigh,
+			"quality_gate",
+		)
+	}
+
+	if replay.Verification.IntegrityValid &&
+		(replay.Verification.AuthenticityStatus == authenticityStatusUnverifiable || replay.Verification.TrustStatus == trustStatusNotTrusted) {
+		addTask(
+			"authenticity_unverifiable",
+			focusTaskPriorityP1,
+			"Inspect authenticity and trust evidence before using this focus report.",
+			nil,
+			nil,
+			verificationEvidenceRefs(),
+			model.ConfidenceMedium,
+			"verification",
+		)
 	}
 
 	for _, check := range replay.PolicyChecks {
 		switch check.Status {
 		case policyCheckStatusFail:
 			addReason(check.Message, check.EvidenceRefs, focusReasonBlock, false)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "failed_policy_check",
-				Question:     check.Message,
-				EvidenceRefs: check.EvidenceRefs,
-				Confidence:   check.Confidence,
-				Source:       "policy",
-			})
-		case policyCheckStatusWarn, policyCheckStatusUnknown:
+			addTask(
+				"failed_policy_check",
+				focusTaskPriorityP0,
+				check.Message,
+				policyCheckPaths(check.Name, replay.Files),
+				nil,
+				check.EvidenceRefs,
+				check.Confidence,
+				"policy",
+			)
+		case policyCheckStatusWarn:
 			addReason(check.Message, check.EvidenceRefs, focusReasonReview, true)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "policy_check",
-				Question:     check.Message,
-				EvidenceRefs: check.EvidenceRefs,
-				Confidence:   check.Confidence,
-				Source:       "policy",
-			})
+			addTask(
+				"evidence_gap",
+				policyCheckPriority(check.Name),
+				check.Message,
+				policyCheckPaths(check.Name, replay.Files),
+				nil,
+				check.EvidenceRefs,
+				check.Confidence,
+				"policy",
+			)
+		case policyCheckStatusUnknown:
+			addReason(check.Message, check.EvidenceRefs, focusReasonReview, true)
+			addTask(
+				"evidence_gap",
+				focusTaskPriorityP2,
+				check.Message,
+				policyCheckPaths(check.Name, replay.Files),
+				nil,
+				check.EvidenceRefs,
+				check.Confidence,
+				"policy",
+			)
 		}
 	}
 
 	if hasFailedCommands(replay.Commands) {
 		failedRefs := failedCommandRefs(replay.Commands)
-		if len(failedRefs) > 0 {
+		if len(failedRefs) > 0 || len(replay.FailedCommandDetails) > 0 {
 			addReason("Failed command execution was observed.", failedRefs, focusReasonBlock, false)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "failed_command",
-				Question:     "Review failed commands before approving the session.",
-				EvidenceRefs: failedRefs,
-				Confidence:   model.ConfidenceHigh,
-				Source:       "commands",
-			})
+			addTask(
+				"failed_command",
+				focusTaskPriorityP0,
+				"Review failed commands before approving the session.",
+				nil,
+				nil,
+				failedRefs,
+				model.ConfidenceHigh,
+				"commands",
+			)
+		}
+		for _, command := range replay.Commands {
+			if command.Status != "failed" {
+				continue
+			}
+			paths, symbols := commandRelatedEvidence(command.Command, replayFiles, symbolsByPath)
+			addTask(
+				"failed_command",
+				focusTaskPriorityP0,
+				"Failed command: "+command.Command,
+				paths,
+				symbols,
+				command.EvidenceRefs,
+				command.Confidence,
+				"commands",
+			)
+		}
+		for _, detail := range replay.FailedCommandDetails {
+			question := strings.TrimSpace(detail.FailedReason)
+			if question == "" {
+				question = strings.TrimSpace(detail.StderrOrErrorSummary)
+			}
+			if question == "" {
+				question = strings.TrimSpace(detail.StdoutSummary)
+			}
+			if question == "" {
+				question = "Failed command details were observed."
+			}
+			addTask(
+				"failed_command",
+				focusTaskPriorityP0,
+				"Review failed command detail: "+question,
+				nil,
+				nil,
+				detail.EvidenceRefs,
+				detail.Confidence,
+				"commands",
+			)
 		}
 	}
 
 	for _, namedGate := range listQualityGates(replay.QualityGates) {
 		if namedGate.status == qualityGateStatusNotRun || namedGate.status == qualityGateStatusUnknown {
 			addReason("Quality gate "+namedGate.name+" was not run.", namedGate.gate.EvidenceRefs, focusReasonReview, true)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "missing_gate",
-				Question:     "Confirm quality gate " + namedGate.name + " or record explicit rationale.",
-				EvidenceRefs: namedGate.gate.EvidenceRefs,
-				Confidence:   model.ConfidenceLow,
-				Source:       "quality_gate",
-			})
+			addTask(
+				"missing_gate",
+				focusTaskPriorityP2,
+				"Confirm quality gate "+namedGate.name+" or record explicit rationale.",
+				nil,
+				nil,
+				namedGate.gate.EvidenceRefs,
+				model.ConfidenceLow,
+				"quality_gate",
+			)
 		}
 	}
 
 	if replay.PatchSummary.ProductionChangedWithoutTestsChanged {
 		refs := patchSummaryCategoryEvidenceRefs(replay.PatchSummary, patchCategoryProduction, patchCategoryTest)
 		addReason("Production code changed without test file changes.", refs, focusReasonReview, true)
-		tasks = append(tasks, ReviewTask{
-			Kind:         "missing_test",
-			Question:     "Add or update tests for production code changes.",
-			Confidence:   model.ConfidenceMedium,
-			Source:       "patch",
-			EvidenceRefs: refs,
-		})
+		addTask(
+			"missing_test",
+			focusTaskPriorityP1,
+			"Add or update tests for production code changes.",
+			changedGoTestPaths(replay.PatchSummary),
+			nil,
+			refs,
+			model.ConfidenceMedium,
+			"patch",
+		)
 	}
 
 	for _, file := range replay.PatchSummary.ChangedFiles {
 		switch {
 		case file.Dependency:
 			addReason("Dependency file changed.", file.EvidenceRefs, focusReasonReview, true)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "risky_file",
-				Question:     "Review dependency change: " + file.Path,
-				Paths:        []string{file.Path},
-				EvidenceRefs: file.EvidenceRefs,
-				Confidence:   model.ConfidenceMedium,
-				Source:       "patch",
-			})
+			addTask(
+				"dependency_change",
+				focusTaskPriorityP1,
+				"Review dependency file change: "+file.Path,
+				[]string{file.Path},
+				file.Symbols,
+				file.EvidenceRefs,
+				model.ConfidenceMedium,
+				"patch",
+			)
 		case file.Sensitive:
 			addReason("Sensitive file changed.", file.EvidenceRefs, focusReasonReview, true)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "sensitive_file",
-				Question:     "Review sensitive file change: " + file.Path,
-				Paths:        []string{file.Path},
-				EvidenceRefs: file.EvidenceRefs,
-				Confidence:   model.ConfidenceHigh,
-				Source:       "patch",
-			})
+			addTask(
+				"sensitive_change",
+				focusTaskPriorityP1,
+				"Review sensitive file change: "+file.Path,
+				[]string{file.Path},
+				file.Symbols,
+				file.EvidenceRefs,
+				model.ConfidenceHigh,
+				"patch",
+			)
 		case file.Category == patchCategoryGeneratedOrUnknown:
 			addReason("Generated or unknown file changed.", file.EvidenceRefs, focusReasonReview, true)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "generated_file",
-				Question:     "Validate generated/unknown file change: " + file.Path,
-				Paths:        []string{file.Path},
-				EvidenceRefs: file.EvidenceRefs,
-				Confidence:   model.ConfidenceMedium,
-				Source:       "patch",
-			})
+			addTask(
+				"generated_change",
+				focusTaskPriorityP2,
+				"Validate generated/unknown file change: "+file.Path,
+				[]string{file.Path},
+				file.Symbols,
+				file.EvidenceRefs,
+				model.ConfidenceMedium,
+				"patch",
+			)
 		case file.Category == patchCategoryDependency:
 			addReason("Dependency file changed.", file.EvidenceRefs, focusReasonReview, true)
-			tasks = append(tasks, ReviewTask{
-				Kind:         "dependency_file",
-				Question:     "Review dependency file change: " + file.Path,
-				Paths:        []string{file.Path},
-				EvidenceRefs: file.EvidenceRefs,
-				Confidence:   model.ConfidenceMedium,
-				Source:       "patch",
-			})
+			addTask(
+				"dependency_change",
+				focusTaskPriorityP1,
+				"Review dependency file change: "+file.Path,
+				[]string{file.Path},
+				file.Symbols,
+				file.EvidenceRefs,
+				model.ConfidenceMedium,
+				"patch",
+			)
+		case file.Category == patchCategoryDocs:
+			addTask(
+				"risky_file",
+				focusTaskPriorityP3,
+				"Review docs/config file change: "+file.Path,
+				[]string{file.Path},
+				file.Symbols,
+				file.EvidenceRefs,
+				model.ConfidenceLowMedium,
+				"patch",
+			)
 		}
 	}
 
 	if replay.Source.SessionState != model.SessionStateFinalized {
 		addReason("Session is not finalized ("+string(replay.Source.SessionState)+").", []string{"manifest.json"}, focusReasonReview, true)
-		tasks = append(tasks, ReviewTask{
-			Kind:         "session_state",
-			Question:     "Wait for a finalized session before deterministic review.",
-			EvidenceRefs: []string{"manifest.json"},
-			Confidence:   model.ConfidenceHigh,
-			Source:       "session",
-		})
+		addTask(
+			"evidence_gap",
+			focusTaskPriorityP3,
+			"Wait for a finalized session before deterministic review.",
+			nil,
+			nil,
+			[]string{"manifest.json"},
+			model.ConfidenceHigh,
+			"session",
+		)
+	}
+
+	for _, item := range replay.ReviewFocus {
+		addTask(
+			"evidence_gap",
+			focusTaskPriorityP3,
+			item.Message,
+			nil,
+			nil,
+			item.EvidenceRefs,
+			item.Confidence,
+			"review_focus",
+		)
 	}
 
 	reasons = dedupeFocusReasons(reasons)
@@ -273,10 +425,7 @@ func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]Foc
 
 	uniqueTasks := uniqueReviewTasks(tasks)
 	sort.SliceStable(uniqueTasks, func(i, j int) bool {
-		if uniqueTasks[i].Kind == uniqueTasks[j].Kind {
-			return uniqueTasks[i].Question < uniqueTasks[j].Question
-		}
-		return uniqueTasks[i].Kind < uniqueTasks[j].Kind
+		return compareFocusTasks(uniqueTasks[i], uniqueTasks[j])
 	})
 
 	return reasons, uniqueTasks
@@ -436,6 +585,141 @@ func focusFileCategory(file File) string {
 	}
 }
 
+func compareFocusTasks(a ReviewTask, b ReviewTask) bool {
+	aRank := focusTaskPriorityRank(a.Priority)
+	bRank := focusTaskPriorityRank(b.Priority)
+	if aRank != bRank {
+		return aRank < bRank
+	}
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Source != b.Source {
+		return a.Source < b.Source
+	}
+	if a.Confidence != b.Confidence {
+		return a.Confidence > b.Confidence
+	}
+	if a.Question != b.Question {
+		return a.Question < b.Question
+	}
+	return strings.Join(a.EvidenceRefs, "|") < strings.Join(b.EvidenceRefs, "|")
+}
+
+func focusTaskPriorityRank(priority string) int {
+	switch priority {
+	case focusTaskPriorityP0:
+		return 0
+	case focusTaskPriorityP1:
+		return 1
+	case focusTaskPriorityP2:
+		return 2
+	case focusTaskPriorityP3:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func patchSymbolsByPath(files []PatchSummaryFile) map[string][]string {
+	symbolsByPath := map[string][]string{}
+	for _, file := range files {
+		if file.Path == "" {
+			continue
+		}
+		if len(file.Symbols) == 0 {
+			continue
+		}
+		symbolsByPath[file.Path] = uniqueSorted(file.Symbols)
+	}
+	return symbolsByPath
+}
+
+func policyCheckPaths(name string, files []File) []string {
+	switch name {
+	case "dependency_file_changed":
+		return filePathsMatching(files, func(file File) bool {
+			return file.Dependency
+		})
+	case "sensitive_file_changed":
+		return filePathsMatching(files, func(file File) bool {
+			return file.Sensitive
+		})
+	case "ci_or_security_file_changed":
+		return filePathsMatching(files, func(file File) bool {
+			return isCIOrSecurityFile(file)
+		})
+	case "generated_file_changed":
+		return filePathsMatching(files, func(file File) bool {
+			return isPatchGeneratedPath(file.Path)
+		})
+	case "target_file_read_before_edit", "related_context_read_before_edit", "tests_run_after_code_changes", "lint_run_after_code_changes", "typecheck_run_when_applicable", "commit_created":
+		return nil
+	default:
+		return nil
+	}
+}
+
+func policyCheckPriority(name string) string {
+	switch name {
+	case "destructive_command_used", "network_command_used":
+		return focusTaskPriorityP1
+	case "dependency_file_changed", "sensitive_file_changed", "ci_or_security_file_changed", "generated_file_changed":
+		return focusTaskPriorityP2
+	default:
+		return focusTaskPriorityP2
+	}
+}
+
+func commandRelatedEvidence(commandText string, files []File, symbolsByPath map[string][]string) ([]string, []string) {
+	normalized := strings.ToLower(filepath.ToSlash(strings.TrimSpace(commandText)))
+	if normalized == "" {
+		return nil, nil
+	}
+
+	paths := make([]string, 0)
+	symbols := make([]string, 0)
+	for _, file := range files {
+		if file.Path == "" {
+			continue
+		}
+		path := strings.ToLower(filepath.ToSlash(file.Path))
+		base := strings.ToLower(filepath.Base(path))
+		if path != "" && strings.Contains(normalized, path) {
+			paths = append(paths, file.Path)
+			symbols = append(symbols, symbolsByPath[file.Path]...)
+			continue
+		}
+		if base != "" && strings.Contains(normalized, base) {
+			paths = append(paths, file.Path)
+			symbols = append(symbols, symbolsByPath[file.Path]...)
+		}
+	}
+
+	return uniqueSorted(paths), uniqueSorted(symbols)
+}
+
+func changedGoTestPaths(summary PatchSummary) []string {
+	paths := make([]string, 0)
+	for _, file := range summary.ChangedFiles {
+		if file.Path == "" || file.Category != patchCategoryProduction {
+			continue
+		}
+		paths = append(paths, file.Path)
+	}
+	return uniqueSorted(paths)
+}
+
+func filePathsMatching(files []File, predicate func(File) bool) []string {
+	paths := make([]string, 0)
+	for _, file := range files {
+		if predicate(file) && file.Path != "" {
+			paths = append(paths, file.Path)
+		}
+	}
+	return uniqueSorted(paths)
+}
+
 func collectFocusEvidenceRefs(reasons []FocusReason, tasks []ReviewTask, gates []FailedGate) []string {
 	refs := make([]string, 0)
 	for _, reason := range reasons {
@@ -498,18 +782,26 @@ func uniqueReviewTasks(tasks []ReviewTask) []ReviewTask {
 		if task.Question == "" || task.Kind == "" {
 			continue
 		}
-		key := task.Kind + "|" + task.Question
+		key := task.Kind + "|" + task.Priority + "|" + task.Question
 		if existing, ok := seen[key]; ok {
 			existing.EvidenceRefs = uniqueSorted(append(existing.EvidenceRefs, task.EvidenceRefs...))
 			existing.Paths = uniqueSorted(append(existing.Paths, task.Paths...))
+			existing.Symbols = uniqueSorted(append(existing.Symbols, task.Symbols...))
 			if existing.Confidence == "" {
 				existing.Confidence = task.Confidence
+			}
+			if existing.Source == "" {
+				existing.Source = task.Source
+			}
+			if existing.Priority == "" {
+				existing.Priority = task.Priority
 			}
 			seen[key] = existing
 			continue
 		}
 		task.EvidenceRefs = uniqueSorted(task.EvidenceRefs)
 		task.Paths = uniqueSorted(task.Paths)
+		task.Symbols = uniqueSorted(task.Symbols)
 		seen[key] = task
 	}
 	keys := make([]string, 0, len(seen))
@@ -529,10 +821,7 @@ func uniqueReviewTasks(tasks []ReviewTask) []ReviewTask {
 
 func capSortedReviewTasks(tasks []ReviewTask, limit int) []ReviewTask {
 	sort.SliceStable(tasks, func(i, j int) bool {
-		if tasks[i].Kind == tasks[j].Kind {
-			return tasks[i].Question < tasks[j].Question
-		}
-		return tasks[i].Kind < tasks[j].Kind
+		return compareFocusTasks(tasks[i], tasks[j])
 	})
 	if len(tasks) > limit {
 		tasks = tasks[:limit]
