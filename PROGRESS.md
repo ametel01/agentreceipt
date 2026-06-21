@@ -9,15 +9,15 @@ Source documents:
 ## Step Checklist
 
 - [x] Step 0: Progress and Changelog Tracking Setup
-- [ ] Step 1: Add shared agent-loop contract primitives
-- [ ] Step 2: Add ranked focus work queues and file classifications
+- [x] Step 1: Add shared agent-loop contract primitives
+- [x] Step 2: Add ranked focus work queues and file classifications
 - [ ] Step 3: Add compact replay indexes and query surfaces
 - [ ] Step 4: Wire reviewability output and harden documentation
 
 ## Status
 
-- Current phase: `Step 0` completed
-- Next step: `Step 1`
+- Current phase: `Step 2` completed
+- Next step: `Step 3`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference if available, current status, and next step.
 
 ## Update Log
@@ -44,6 +44,16 @@ Source documents:
     - `make verify`
   - Commit: `ae904ee`
 
-- 2026-06-21 — Step 2 is next.
-  - Focus ranking and file-classification work remains to be implemented from `PLAN.md`.
+- 2026-06-21 — Step 3 is next.
+  - Replay index and query-surface work remains to be implemented from `PLAN.md`.
   - Current tracker state is ready for the next feature commit.
+
+- 2026-06-21 — Completed Step 2 for ranked focus work queues and file classifications.
+  - Added `agent_tasks`, `recommended_next_commands`, `reviewable_files`, and `suppressed_changes` to focus output.
+  - Added stable file classification buckets, suppression handling for transient artifacts, and stronger task deduplication/ranking keyed by kind, gate, path, and reason code.
+  - Added focused tests for distinct gate deduplication, agent-task queue generation, recommended command emission, and file suppression/classification.
+  - Validation:
+    - `go test ./internal/replay`
+    - `go test ./internal/replay ./cmd`
+    - `make verify`
+  - Commit: `d15035f`
