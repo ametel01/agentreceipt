@@ -13,6 +13,7 @@ and this project follows semantic versioning.
 - Added the repository-owned AgentReceipt coding-agent skill source at `skills/agentreceipt/SKILL.md` and release-script checks for required frontmatter/agent-facing references.
 - Added release packaging of `agentreceipt-skill/SKILL.md` into every archive via `scripts/build-release-artifacts.sh`, and expanded `scripts/test-release-scripts.sh` checks to verify the archived skill path and content.
 - Added noninteractive installer controls (`--install-skill`, `--no-install-skill`, `--skill-dir`) with env equivalents in `scripts/install.sh`, plus offline installer fixtures in `scripts/test-release-scripts.sh` for scripted install/no-install paths.
+- Added interactive Step 4 installer onboarding: `/dev/tty` prompt, no-TTY skip behavior, default root resolution (`~/.agents/skills` over `~/.claude/skills`), explicit overwrite prompts, and expanded installer fixture coverage (no-tty skip, env-driven install, identical/different target handling).
 
 ## [0.9.0] - 2026-06-21
 

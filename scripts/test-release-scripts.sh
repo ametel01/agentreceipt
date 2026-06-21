@@ -110,3 +110,35 @@ test -x "$no_skill_home/bin/agentreceipt"
 if [ -d "$no_skill_home/skills" ]; then
 	exit 1
 fi
+
+# no tty default behavior skips optional skill installation
+no_tty_home="$tmpdir/installer-no-tty"
+mkdir -p "$no_tty_home"
+no_tty_log="$tmpdir/no-tty-install.log"
+PATH="$fake_bin:$PATH" HOME="$no_tty_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" sh "$script_dir/install.sh" --bin-dir "$no_tty_home/bin" > "$no_tty_log"
+test -x "$no_tty_home/bin/agentreceipt"
+test ! -d "$no_tty_home/skills"
+grep -q "No TTY detected; skipping optional AgentReceipt skill installation." "$no_tty_log"
+
+# env-driven install fixture
+env_home="$tmpdir/installer-env"
+mkdir -p "$env_home"
+PATH="$fake_bin:$PATH" HOME="$env_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" AGENTRECEIPT_INSTALL_SKILL="1" AGENTRECEIPT_SKILL_DIR="$env_home/custom-skills" sh "$script_dir/install.sh" --bin-dir "$env_home/bin"
+cmp -s "$expected_skill" "$env_home/custom-skills/agentreceipt/SKILL.md"
+
+# identical skill reuse fixture
+identical_home="$tmpdir/installer-identical"
+mkdir -p "$identical_home/skills/agentreceipt"
+cp "$expected_skill" "$identical_home/skills/agentreceipt/SKILL.md"
+PATH="$fake_bin:$PATH" HOME="$identical_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" AGENTRECEIPT_INSTALL_SKILL="1" AGENTRECEIPT_SKILL_DIR="$identical_home/skills" sh "$script_dir/install.sh" --bin-dir "$identical_home/bin"
+cmp -s "$expected_skill" "$identical_home/skills/agentreceipt/SKILL.md"
+
+# divergent skill failure fixture
+divergent_home="$tmpdir/installer-divergent"
+mkdir -p "$divergent_home/skills/agentreceipt"
+cat <<'EOF' > "$divergent_home/skills/agentreceipt/SKILL.md"
+This content differs from the release skill.
+EOF
+if PATH="$fake_bin:$PATH" HOME="$divergent_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" AGENTRECEIPT_INSTALL_SKILL="1" AGENTRECEIPT_SKILL_DIR="$divergent_home/skills" sh "$script_dir/install.sh" --bin-dir "$divergent_home/bin"; then
+	exit 1
+fi
