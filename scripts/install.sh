@@ -68,6 +68,10 @@ print_step() {
 }
 
 has_tty() {
+	if [ "${AGENTRECEIPT_TEST_NO_TTY:-}" = "1" ]; then
+		return 1
+	fi
+
 	{ : </dev/tty; } 2>/dev/null && { : >/dev/tty; } 2>/dev/null
 }
 

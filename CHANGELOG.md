@@ -11,7 +11,7 @@ and this project follows semantic versioning.
 
 ### Fixed
 
-- Made the installer no-TTY fixture deterministic on Ubuntu by running it under `setsid` with stdin detached, while skipping that portability check when `setsid` is unavailable.
+- Made the installer no-TTY fixture deterministic with an internal `AGENTRECEIPT_TEST_NO_TTY=1` override and added fixture log output on failure.
 
 ## [0.10.0] - 2026-06-22
 

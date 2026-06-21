@@ -114,14 +114,15 @@ if [ -d "$no_skill_home/skills" ]; then
 fi
 
 # no tty default behavior skips optional skill installation
-if command -v setsid >/dev/null 2>&1; then
-	no_tty_home="$tmpdir/installer-no-tty"
-	mkdir -p "$no_tty_home"
-	no_tty_log="$tmpdir/no-tty-install.log"
-	PATH="$fake_bin:$PATH" HOME="$no_tty_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" setsid sh "$script_dir/install.sh" --bin-dir "$no_tty_home/bin" > "$no_tty_log" 2>&1 </dev/null
-	test -x "$no_tty_home/bin/agentreceipt"
-	test ! -d "$no_tty_home/skills"
+no_tty_home="$tmpdir/installer-no-tty"
+mkdir -p "$no_tty_home"
+no_tty_log="$tmpdir/no-tty-install.log"
+if ! PATH="$fake_bin:$PATH" HOME="$no_tty_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" AGENTRECEIPT_TEST_NO_TTY="1" sh "$script_dir/install.sh" --bin-dir "$no_tty_home/bin" > "$no_tty_log" 2>&1; then
+	cat "$no_tty_log" >&2
+	exit 1
 fi
+test -x "$no_tty_home/bin/agentreceipt"
+test ! -d "$no_tty_home/skills"
 
 # env-driven install fixture
 env_home="$tmpdir/installer-env"
