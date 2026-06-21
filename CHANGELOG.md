@@ -7,6 +7,10 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added Step 0 rollout tracking setup for the AgentReceipt skill installer rollout (`PROGRESS.md`) and initial changelog entry under Unreleased.
+
 ## [0.9.0] - 2026-06-21
 
 ### Added
