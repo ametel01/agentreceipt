@@ -73,4 +73,4 @@ Source documents:
   - Added explicit `reviewability` references to the replay/focus docs, updated the focus docs schema to match the live contract, and aligned the product/technical specs with the implemented replay and focus behavior.
   - Validation:
     - `make verify`
-  - Commit: `pending`
+  - Commit: `6e692ea`
