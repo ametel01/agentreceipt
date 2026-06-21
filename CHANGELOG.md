@@ -15,6 +15,7 @@ and this project follows semantic versioning.
 - Added artifact-only receipt verification in `internal/receipt` so bundle and local verification share a single artifact-hash/signature validation path while local checks continue to include workspace diff parity validation.
 
 ### Added
+- Added evaluator-loop replay implementation tracking (`PLAN.md` Step 0).
 
 - Added replay implementation progress tracking (`PROGRESS.md`) and committed the first planning-control milestone for verifier-facing replay work.
 - Added replay evaluator characterization coverage to ensure replay output does not leak raw provider `risk_signals`.
