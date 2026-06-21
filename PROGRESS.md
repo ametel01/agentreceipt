@@ -4,12 +4,13 @@ Plan source: [`PLAN.md`](./PLAN.md)
 
 ## Status
 
-- Current status: Step 2 complete
-- Next step: Step 3
+- Current status: Step 3 complete
+- Next step: Step 4
 - Last updated: 2026-06-21T00:17:18Z
 - Validation results:
   - `make fmt`
   - `go test ./internal/replay ./cmd` (pass)
+  - `go test ./internal/trust ./internal/replay ./cmd` (pass)
   - `make verify` (fails at coverage gate: `go tool cover -func=coverage.out | awk '/total:/ { if ($3+0 < 80.0) exit 1 }`)
 
 ## Step Checklist
@@ -17,7 +18,7 @@ Plan source: [`PLAN.md`](./PLAN.md)
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Define Explicit Replay Verification Verdicts
 - [x] Step 2: Add Local Trust Policy Evaluation
-- [ ] Step 3: Harden Signer Material and Legacy Migration Semantics
+- [x] Step 3: Harden Signer Material and Legacy Migration Semantics
 - [ ] Step 4: Add Evaluator Scoring Signals
 - [ ] Step 5: Add Quality Gate and Command Failure Evidence Schema
 - [ ] Step 6: Add Patch Semantic Summary
@@ -46,3 +47,10 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Wired trust-policy results through replay verification (`trust_status`, `signer_trusted`, `policy_valid`), including trusted vs untrusted behavior when signatures are valid.
   - Added trust-policy characterization tests in `internal/trust`, `internal/replay`, and `cmd` test suites, including malformed-key failure handling.
   - Commit: `Add replay signer trust policy`.
+
+- Step 3 completed:
+  - Confirmed receipt finalization always writes embedded signer metadata (`signer_public_key`, `signer_key_id`, `signature_algorithm`, `signature`), including local report hash/signature material.
+  - Confirmed bundle verification path uses embedded signer material and reports explicit legacy-missing-key failures when metadata is absent.
+  - Confirmed replay verification reuses `receipt.VerifyBundle`, so embedded signer metadata flows into replay authenticity checks without requiring local private key state.
+  - Kept behavior consistent with unchanged legacy semantics: missing embedded signer surfaces as unauthentic but intact integrity.
+  - Commit: `Harden replay signer portability`.
