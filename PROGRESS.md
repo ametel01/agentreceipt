@@ -245,4 +245,4 @@ Source documents:
     - `./scripts/smoke.sh`
     - `go test ./internal/replay -run TestBuildProducesVerifiedReplayWithPairedCommandAndChangedFiles -count=1 -coverprofile=/tmp/agentreceipt-replay-cover.out`
     - `make verify`
-  - Commit: this step
+  - Commit: `9161525`
