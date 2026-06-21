@@ -205,4 +205,4 @@ Source documents:
     - `make build`
     - `make smoke`
     - `make verify`
-  - Commit: this step
+  - Commit: `ca63a42`
