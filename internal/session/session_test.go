@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ametel01/agentreceipt/internal/capture/instructions"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
@@ -87,6 +88,90 @@ func TestStartStatusLiveStopLifecycle(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("Status() still found active session after stop")
+	}
+}
+
+func TestStartCapturesInstructionFilesAtSessionStart(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("# Session Instructions\n"), 0o600); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "CLAUDE.md"), []byte("# Claude Instructions\n"), 0o600); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if len(state.Warnings) != 0 {
+		t.Fatalf("start warnings = %+v", state.Warnings)
+	}
+
+	events, err := manager.Live(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("Live() error = %v", err)
+	}
+	instructionPaths := make(map[string]bool, 2)
+	hasGitSnapshot := false
+	for _, event := range events {
+		if event.Source == "git_monitor" && event.Type == "git.snapshot" {
+			hasGitSnapshot = true
+			continue
+		}
+		if event.Source == instructions.Source && event.Type == instructions.TypeInstructionFile {
+			path, ok := event.Payload["path"].(string)
+			if ok {
+				instructionPaths[path] = true
+			}
+		}
+	}
+	if !hasGitSnapshot {
+		t.Fatalf("expected git snapshot event in start events: %+v", events)
+	}
+	if !instructionPaths["AGENTS.md"] || !instructionPaths["CLAUDE.md"] {
+		t.Fatalf("instruction events missing: %+v", events)
+	}
+	if len(events) != 3 {
+		t.Fatalf("start event count = %d, want 3", len(events))
+	}
+
+	finalized, stopped, err := manager.Stop(context.Background())
+	if err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if !stopped || finalized.SessionID != state.SessionID {
+		t.Fatalf("stop session = %+v", finalized)
+	}
+}
+
+func TestStartCapturesInstructionFileWarningsWhenInstructionIsNotRegular(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	if err := os.Mkdir(filepath.Join(repo, "AGENTS.md"), 0o750); err != nil {
+		t.Fatalf("mkdir AGENTS.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "CLAUDE.md"), []byte("# Claude Instructions\n"), 0o600); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	manager := Manager{RepoPath: repo, Config: config.Default(), Now: fixedNow}
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !hasSessionWarning(state.Warnings, "instruction_capture.non_regular_agents") {
+		t.Fatalf("expected non-regular instruction warning in start state: %+v", state.Warnings)
+	}
+	state, stopped, err := manager.Stop(context.Background())
+	if err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if !stopped {
+		t.Fatal("Stop() stopped=false")
+	}
+	if !hasSessionWarning(state.Warnings, "instruction_capture.non_regular_agents") {
+		t.Fatalf("warning was not persisted to final state: %+v", state.Warnings)
 	}
 }
 

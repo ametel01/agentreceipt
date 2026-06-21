@@ -14,6 +14,8 @@ and this project follows semantic versioning.
 - Added `agentreceipt focus --json` command for loop-oriented focus report generation from `replay --session` or `--replay replay.json`.
 - Added ranked structured `review_tasks` in focus reports with stable `P0`-`P3` priorities, task kinds (`integrity_failure`, `failed_gate`, `failed_command`, etc.), and deterministic task ordering/ID assignment.
 - Added Step 4 per-file evidence dossiers to focus reports, including dependency/symbol/policy status fields, explicit command/test associations, review reasons, and enriched file-level evidence references.
+- Added session-start instruction-file capture (`AGENTS.md`, `CLAUDE.md`) with deterministic metadata events, summary extraction, and non-regular/unreadable file warnings.
+- Added replay `instruction_files` output and focus report pass-through of captured instruction file evidence.
 
 ## [0.7.0] - 2026-06-21
 

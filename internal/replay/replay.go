@@ -20,6 +20,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/buildinfo"
 	"github.com/ametel01/agentreceipt/internal/capture/fswatcher"
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
+	"github.com/ametel01/agentreceipt/internal/capture/instructions"
 	"github.com/ametel01/agentreceipt/internal/commandrisk"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
@@ -71,6 +72,7 @@ type Report struct {
 	Outcome              Outcome               `json:"outcome"`
 	Timeline             []TimelineItem        `json:"timeline"`
 	Commands             []Command             `json:"commands"`
+	InstructionFiles     []InstructionFile     `json:"instruction_files"`
 	Files                []File                `json:"files"`
 	Risks                []Risk                `json:"risks"`
 	FailedCommandDetails []FailedCommandDetail `json:"failed_command_details,omitempty"`
@@ -211,6 +213,14 @@ type File struct {
 	EvidenceRefs []string `json:"evidence_refs"`
 }
 
+type InstructionFile struct {
+	Path    string   `json:"path"`
+	Hash    string   `json:"hash"`
+	Size    int64    `json:"size"`
+	MTime   string   `json:"mtime"`
+	Summary []string `json:"summary"`
+}
+
 type QualityGate struct {
 	Status       string           `json:"status"`
 	Commands     []string         `json:"commands"`
@@ -347,6 +357,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	gaps = append(gaps, commandGaps...)
 
 	files := buildFiles(classifier, evidenceSummary.ChangedFiles, finalPatch, events)
+	instructionFiles := buildInstructionFiles(events)
 	timeline := buildTimeline(events, evidenceConfidence)
 
 	verification, verifyWarnings := buildVerification(layout, eventsErr == nil, options)
@@ -397,6 +408,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		Gaps:                 uniqueSorted(gaps),
 		VerifierTasks:        uniqueSorted(gaps),
 		Artifacts:            artifacts,
+		InstructionFiles:     instructionFiles,
 	}
 	report.Outcome = buildOutcome(report)
 	report.Claims = buildClaims(report)
@@ -1222,6 +1234,35 @@ func buildFiles(classifier fswatcher.Classifier, changed []model.ChangedFile, fi
 	return files
 }
 
+func buildInstructionFiles(events []model.Event) []InstructionFile {
+	instructionFiles := make([]InstructionFile, 0)
+	for _, event := range events {
+		if event.Source != instructions.Source || event.Type != instructions.TypeInstructionFile {
+			continue
+		}
+		path := filepath.ToSlash(stringFromEventPayload(event.Payload, "path"))
+		if path == "" {
+			continue
+		}
+		instructionFiles = append(instructionFiles, InstructionFile{
+			Path:    path,
+			Hash:    stringFromEventPayload(event.Payload, "hash"),
+			Size:    int64FromEventPayload(event.Payload, "size"),
+			MTime:   stringFromEventPayload(event.Payload, "mtime"),
+			Summary: stringSliceFromEventPayload(event.Payload, "summary"),
+		})
+	}
+
+	sort.SliceStable(instructionFiles, func(i, j int) bool {
+		if instructionFiles[i].Path == instructionFiles[j].Path {
+			return instructionFiles[i].Hash < instructionFiles[j].Hash
+		}
+		return instructionFiles[i].Path < instructionFiles[j].Path
+	})
+
+	return instructionFiles
+}
+
 func parseFinalPatchRefs(patch string) map[string]bool {
 	refs := map[string]bool{}
 	for _, file := range parseFinalPatchFiles(patch) {
@@ -1796,6 +1837,53 @@ func stringFromEventPayload(payload map[string]any, key string) string {
 		return ""
 	}
 	return txt
+}
+
+func int64FromEventPayload(payload map[string]any, key string) int64 {
+	if payload == nil {
+		return 0
+	}
+	value := payload[key]
+	switch numeric := value.(type) {
+	case int:
+		return int64(numeric)
+	case int64:
+		return numeric
+	case int32:
+		return int64(numeric)
+	case float64:
+		return int64(numeric)
+	case float32:
+		return int64(numeric)
+	case json.Number:
+		parsed, err := numeric.Int64()
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func stringSliceFromEventPayload(payload map[string]any, key string) []string {
+	if payload == nil {
+		return nil
+	}
+	raw, ok := payload[key].([]any)
+	if !ok {
+		return nil
+	}
+	values := make([]string, 0, len(raw))
+	for _, value := range raw {
+		s, ok := value.(string)
+		if !ok || s == "" {
+			continue
+		}
+		values = append(values, s)
+	}
+
+	return values
 }
 
 func uniqueSorted(values []string) []string {

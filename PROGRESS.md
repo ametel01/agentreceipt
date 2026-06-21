@@ -14,7 +14,7 @@ Source documents:
 - [x] Step 2: Add `agentreceipt focus --json`
 - [x] Step 3: Add ranked structured review tasks
 - [x] Step 4: Add per-file evidence dossiers
-- [ ] Step 5: Capture coding-agent instruction files at session start
+- [x] Step 5: Capture coding-agent instruction files at session start
 - [ ] Step 6: Separate pre-existing and agent-introduced changes
 - [ ] Step 7: Add stable JSON schema output
 - [ ] Step 8: Add machine-oriented exit codes for loop-facing commands
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 4` completed
-- Next step: `Step 5`
+- Current phase: `Step 5` completed
+- Next step: `Step 6`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -98,6 +98,18 @@ Source documents:
     - `make security`
     - `make coverage`
     - `make build`
-    - `make smoke`
-    - `make verify` (fails reproducibly in this run: `TestSessionCapturesFilesystemChanges` in `internal/session` reports `decode session state: unexpected end of JSON input`)
+  - `make smoke`
+  - `make verify` (fails reproducibly in this run: `TestSessionCapturesFilesystemChanges` in `internal/session` reports `decode session state: unexpected end of JSON input`)
   - Commit: `23f7f6f`
+
+- 2026-06-21 — Completed Step 5 for capturing AGENTS.md/CLAUDE.md evidence at session start.
+  - Added `internal/capture/instructions` package with capture helpers, event typing, and warning reporting for unreadable/non-regular instruction files.
+  - Wired `Session.Manager.Start()` to append instruction metadata events alongside git snapshots and persist capture warnings into session state/manifest.
+  - Extended replay schema and focus output with `instruction_files` and added tests covering metadata capture, warning mapping, and focus propagation.
+  - Updated docs for evidence sources and behavior notes for missing instruction files.
+  - Updated session tests to assert start capture behavior and warning persistence for invalid instruction paths.
+  - Validation:
+    - `gofmt -w internal/capture/instructions/instructions.go internal/replay/replay.go internal/replay/focus.go internal/replay/focus_test.go internal/replay/replay_test.go internal/session/session.go internal/session/session_test.go docs/replay-evaluator-contract.md README.md CHANGELOG.md`
+    - `go test ./internal/session ./internal/replay ./internal/capture/instructions`
+    - `go test ./...`
+  - Commit: not committed

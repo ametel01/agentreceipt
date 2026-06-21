@@ -19,6 +19,7 @@ import (
 
 	"github.com/ametel01/agentreceipt/internal/capture/fswatcher"
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
+	"github.com/ametel01/agentreceipt/internal/capture/instructions"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
@@ -108,11 +109,19 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 	if err := fsWatcher.Close(); err != nil {
 		return State{}, err
 	}
+	instructionEvents, instructionWarnings, err := instructions.CaptureInstructionFiles(repoRoot, sessionID)
+	if err != nil {
+		return State{}, err
+	}
 	_, gitEvents, err := monitor.CaptureStart(ctx)
 	if err != nil {
 		return State{}, err
 	}
-	appendResult, err := eventlog.AppendBatch(layout.EventsJSONL, gitEvents)
+
+	startEvents := make([]model.Event, 0, len(gitEvents)+len(instructionEvents))
+	startEvents = append(startEvents, gitEvents...)
+	startEvents = append(startEvents, instructionEvents...)
+	appendResult, err := eventlog.AppendBatch(layout.EventsJSONL, startEvents)
 	if err != nil {
 		return State{}, err
 	}
@@ -126,6 +135,7 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 		UpdatedAt:     now,
 		EventCount:    appendResult.EventCount,
 		ChainHash:     appendResult.ChainHash,
+		Warnings:      instructionWarnings,
 		CaptureSources: CaptureSources{
 			Git:        "active",
 			Filesystem: "starting",
@@ -133,6 +143,7 @@ func (m Manager) Start(ctx context.Context) (State, error) {
 		},
 		RiskSummary: RiskSummary{Level: model.RiskInfo},
 	}
+	manifest.Warnings = state.Warnings
 	manifest.EventCount = appendResult.EventCount
 	if err := writeManifest(layout, manifest); err != nil {
 		return State{}, err

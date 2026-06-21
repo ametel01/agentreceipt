@@ -152,6 +152,94 @@ func TestBuildRecordsFailedCommandExitCodeAndOutputSummary(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesInstructionFileMetadataFromCaptureEvents(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "AGENTS.md"), []byte("# Team Rules\n- follow instructions\n"), 0o600); err != nil {
+				t.Fatalf("write AGENTS.md: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repoRoot, "CLAUDE.md"), []byte("# Claude Instructions\n- do good things\n"), 0o600); err != nil {
+				t.Fatalf("write CLAUDE.md: %v", err)
+			}
+		},
+		nil,
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(report.InstructionFiles) != 2 {
+		t.Fatalf("instruction_files = %#v", report.InstructionFiles)
+	}
+	byPath := make(map[string]struct {
+		Hash  string
+		Size  int64
+		MTime string
+	}, len(report.InstructionFiles))
+	for _, entry := range report.InstructionFiles {
+		if entry.Hash == "" || entry.Size <= 0 || entry.MTime == "" {
+			t.Fatalf("instruction entry invalid: %#v", entry)
+		}
+		if len(entry.Summary) == 0 {
+			t.Fatalf("instruction summary empty for %s", entry.Path)
+		}
+		byPath[entry.Path] = struct {
+			Hash  string
+			Size  int64
+			MTime string
+		}{Hash: entry.Hash, Size: entry.Size, MTime: entry.MTime}
+	}
+	if _, ok := byPath["AGENTS.md"]; !ok {
+		t.Fatalf("missing AGENTS.md metadata: %#v", report.InstructionFiles)
+	}
+	if _, ok := byPath["CLAUDE.md"]; !ok {
+		t.Fatalf("missing CLAUDE.md metadata: %#v", report.InstructionFiles)
+	}
+}
+
+func TestBuildMapsInstructionCaptureWarningsToReplayGaps(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		func(repoRoot string) {
+			if err := os.Mkdir(filepath.Join(repoRoot, "AGENTS.md"), 0o750); err != nil {
+				t.Fatalf("mkdir AGENTS.md: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repoRoot, "CLAUDE.md"), []byte("# Claude Instructions\n"), 0o600); err != nil {
+				t.Fatalf("write CLAUDE.md: %v", err)
+			}
+		},
+		nil,
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(report.InstructionFiles) != 1 || report.InstructionFiles[0].Path != "CLAUDE.md" {
+		t.Fatalf("unexpected instruction metadata: %#v", report.InstructionFiles)
+	}
+	if !containsGap(report.Gaps, "Instruction file is not a regular file: AGENTS.md") {
+		t.Fatalf("expected warning gap from unreadable instruction: %v", report.Gaps)
+	}
+	if !containsGap(report.Gaps, "No provider tool events were observed.") {
+		t.Fatalf("expected provider-missing warning gap: %v", report.Gaps)
+	}
+}
+
 func TestBuildIncludesUnpairedCommandResultGap(t *testing.T) {
 	t.Parallel()
 
@@ -2051,8 +2139,16 @@ func TestWriteBundleExcludesRawProviderLogs(t *testing.T) {
 
 func finalizedReplaySession(t *testing.T, events []model.Event, beforeStop func(string)) (repo string, sessionID string, layout storage.Layout) {
 	t.Helper()
+	return finalizedReplaySessionWithSetup(t, nil, beforeStop, events)
+}
+
+func finalizedReplaySessionWithSetup(t *testing.T, beforeStart func(string), beforeStop func(string), events []model.Event) (repo string, sessionID string, layout storage.Layout) {
+	t.Helper()
 
 	repo = newReplayGitRepo(t)
+	if beforeStart != nil {
+		beforeStart(repo)
+	}
 	manager := session.Manager{
 		RepoPath: repo,
 		Config:   config.Default(),

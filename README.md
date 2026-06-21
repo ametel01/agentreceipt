@@ -195,6 +195,7 @@ agentreceipt focus --replay ./replay.json --json
 - `focus --session <id> --json` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
 - `focus --replay ./replay.json --json` emits the same compact focus result directly from a replay report.
 - `focus` review tasks are ranked (`P0` → `P3`) and include `id`, `kind`, `question`, `paths`, `symbols`, `evidence_refs`, `confidence`, and `source` so loop automation can prioritize work.
+- Replay and focus reports also include instruction-file evidence captured at session start (`AGENTS.md`, `CLAUDE.md`) under `instruction_files`.
 - Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
 Replay JSON now includes explicit contract fields for verification, quality gates, patch summary,
@@ -235,6 +236,7 @@ Before tagging, move the relevant `Unreleased` entries into a matching release s
 
 - **Session mode is explicit**: use `start` and `stop`.
 - `start` fails fast if core monitors cannot initialize.
+- `start` captures readable `AGENTS.md` and `CLAUDE.md` metadata and emits warning entries when instruction files are missing, unreadable, or non-regular.
 - If Codex provider events are missing, the receipt still finalizes with a warning and reduced provider confidence.
 - Final diff mismatch or verification issues are surfaced as warning-level risk in review and invalid verification in `verify`, not a hard failure by default.
 - AgentReceipt does not write `.agentreceipt`, `.agentreceipt.yml`, or policy files into the repository. Session artifacts live under global AgentReceipt storage.
@@ -242,13 +244,15 @@ Before tagging, move the relevant `Unreleased` entries into a matching release s
 
 ## How evidence is captured
 
-AgentReceipt uses three sources in this order:
+AgentReceipt uses four sources in this order:
 
 1. **Git monitor (high confidence)**
    - start/end commit, branch, diffs, snapshots
 2. **Filesystem watcher (high confidence)**
    - create / modify / delete / rename events and changed paths
-3. **Codex session logs (best effort)**
+3. **Instruction files (high confidence)**
+   - captures `AGENTS.md` and `CLAUDE.md` metadata at session start
+4. **Codex session logs (best effort)**
    - parsed when available, best effort only
    - extracts tool calls, shell commands, and file-targeted actions when present
 

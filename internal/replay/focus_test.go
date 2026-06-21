@@ -38,6 +38,29 @@ func TestBuildFocusReportPassVerdict(t *testing.T) {
 	}
 }
 
+func TestBuildFocusReportIncludesInstructionFiles(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.InstructionFiles = []InstructionFile{
+		{
+			Path:    "AGENTS.md",
+			Hash:    "sha256:abc",
+			Size:    12,
+			MTime:   "2026-06-21T10:00:00Z",
+			Summary: []string{"instructions: test"},
+		},
+	}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.InstructionFiles) != 1 {
+		t.Fatalf("instruction_files = %#v", focus.InstructionFiles)
+	}
+	if focus.InstructionFiles[0].Path != "AGENTS.md" {
+		t.Fatalf("instruction path = %q", focus.InstructionFiles[0].Path)
+	}
+}
+
 func TestBuildFocusReportBlockVerdict(t *testing.T) {
 	t.Parallel()
 

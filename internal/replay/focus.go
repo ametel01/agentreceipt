@@ -41,16 +41,17 @@ const (
 
 // FocusReport is a compact reviewer-agent output for a replay session.
 type FocusReport struct {
-	SchemaVersion int                `json:"schema_version"`
-	Kind          string             `json:"kind"`
-	SessionID     string             `json:"session_id"`
-	GeneratedAt   time.Time          `json:"generated_at"`
-	Verdict       FocusVerdict       `json:"verdict"`
-	TopReasons    []string           `json:"top_reasons,omitempty"`
-	ReviewTasks   []ReviewTask       `json:"review_tasks,omitempty"`
-	ChangedFiles  []FocusChangedFile `json:"changed_files,omitempty"`
-	FailedGates   []FailedGate       `json:"failed_gates,omitempty"`
-	EvidenceRefs  []string           `json:"evidence_refs,omitempty"`
+	SchemaVersion    int                `json:"schema_version"`
+	Kind             string             `json:"kind"`
+	SessionID        string             `json:"session_id"`
+	GeneratedAt      time.Time          `json:"generated_at"`
+	Verdict          FocusVerdict       `json:"verdict"`
+	TopReasons       []string           `json:"top_reasons,omitempty"`
+	ReviewTasks      []ReviewTask       `json:"review_tasks,omitempty"`
+	ChangedFiles     []FocusChangedFile `json:"changed_files,omitempty"`
+	FailedGates      []FailedGate       `json:"failed_gates,omitempty"`
+	InstructionFiles []InstructionFile  `json:"instruction_files,omitempty"`
+	EvidenceRefs     []string           `json:"evidence_refs,omitempty"`
 }
 
 type FocusChangedFile struct {
@@ -104,6 +105,7 @@ func BuildFocusReport(replay Report) FocusReport {
 	}
 
 	focus.ChangedFiles = collectFocusChangedFiles(replay)
+	focus.InstructionFiles = replay.InstructionFiles
 	focus.FailedGates = collectFailedGates(replay.QualityGates)
 
 	reasons, tasks := collectFocusReasonsAndTasks(replay, focus.FailedGates)

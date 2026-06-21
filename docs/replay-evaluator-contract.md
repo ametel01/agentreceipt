@@ -8,6 +8,9 @@ The new `agentreceipt focus --json` command consumes the same `replay.json` payl
 replay evidence (not a replacement for `replay`), with deterministic `verdict`, `top_reasons`,
 `review_tasks`, `changed_files`, `failed_gates`, and `evidence_refs`.
 
+`instruction_files` from replay is forwarded to focus output so loop callers can reconcile
+start-up policy files without re-parsing events.
+
 `changed_files` entries are per-file dossiers with:
 
 - `path`
@@ -56,6 +59,7 @@ evaluator-facing sections:
 
 - `verification`
 - `evaluator_signals`
+- `instruction_files`
 - `quality_gates`
 - `patch_summary`
 - `policy_checks`
@@ -67,6 +71,14 @@ evaluator-facing sections:
 - `files`
 - `gaps`
 - `artifacts`
+
+`instruction_files` includes metadata captured from `AGENTS.md` and `CLAUDE.md` at session start:
+
+- `path`
+- `hash`
+- `size`
+- `mtime`
+- `summary`
 
 The existing `valid`, `signature_valid`, `signature_error`, `signature_error_code`, and `signed_by`
 fields remain available for compatibility.
