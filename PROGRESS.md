@@ -4,9 +4,9 @@ Plan source: [`PLAN.md`](./PLAN.md)
 
 ## Status
 
-- Current status: Step 7 complete
-- Next step: Step 8
-- Last updated: 2026-06-21T00:55:00Z
+- Current status: Step 8 complete
+- Next step: Step 9
+- Last updated: 2026-06-21T09:05:40Z
 - Validation results:
   - `make fmt` (pass)
   - `go test ./internal/replay` (pass)
@@ -21,8 +21,8 @@ Plan source: [`PLAN.md`](./PLAN.md)
 - [x] Step 4: Add Evaluator Scoring Signals
 - [x] Step 5: Add Quality Gate and Command Failure Evidence Schema
 - [x] Step 6: Add Patch Semantic Summary
-- [ ] Step 7: Add Policy Checks and Review Focus
-- [ ] Step 8: Add Privacy Report, Claim Confidence, and Outcome Classification
+- [x] Step 7: Add Policy Checks and Review Focus
+- [x] Step 8: Add Privacy Report, Claim Confidence, and Outcome Classification
 - [ ] Step 9: Document the Production Replay Evaluator Contract
 
 ## Implementation Notes
@@ -81,3 +81,10 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Added replay tests covering pass/warn/fail/unknown policy states and review-focus generation, including evidence refs on policy checks where available.
   - Kept replay factual while preserving existing fields and evidence-only behavior.
   - Commit: `6646b8e` (`Add replay policy checks`)
+
+- Step 8 completed:
+  - Added top-level `privacy` reporting with redaction state, redacted field paths, redaction patterns, output caps, sensitive-content detection, and raw-provider-log exposure tracking.
+  - Added top-level `claims` capturing verification verdict, signer authenticity, signer trust, quality gates, policy checks, privacy redaction, and final outcome with confidence and evidence refs.
+  - Added top-level `outcome` classification with completed, completed_with_gaps, failed, abandoned, committed, and needs_human_review states derived from replay evidence.
+  - Added replay coverage for privacy redaction reporting, raw provider log exposure, completed and completed_with_gaps outcomes, and failed versus abandoned outcome inference.
+  - Commit: pending

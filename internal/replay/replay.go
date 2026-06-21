@@ -66,6 +66,9 @@ type Report struct {
 	PatchSummary         PatchSummary          `json:"patch_summary"`
 	PolicyChecks         []PolicyCheck         `json:"policy_checks"`
 	ReviewFocus          []ReviewFocusItem     `json:"review_focus"`
+	Privacy              PrivacyReport         `json:"privacy"`
+	Claims               []Claim               `json:"claims"`
+	Outcome              Outcome               `json:"outcome"`
 	Timeline             []TimelineItem        `json:"timeline"`
 	Commands             []Command             `json:"commands"`
 	Files                []File                `json:"files"`
@@ -357,6 +360,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	qualityGates := buildQualityGates(commands)
 	policyChecks := buildPolicyChecks(commands, files, patchSummary, qualityGates)
 	reviewFocus := buildReviewFocus(gaps, qualityGates, patchSummary, policyChecks, commands, files)
+	privacyReport := buildPrivacyReport(commands, failedCommandDetails, files)
 
 	report := Report{
 		SchemaVersion: model.SchemaVersion,
@@ -384,6 +388,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		PatchSummary:         patchSummary,
 		PolicyChecks:         policyChecks,
 		ReviewFocus:          reviewFocus,
+		Privacy:              privacyReport,
 		FailedCommandDetails: failedCommandDetails,
 		Timeline:             timeline,
 		Commands:             commands,
@@ -393,6 +398,8 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		VerifierTasks:        uniqueSorted(gaps),
 		Artifacts:            artifacts,
 	}
+	report.Outcome = buildOutcome(report)
+	report.Claims = buildClaims(report)
 
 	return report, nil
 }

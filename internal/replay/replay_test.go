@@ -245,6 +245,33 @@ func TestBuildRedactsCommandOutputWithoutReplayingRisk(t *testing.T) {
 	if len(report.Risks) != 0 {
 		t.Fatalf("risks = %v", report.Risks)
 	}
+	if !report.Privacy.RedactionApplied {
+		t.Fatalf("privacy redaction_applied = false: %+v", report.Privacy)
+	}
+	if !report.Privacy.SensitiveContentDetected {
+		t.Fatalf("privacy sensitive_content_detected = false: %+v", report.Privacy)
+	}
+	if report.Privacy.RawProviderLogsExposed {
+		t.Fatalf("privacy raw_provider_logs_exposed = true: %+v", report.Privacy)
+	}
+	if report.Privacy.OutputCaps.MaxOutputSummaryRunes != maxOutputSummaryRunes || report.Privacy.OutputCaps.MaxFailedCommandSummaryRunes != maxOutputSummaryRunes {
+		t.Fatalf("privacy output caps = %+v", report.Privacy.OutputCaps)
+	}
+	if len(report.Privacy.RedactionPatterns) == 0 {
+		t.Fatalf("privacy redaction_patterns = %+v", report.Privacy.RedactionPatterns)
+	}
+	if !containsString(report.Privacy.RedactedFields, "commands.output_summary") || !containsString(report.Privacy.RedactedFields, "failed_command_details.failed_reason") || !containsString(report.Privacy.RedactedFields, "failed_command_details.stderr_or_error_summary") {
+		t.Fatalf("privacy redacted_fields = %+v", report.Privacy.RedactedFields)
+	}
+	if got := findClaim(report.Claims, "verification.verdict"); got == nil || got.Status == "" || got.Confidence == "" {
+		t.Fatalf("verification.verdict claim = %+v", got)
+	}
+	if got := findClaim(report.Claims, "privacy.redaction"); got == nil || got.Status == "" || got.Confidence == "" {
+		t.Fatalf("privacy.redaction claim = %+v", got)
+	}
+	if got := findClaim(report.Claims, "outcome"); got == nil || got.Status != outcomeStatusFailed {
+		t.Fatalf("outcome claim = %+v", got)
+	}
 }
 
 func TestBuildDoesNotExposeProviderRiskSignalRawField(t *testing.T) {
@@ -301,6 +328,235 @@ func TestBuildDoesNotExposeProviderRiskSignalRawField(t *testing.T) {
 	if strings.Contains(string(raw), "\"risk_signals\"") {
 		t.Fatalf("replay report should not expose raw risk_signals in JSON: %s", raw)
 	}
+	if report.Privacy.RawProviderLogsExposed {
+		t.Fatalf("privacy raw_provider_logs_exposed = true: %+v", report.Privacy)
+	}
+}
+
+func TestBuildClassifiesCompletedOutcomeWithPassingGates(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_read",
+						"command": "cat main.go",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_read",
+					"command":   "cat main.go",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_test",
+						"command": "go test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_test",
+					"command":   "go test ./...",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_lint",
+						"command": "npm run lint",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_lint",
+					"command":   "npm run lint",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "main.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+		},
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Foo() {}\n"), 0o600); err != nil {
+				t.Fatalf("write main.go: %v", err)
+			}
+		},
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if report.Outcome.Status != outcomeStatusCompleted {
+		t.Fatalf("outcome = %+v", report.Outcome)
+	}
+	if got := findClaim(report.Claims, "outcome"); got == nil || got.Status != outcomeStatusCompleted {
+		t.Fatalf("outcome claim = %+v", got)
+	}
+}
+
+func TestBuildClassifiesCompletedWithGapsAndFailedOutcomes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("completed_with_gaps", func(t *testing.T) {
+		t.Parallel()
+		repo, sessionID, _ := finalizedReplaySession(
+			t,
+			[]model.Event{
+				{
+					Source: providerevidence.SourceCodex,
+					Type:   providerevidence.TypeCommand,
+					Payload: map[string]any{
+						"tool_call": map[string]any{
+							"call_id": "call_test",
+							"command": "go test ./...",
+						},
+					},
+				},
+				{
+					Source: providerevidence.SourceCodex,
+					Type:   providerevidence.TypeCommandResult,
+					Payload: map[string]any{
+						"call_id":   "call_test",
+						"command":   "go test ./...",
+						"status":    "success",
+						"exit_code": 0,
+					},
+				},
+				{
+					Source: "fs_watcher",
+					Type:   "fs.change",
+					Payload: map[string]any{
+						"path":       "main.go",
+						"action":     "modify",
+						"sensitive":  false,
+						"dependency": false,
+					},
+				},
+			},
+			func(repoRoot string) {
+				if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Foo() {}\n"), 0o600); err != nil {
+					t.Fatalf("write main.go: %v", err)
+				}
+			},
+		)
+
+		report, err := Build(context.Background(), Options{
+			RepoPath:  repo,
+			SessionID: sessionID,
+		})
+		if err != nil {
+			t.Fatalf("Build() error = %v", err)
+		}
+		if report.Outcome.Status != outcomeStatusCompletedWithGaps {
+			t.Fatalf("outcome = %+v", report.Outcome)
+		}
+		if got := findClaim(report.Claims, "outcome"); got == nil || got.Status != outcomeStatusCompletedWithGaps {
+			t.Fatalf("outcome claim = %+v", got)
+		}
+	})
+
+	t.Run("failed_and_abandoned", func(t *testing.T) {
+		t.Parallel()
+		repo, sessionID, layout := finalizedReplaySession(
+			t,
+			[]model.Event{
+				{
+					Source: providerevidence.SourceCodex,
+					Type:   providerevidence.TypeCommand,
+					Payload: map[string]any{
+						"tool_call": map[string]any{
+							"call_id": "call_failed",
+							"command": "go test ./...",
+						},
+					},
+				},
+				{
+					Source: providerevidence.SourceCodex,
+					Type:   providerevidence.TypeCommandResult,
+					Payload: map[string]any{
+						"call_id":   "call_failed",
+						"command":   "go test ./...",
+						"status":    "failed",
+						"exit_code": 1,
+					},
+				},
+			},
+			nil,
+		)
+
+		report, err := Build(context.Background(), Options{
+			RepoPath:  repo,
+			SessionID: sessionID,
+		})
+		if err != nil {
+			t.Fatalf("Build() error = %v", err)
+		}
+		if report.Outcome.Status != outcomeStatusFailed {
+			t.Fatalf("failed outcome = %+v", report.Outcome)
+		}
+		if got := findClaim(report.Claims, "outcome"); got == nil || got.Status != outcomeStatusFailed {
+			t.Fatalf("outcome claim = %+v", got)
+		}
+
+		state, err := readSessionStateForTest(layout.StateJSON)
+		if err != nil {
+			t.Fatalf("read session state: %v", err)
+		}
+		state.State = model.SessionStateActive
+		if err := writeSessionStateForTest(layout.StateJSON, state); err != nil {
+			t.Fatalf("write session state: %v", err)
+		}
+
+		abandonedReport, err := Build(context.Background(), Options{
+			RepoPath:  repo,
+			SessionID: sessionID,
+		})
+		if err != nil {
+			t.Fatalf("Build() abandoned error = %v", err)
+		}
+		if abandonedReport.Outcome.Status != outcomeStatusAbandoned {
+			t.Fatalf("abandoned outcome = %+v", abandonedReport.Outcome)
+		}
+	})
 }
 
 func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testing.T) {
@@ -928,40 +1184,40 @@ func TestBuildIncludesPolicyChecksAndReviewFocus(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	if got := findPolicyCheck(report.PolicyChecks, "target_file_read_before_edit"); got == nil || got.Status != policyCheckStatusPass {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "target_file_read_before_edit"); !ok || got.Status != policyCheckStatusPass {
 		t.Fatalf("target_file_read_before_edit = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "related_context_read_before_edit"); got == nil || got.Status != policyCheckStatusPass {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "related_context_read_before_edit"); !ok || got.Status != policyCheckStatusPass {
 		t.Fatalf("related_context_read_before_edit = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "tests_run_after_code_changes"); got == nil || got.Status != policyCheckStatusPass {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "tests_run_after_code_changes"); !ok || got.Status != policyCheckStatusPass {
 		t.Fatalf("tests_run_after_code_changes = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "lint_run_after_code_changes"); got == nil || got.Status != policyCheckStatusFail {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "lint_run_after_code_changes"); !ok || got.Status != policyCheckStatusUnknown {
 		t.Fatalf("lint_run_after_code_changes = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "typecheck_run_when_applicable"); got == nil || got.Status != policyCheckStatusNotApplicable {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "typecheck_run_when_applicable"); !ok || got.Status != policyCheckStatusNotApplicable {
 		t.Fatalf("typecheck_run_when_applicable = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "destructive_command_used"); got == nil || got.Status != policyCheckStatusFail {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "destructive_command_used"); !ok || got.Status != policyCheckStatusFail {
 		t.Fatalf("destructive_command_used = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "network_command_used"); got == nil || got.Status != policyCheckStatusFail {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "network_command_used"); !ok || got.Status != policyCheckStatusFail {
 		t.Fatalf("network_command_used = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "dependency_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "dependency_file_changed"); !ok || got.Status != policyCheckStatusWarn {
 		t.Fatalf("dependency_file_changed = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "sensitive_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "sensitive_file_changed"); !ok || got.Status != policyCheckStatusWarn {
 		t.Fatalf("sensitive_file_changed = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "ci_or_security_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "ci_or_security_file_changed"); !ok || got.Status != policyCheckStatusWarn {
 		t.Fatalf("ci_or_security_file_changed = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "generated_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "generated_file_changed"); !ok || got.Status != policyCheckStatusWarn {
 		t.Fatalf("generated_file_changed = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "commit_created"); got == nil || got.Status != policyCheckStatusPass {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "commit_created"); !ok || got.Status != policyCheckStatusPass {
 		t.Fatalf("commit_created = %+v", got)
 	}
 	if len(report.ReviewFocus) == 0 {
@@ -973,7 +1229,7 @@ func TestBuildIncludesPolicyChecksAndReviewFocus(t *testing.T) {
 	if !containsReviewFocus(report.ReviewFocus, "Failed command: rm -rf /tmp/cache") {
 		t.Fatalf("review_focus = %+v", report.ReviewFocus)
 	}
-	if !containsReviewFocus(report.ReviewFocus, "Lint commands were not observed after code changes.") {
+	if !containsReviewFocus(report.ReviewFocus, "No command evidence was available to determine whether lint ran after code changes.") {
 		t.Fatalf("review_focus = %+v", report.ReviewFocus)
 	}
 	if !containsPolicyEvidenceRefs(report.PolicyChecks) {
@@ -1013,13 +1269,13 @@ func TestBuildDistinguishesUnknownPolicyChecksFromFailures(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	if got := findPolicyCheck(report.PolicyChecks, "tests_run_after_code_changes"); got == nil || got.Status != policyCheckStatusUnknown {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "tests_run_after_code_changes"); !ok || got.Status != policyCheckStatusUnknown {
 		t.Fatalf("tests_run_after_code_changes = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "network_command_used"); got == nil || got.Status != policyCheckStatusUnknown {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "network_command_used"); !ok || got.Status != policyCheckStatusUnknown {
 		t.Fatalf("network_command_used = %+v", got)
 	}
-	if got := findPolicyCheck(report.PolicyChecks, "commit_created"); got == nil || got.Status != policyCheckStatusUnknown {
+	if got, ok := findPolicyCheck(report.PolicyChecks, "commit_created"); !ok || got.Status != policyCheckStatusNotApplicable {
 		t.Fatalf("commit_created = %+v", got)
 	}
 	if !containsReviewFocus(report.ReviewFocus, "No provider tool events were observed.") {
@@ -1973,16 +2229,6 @@ func findFile(files []File, path string) *File {
 	return nil
 }
 
-func findPolicyCheck(checks []PolicyCheck, name string) *PolicyCheck {
-	for index := range checks {
-		if checks[index].Name == name {
-			return &checks[index]
-		}
-	}
-
-	return nil
-}
-
 func containsReviewFocus(items []ReviewFocusItem, needle string) bool {
 	for _, item := range items {
 		if strings.Contains(item.Message, needle) {
@@ -2001,4 +2247,14 @@ func containsPolicyEvidenceRefs(checks []PolicyCheck) bool {
 	}
 
 	return false
+}
+
+func findClaim(claims []Claim, name string) *Claim {
+	for index := range claims {
+		if claims[index].Name == name {
+			return &claims[index]
+		}
+	}
+
+	return nil
 }

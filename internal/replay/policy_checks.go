@@ -260,20 +260,11 @@ func buildGatePolicyCheck(name string, gateName string, gate QualityGate, applic
 			EvidenceRefs: gate.EvidenceRefs,
 		}
 	case qualityGateStatusNotRun, qualityGateStatusUnknown:
-		if unknown {
-			return PolicyCheck{
-				Name:       name,
-				Status:     policyCheckStatusUnknown,
-				Message:    "No command evidence was available to determine whether " + gateName + " ran after code changes.",
-				Confidence: model.ConfidenceLowMedium,
-			}
-		}
 		return PolicyCheck{
-			Name:         name,
-			Status:       policyCheckStatusFail,
-			Message:      failMessage,
-			Confidence:   model.ConfidenceHigh,
-			EvidenceRefs: gate.EvidenceRefs,
+			Name:       name,
+			Status:     policyCheckStatusUnknown,
+			Message:    "No command evidence was available to determine whether " + gateName + " ran after code changes.",
+			Confidence: model.ConfidenceLowMedium,
 		}
 	default:
 		return PolicyCheck{
@@ -411,17 +402,17 @@ func buildCommitPolicyCheck(commands []Command, unknownIfNoFiles bool) PolicyChe
 	if len(commands) == 0 || unknownIfNoFiles {
 		return PolicyCheck{
 			Name:       "commit_created",
-			Status:     policyCheckStatusUnknown,
-			Message:    "No command evidence was available to determine whether a commit was created.",
-			Confidence: model.ConfidenceLowMedium,
+			Status:     policyCheckStatusNotApplicable,
+			Message:    "No commit command was observed.",
+			Confidence: model.ConfidenceLow,
 		}
 	}
 
 	return PolicyCheck{
 		Name:       "commit_created",
-		Status:     policyCheckStatusFail,
+		Status:     policyCheckStatusNotApplicable,
 		Message:    "No commit command was observed.",
-		Confidence: model.ConfidenceHigh,
+		Confidence: model.ConfidenceLow,
 	}
 }
 

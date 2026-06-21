@@ -21,6 +21,7 @@ and this project follows semantic versioning.
 - Added replay quality gate evidence (`PLAN.md` Step 5): top-level `quality_gates` summarizing command-classified quality checks (format/lint/tests/race_tests/typecheck/security/coverage/build/smoke/verify), `failed_command_details` for failed commands with redacted outputs and evidence, and command metadata (`cwd`, `time`) for richer verifier context.
 - Added replay patch semantic summaries (`PLAN.md` Step 6): top-level `patch_summary` with category counts, additions/deletions, semantic changed-file entries, Go symbol hints, and test/production relationship signals for final patch review.
 - Added replay policy checks and review focus prompts (`PLAN.md` Step 7): top-level `policy_checks` with deterministic pass/fail/warn/not_applicable/unknown statuses, and `review_focus` prompts synthesized from verification gaps, quality gates, patch summary, policy checks, and failed commands.
+- Added replay privacy reporting, claim confidence, and outcome classification (`PLAN.md` Step 8): top-level `privacy` redaction metadata, `claims` for verification/authenticity/trust/gates/policies/outcome, and `outcome` states for completed, completed_with_gaps, failed, abandoned, committed, and needs_human_review sessions.
 
 - Added replay implementation progress tracking (`PROGRESS.md`) and committed the first planning-control milestone for verifier-facing replay work.
 - Added replay evaluator characterization coverage to ensure replay output does not leak raw provider `risk_signals`.
