@@ -14,6 +14,8 @@ and this project follows semantic versioning.
 - Added ranked focus work queues with `agent_tasks`, `recommended_next_commands`, file classification buckets, and suppressed-change tracking for agent-friendly review loops.
 - Added compact replay indexes and query surfaces, including `indexes`, `query`, `selected_events`, `selected_files`, `selected_evidence`, and full-timeline `--full` output.
 - Changed replay/focus documentation and schema copies to explicitly carry the shared `reviewability` contract and match the current loop-facing CLI behavior.
+- Fixed evaluator loop signals so `commit_count` can be derived from git snapshot head changes and `total_tokens` prefers provider session token totals when available.
+- Added stop-time Codex command/token import for matching repository logs before receipt finalization, so plain `agentreceipt start` sessions can still capture provider command evidence when local Codex logs are available.
 
 ## [0.8.0] - 2026-06-21
 

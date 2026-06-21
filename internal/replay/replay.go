@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -448,7 +449,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			TypecheckDetected: evidenceSummary.TypecheckDetected,
 			FinalRisk:         model.RiskInfo,
 		},
-		EvaluatorSignals:     buildEvaluatorSignals(commands, files, events),
+		EvaluatorSignals:     buildEvaluatorSignals(ctx, repoRoot, commands, files, events),
 		QualityGates:         qualityGates,
 		PatchSummary:         patchSummary,
 		PolicyChecks:         policyChecks,
@@ -696,15 +697,11 @@ func buildFailedCommandDetail(command Command) FailedCommandDetail {
 	}
 }
 
-func buildEvaluatorSignals(commands []Command, files []File, events []model.Event) EvaluatorSignals {
+func buildEvaluatorSignals(ctx context.Context, repoRoot string, commands []Command, files []File, events []model.Event) EvaluatorSignals {
 	evaluatorSignals := EvaluatorSignals{}
-	for _, event := range events {
-		total, ok := providerevidence.TokenTotal(event)
-		if ok {
-			evaluatorSignals.TotalTokens += total
-		}
-	}
+	evaluatorSignals.TotalTokens = evaluatorTokenTotal(events)
 
+	commandCommitCount := 0
 	for _, command := range commands {
 		if isReadCommand(command.Command) {
 			evaluatorSignals.ReadCommandCount++
@@ -737,10 +734,11 @@ func buildEvaluatorSignals(commands []Command, files []File, events []model.Even
 			evaluatorSignals.GitMutationCommandCount++
 		}
 		if isCommitLikeCommand(command.Command) {
-			evaluatorSignals.CommitCount++
+			commandCommitCount++
 		}
 	}
 
+	evaluatorSignals.CommitCount = maxEvaluatorSignalInt(commandCommitCount, gitCommitCountBetweenSnapshots(ctx, repoRoot, events))
 	evaluatorSignals.FailedCommandStreak = maxConsecutiveFailedCommands(commands)
 	evaluatorSignals.SameFileEditCount = maxSameFileEditCount(events, files)
 	evaluatorSignals.ReadToEditRatio = readToEditRatio(evaluatorSignals.ReadCommandCount, evaluatorSignals.WriteCommandCount+evaluatorSignals.EditCommandCount)
@@ -764,6 +762,37 @@ func buildEvaluatorSignals(commands []Command, files []File, events []model.Even
 	}
 
 	return evaluatorSignals
+}
+
+func evaluatorTokenTotal(events []model.Event) int {
+	turnTotal := 0
+	sessionTotal := 0
+	hasSessionTotal := false
+	for _, event := range events {
+		if total, ok := providerevidence.TokenSessionTotal(event); ok {
+			hasSessionTotal = true
+			if total > sessionTotal {
+				sessionTotal = total
+			}
+		}
+		total, ok := providerevidence.TokenTotal(event)
+		if ok {
+			turnTotal += total
+		}
+	}
+	if hasSessionTotal {
+		return sessionTotal
+	}
+
+	return turnTotal
+}
+
+func maxEvaluatorSignalInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+
+	return b
 }
 
 func buildEvidenceIndex(events []model.Event, confidence model.CaptureConfidence, commands []Command, files []File, artifacts []Artifact) []EvidenceEntry {
@@ -1785,6 +1814,44 @@ func parseWorkspaceStatus(payload map[string]any) []gitmonitor.StatusEntry {
 	}
 
 	return status
+}
+
+func gitCommitCountBetweenSnapshots(ctx context.Context, repoRoot string, events []model.Event) int {
+	if strings.TrimSpace(repoRoot) == "" {
+		return 0
+	}
+	startSnapshot, hasStartSnapshot, finalSnapshot, hasFinalSnapshot := workspaceSnapshots(events)
+	if !hasStartSnapshot || !hasFinalSnapshot {
+		return 0
+	}
+	startHead := strings.TrimSpace(startSnapshot.head)
+	finalHead := strings.TrimSpace(finalSnapshot.head)
+	if startHead == "" || finalHead == "" || startHead == finalHead {
+		return 0
+	}
+	count, err := gitRevListCount(ctx, repoRoot, startHead, finalHead)
+	if err != nil {
+		return 0
+	}
+
+	return count
+}
+
+func gitRevListCount(ctx context.Context, repoRoot string, startHead string, finalHead string) (int, error) {
+	rangeSpec := startHead + ".." + finalHead
+	// #nosec G204 -- rangeSpec is built from hashes captured by internal git snapshots and passed as one git argument.
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--count", rangeSpec)
+	cmd.Dir = repoRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list --count %s: %w: %s", rangeSpec, err, strings.TrimSpace(string(output)))
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return 0, fmt.Errorf("parse git rev-list --count %s: %w", rangeSpec, err)
+	}
+
+	return count, nil
 }
 
 func workspaceDiffHash(ctx context.Context, repoRoot string) (string, error) {

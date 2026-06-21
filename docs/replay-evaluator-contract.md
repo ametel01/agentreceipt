@@ -123,7 +123,7 @@ evaluator-facing sections:
 `evaluator_signals` contains factual loop-health values only. These fields do not affect receipt
 integrity and do not form a score:
 
-- `total_tokens` sums provider token totals when provider evidence includes them.
+- `total_tokens` reports the provider session token total when provider evidence includes it, falling back to summed per-turn token totals for older normalized traces.
 - `failed_command_streak` reports the longest observed consecutive failed-command run.
 - `same_file_edit_count` reports the highest observed edit count for one file from filesystem and patch evidence.
 - `read_to_edit_ratio` compares observed read commands with edit/write commands.

@@ -106,6 +106,22 @@ func TestProviderLabelAndTokenTotal(t *testing.T) {
 	if _, ok := TokenTotal(events[1]); ok {
 		t.Fatal("TokenTotal() ok=true for non-token event")
 	}
+
+	sessionTokenEvent := model.Event{
+		Source:   SourceCodex,
+		Type:     TypeEvent,
+		Provider: ProviderCodex,
+		Payload: map[string]any{
+			"payload_type": "token_count",
+			"token_usage": map[string]any{
+				"total_tokens":         42,
+				"session_total_tokens": 128,
+			},
+		},
+	}
+	if total, ok := TokenSessionTotal(sessionTokenEvent); !ok || total != 128 {
+		t.Fatalf("TokenSessionTotal() = %d, %v", total, ok)
+	}
 }
 
 func TestConstructorsAndReadersHandleFallbackShapes(t *testing.T) {
@@ -214,7 +230,8 @@ func TestRiskSignalsAndTokenFallbacks(t *testing.T) {
 			"raw": map[string]any{
 				"payload": map[string]any{
 					"info": map[string]any{
-						"last_token_usage": map[string]any{"total_tokens": float64(88)},
+						"last_token_usage":  map[string]any{"total_tokens": float64(88)},
+						"total_token_usage": map[string]any{"total_tokens": float64(512)},
 					},
 				},
 			},
@@ -222,6 +239,9 @@ func TestRiskSignalsAndTokenFallbacks(t *testing.T) {
 	}
 	if total, ok := TokenTotal(rawTokenEvent); !ok || total != 88 {
 		t.Fatalf("raw TokenTotal() = %d, %v", total, ok)
+	}
+	if total, ok := TokenSessionTotal(rawTokenEvent); !ok || total != 512 {
+		t.Fatalf("raw TokenSessionTotal() = %d, %v", total, ok)
 	}
 
 	for _, status := range []string{"success", "failed", "unknown"} {

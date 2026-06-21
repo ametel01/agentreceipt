@@ -781,6 +781,83 @@ func lastCodexTokenTotal(events []model.Event) (int, bool) {
 	return 0, false
 }
 
+func autoImportCodexBeforeStop(ctx context.Context, manager session.Manager, state session.State, codexHome string) error {
+	events, err := manager.Live(ctx, 0)
+	if err != nil {
+		return err
+	}
+	seenEventIDs := eventIDSet(events)
+	result := codex.Inspect(codexHome)
+	for _, candidate := range result.Candidates {
+		if candidate.ModTime.Before(state.StartedAt.Add(-2 * time.Second)) {
+			continue
+		}
+		cwd, ok, err := codex.SessionCWD(candidate.Path)
+		if err != nil || !ok || !samePath(cwd, state.RepoRoot) {
+			continue
+		}
+		parseResult, err := codex.ParseFile(candidate.Path, codexParseOptions(state.SessionID, state.RepoRoot, manager.Config))
+		if err != nil {
+			continue
+		}
+		filteredEvents := providerEventsInSessionWindow(parseResult.Events, state.StartedAt, time.Now().Add(2*time.Second))
+		filteredEvents = newProviderEvents(filteredEvents, seenEventIDs)
+		if len(filteredEvents) == 0 {
+			continue
+		}
+		if _, _, err := manager.AppendProviderEvents(ctx, filteredEvents, codexWarnings(parseResult.Warnings)); err != nil {
+			return err
+		}
+		for _, event := range filteredEvents {
+			if event.EventID != "" {
+				seenEventIDs[event.EventID] = true
+			}
+		}
+	}
+
+	return nil
+}
+
+func eventIDSet(events []model.Event) map[string]bool {
+	seen := make(map[string]bool, len(events))
+	for _, event := range events {
+		if event.EventID != "" {
+			seen[event.EventID] = true
+		}
+	}
+
+	return seen
+}
+
+func providerEventsInSessionWindow(events []model.Event, startedAt time.Time, stoppedAt time.Time) []model.Event {
+	startedAt = startedAt.Add(-2 * time.Second)
+	stoppedAt = stoppedAt.Add(2 * time.Second)
+	filtered := make([]model.Event, 0, len(events))
+	for _, event := range events {
+		if !providerevidence.IsProviderEvidenceSource(event) {
+			continue
+		}
+		if event.Timestamp.Before(startedAt) || event.Timestamp.After(stoppedAt) {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+
+	return filtered
+}
+
+func newProviderEvents(events []model.Event, seenEventIDs map[string]bool) []model.Event {
+	filtered := make([]model.Event, 0, len(events))
+	for _, event := range events {
+		if event.EventID != "" && seenEventIDs[event.EventID] {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+
+	return filtered
+}
+
 func codexCandidateMatches(candidate codex.Candidate, repoRoot string, watchStarted time.Time) (bool, string) {
 	cwd, ok, err := codex.SessionCWD(candidate.Path)
 	if err == nil && ok {
@@ -974,12 +1051,27 @@ func runEventsCommand(cmd *cobra.Command) error {
 }
 
 func newStopCommand() *cobra.Command {
-	return &cobra.Command{
+	stopCmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Finalize the active capture session",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			manager, err := managerFromCommand(cmd)
 			if err != nil {
+				return err
+			}
+			activeState, active, err := manager.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !active {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No active AgentReceipt session.")
+				return err
+			}
+			codexHome, err := cmd.Flags().GetString("codex-home")
+			if err != nil {
+				return err
+			}
+			if err := autoImportCodexBeforeStop(cmd.Context(), manager, activeState, codexHome); err != nil {
 				return err
 			}
 			state, ok, err := manager.Stop(cmd.Context())
@@ -998,6 +1090,9 @@ func newStopCommand() *cobra.Command {
 			return err
 		},
 	}
+	stopCmd.Flags().String("codex-home", "", "Codex home directory for automatic command import; defaults to CODEX_HOME or ~/.codex")
+
+	return stopCmd
 }
 
 func newReviewCommand() *cobra.Command {

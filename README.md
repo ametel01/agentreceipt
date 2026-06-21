@@ -113,6 +113,8 @@ You can also record without foreground watch output:
 agentreceipt start
 ```
 
+When foreground watching is not running, `agentreceipt stop` still attempts a final import of matching Codex session logs for the current repository before finalizing the receipt.
+
 Watch and review output are human-readable by default. Watch output is backed by structured watch events so later machine-readable rendering can reuse the same event shape. Color is controlled with `--color auto|always|never`; `auto` enables color only for terminal output.
 
 AgentReceipt keeps streaming logs and report rendering separate. `start --watch` uses `zerolog` for structured one-line runtime events. Review, receipt, verify, Markdown, PR, and short Cobra command responses use explicit renderers so their layout stays deterministic and reviewer-focused.
@@ -150,6 +152,8 @@ The `ACTIVE` column marks the current open session with `*`.
 ```bash
 agentreceipt stop
 ```
+
+`stop` scans matching Codex logs by repository `cwd`, imports provider command/token evidence from the active session window, and then finalizes the receipt. If no matching provider evidence is available, the finalized receipt keeps the explicit missing-evidence warning.
 
 ### 5) Review the receipt
 
@@ -189,7 +193,7 @@ agentreceipt schema focus
 - Output is machine-readable JSON with `kind: "agentreceipt.session_replay"`.
 - Replay defaults to a compact, queryable view with `indexes`, `query`, and optional `selected_events` / `selected_files` / `selected_evidence` slices; pass `--full` to include the full `timeline`.
 - Replay is a factual evidence surface: it reports sequence events, commands, file evidence, integrity checks, and gaps, but it does not score the session or apply policy.
-- `evaluator_signals` includes factual reviewer-loop counters such as token totals, failed-command streaks, repeated file edits, read-to-edit ratio, and whether validation ran after the last edit. Missing provider token evidence stays at the zero value.
+- `evaluator_signals` includes factual reviewer-loop counters such as token totals, failed-command streaks, repeated file edits, read-to-edit ratio, and whether validation ran after the last edit. `total_tokens` uses the provider session total when token evidence includes it, and missing provider token evidence stays at the zero value.
 - `--bundle <path>` writes a portable replay bundle containing:
   - `replay.json`
   - `receipt.json`
@@ -380,7 +384,7 @@ The visible CLI surface is:
 | `agentreceipt status` | Show active session health and event counts. |
 | `agentreceipt sessions` | List sessions available for the current repository. |
 | `agentreceipt events` | Show recent session events as a readable timeline. |
-| `agentreceipt stop` | Finalize the active capture session. |
+| `agentreceipt stop` | Import matching Codex command/token evidence when available, then finalize the active capture session. |
 | `agentreceipt review` | Build a reviewer-focused receipt summary. |
 | `agentreceipt focus` | Build a compact reviewer-agent JSON focus report from a session or existing `replay.json`. |
 | `agentreceipt schema replay` | Print the JSON Schema contract for `agentreceipt replay --json` output. |

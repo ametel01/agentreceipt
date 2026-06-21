@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -1072,6 +1073,95 @@ func TestCodexCandidateMatchesRepoAndNewLogs(t *testing.T) {
 	matches, _ = codexCandidateMatches(codex.Candidate{Path: noMetadataTrace, ModTime: time.Now().Add(-time.Minute)}, repo, time.Now())
 	if matches {
 		t.Fatal("old candidate without cwd metadata matched repo")
+	}
+}
+
+func TestStopAutoImportsMatchingCodexCommands(t *testing.T) {
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	repo := newCommandGitRepo(t)
+	home := t.TempDir()
+
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output missing session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+
+	sessionDir := filepath.Join(home, "sessions", "2026", "06", "21")
+	if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+		t.Fatalf("mkdir codex session dir: %v", err)
+	}
+	tracePath := filepath.Join(sessionDir, "rollout-auto.jsonl")
+	ts := time.Now().UTC()
+	trace := strings.Join([]string{
+		fmt.Sprintf(`{"type":"session_meta","timestamp":%q,"payload":{"type":"session_meta","cwd":%q}}`, ts.Format(time.RFC3339Nano), repo),
+		fmt.Sprintf(`{"type":"response_item","timestamp":%q,"payload":{"type":"function_call","call_id":"call_test","name":"exec_command","arguments":{"cmd":"go test ./..."}}}`, ts.Add(100*time.Millisecond).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"response_item","timestamp":%q,"payload":{"type":"function_call_output","call_id":"call_test","output":"Process exited with code 0\nok"}}`, ts.Add(200*time.Millisecond).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":15},"total_token_usage":{"total_tokens":190}}}}`, ts.Add(300*time.Millisecond).Format(time.RFC3339Nano)),
+	}, "\n") + "\n"
+	if err := os.WriteFile(tracePath, []byte(trace), 0o600); err != nil {
+		t.Fatalf("write codex trace: %v", err)
+	}
+
+	if _, _, err := executeCommand(t, "--repo", repo, "stop", "--codex-home", home); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+
+	replayOutput, _, err := executeCommand(t, "--repo", repo, "replay", "--session", sessionID, "--json")
+	if err != nil {
+		t.Fatalf("replay returned error: %v", err)
+	}
+	var payload struct {
+		Summary struct {
+			CommandCount int `json:"command_count"`
+		} `json:"summary"`
+		Commands []struct {
+			Command string `json:"command"`
+			Kind    string `json:"kind"`
+			Status  string `json:"status"`
+		} `json:"commands"`
+		EvaluatorSignals struct {
+			TestCommandCount int `json:"test_command_count"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"evaluator_signals"`
+	}
+	if err := json.Unmarshal([]byte(replayOutput), &payload); err != nil {
+		t.Fatalf("decode replay output: %v", err)
+	}
+	if payload.Summary.CommandCount == 0 || len(payload.Commands) == 0 {
+		t.Fatalf("expected stop to auto-import Codex commands, replay=%s", replayOutput)
+	}
+	if payload.Commands[0].Command != "go test ./..." || payload.Commands[0].Kind != "test" || payload.Commands[0].Status != "success" {
+		t.Fatalf("unexpected imported command: %+v", payload.Commands)
+	}
+	if payload.EvaluatorSignals.TestCommandCount != 1 {
+		t.Fatalf("test_command_count = %d, want 1", payload.EvaluatorSignals.TestCommandCount)
+	}
+	if payload.EvaluatorSignals.TotalTokens != 190 {
+		t.Fatalf("total_tokens = %d, want 190", payload.EvaluatorSignals.TotalTokens)
+	}
+}
+
+func TestNewProviderEventsSkipsOnlySeenEventIDs(t *testing.T) {
+	events := []model.Event{
+		{EventID: "evt_codex_1"},
+		{EventID: "evt_codex_2"},
+		{},
+	}
+
+	got := newProviderEvents(events, map[string]bool{"evt_codex_1": true})
+	if len(got) != 2 {
+		t.Fatalf("newProviderEvents returned %d events, want 2", len(got))
+	}
+	if got[0].EventID != "evt_codex_2" {
+		t.Fatalf("first imported event ID = %q, want evt_codex_2", got[0].EventID)
+	}
+	if got[1].EventID != "" {
+		t.Fatalf("blank event IDs should be preserved, got %q", got[1].EventID)
 	}
 }
 

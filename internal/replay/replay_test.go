@@ -1145,7 +1145,7 @@ func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testin
 func TestBuildEvaluatorSignalsHandlesNoCommandEvidence(t *testing.T) {
 	t.Parallel()
 
-	signals := buildEvaluatorSignals(nil, nil, nil)
+	signals := buildEvaluatorSignals(context.Background(), "", nil, nil, nil)
 	if signals.TotalTokens != 0 {
 		t.Fatalf("total_tokens = %d, want 0", signals.TotalTokens)
 	}
@@ -1166,10 +1166,77 @@ func TestBuildEvaluatorSignalsHandlesNoCommandEvidence(t *testing.T) {
 	}
 }
 
+func TestBuildEvaluatorSignalsUsesProviderSessionTokenTotal(t *testing.T) {
+	t.Parallel()
+
+	signals := buildEvaluatorSignals(context.Background(), "", nil, nil, []model.Event{
+		{
+			Source:   providerevidence.SourceCodex,
+			Type:     providerevidence.TypeEvent,
+			Provider: providerevidence.ProviderCodex,
+			Payload: map[string]any{
+				"payload_type": "token_count",
+				"token_usage": map[string]any{
+					"total_tokens":         10,
+					"session_total_tokens": 50,
+				},
+			},
+		},
+		{
+			Source:   providerevidence.SourceCodex,
+			Type:     providerevidence.TypeEvent,
+			Provider: providerevidence.ProviderCodex,
+			Payload: map[string]any{
+				"payload_type": "token_count",
+				"token_usage": map[string]any{
+					"total_tokens":         20,
+					"session_total_tokens": 80,
+				},
+			},
+		},
+	})
+	if signals.TotalTokens != 80 {
+		t.Fatalf("total_tokens = %d, want 80", signals.TotalTokens)
+	}
+}
+
+func TestBuildEvaluatorSignalsCountsCommitsBetweenGitSnapshots(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySessionWithSetup(
+		t,
+		nil,
+		func(repo string) {
+			if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n\nfunc Foo() string { return \"one\" }\n"), 0o600); err != nil {
+				t.Fatalf("write first change: %v", err)
+			}
+			runReplayGit(t, repo, "add", "main.go")
+			runReplayGit(t, repo, "commit", "-m", "first change")
+			if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o600); err != nil {
+				t.Fatalf("write second change: %v", err)
+			}
+			runReplayGit(t, repo, "add", "README.md")
+			runReplayGit(t, repo, "commit", "-m", "second change")
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if report.EvaluatorSignals.CommitCount != 2 {
+		t.Fatalf("commit_count = %d, want 2", report.EvaluatorSignals.CommitCount)
+	}
+}
+
 func TestBuildEvaluatorSignalsCountsFailedCommandStreak(t *testing.T) {
 	t.Parallel()
 
-	signals := buildEvaluatorSignals([]Command{
+	signals := buildEvaluatorSignals(context.Background(), "", []Command{
 		{Command: "go test ./...", Status: "failed"},
 		{Command: "make test", Status: "failed"},
 		{Command: "cat main.go", Status: "success"},

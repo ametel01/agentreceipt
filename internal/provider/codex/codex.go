@@ -555,6 +555,11 @@ func tokenUsagePayload(raw map[string]any) map[string]any {
 			out[key] = total
 		}
 	}
+	if totalUsage := mapField(info, "total_token_usage"); totalUsage != nil {
+		if total, ok := intValue(totalUsage["total_tokens"]); ok {
+			out["session_total_tokens"] = total
+		}
+	}
 
 	return out
 }

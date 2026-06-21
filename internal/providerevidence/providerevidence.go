@@ -244,6 +244,29 @@ func TokenTotal(event model.Event) (int, bool) {
 	return intPayload(usage, "total_tokens")
 }
 
+func TokenSessionTotal(event model.Event) (int, bool) {
+	if !IsProviderEvidenceSource(event) {
+		return 0, false
+	}
+	if stringPayload(event.Payload, "payload_type") != "token_count" {
+		return 0, false
+	}
+	if usage := mapPayload(event.Payload, "token_usage"); usage != nil {
+		if total, ok := intPayload(usage, "session_total_tokens"); ok {
+			return total, true
+		}
+	}
+	raw := mapPayload(event.Payload, "raw")
+	payload := mapPayload(raw, "payload")
+	if payload == nil {
+		payload = raw
+	}
+	info := mapPayload(payload, "info")
+	usage := mapPayload(info, "total_token_usage")
+
+	return intPayload(usage, "total_tokens")
+}
+
 func NormalizeCommandStatus(status string) string {
 	switch status {
 	case "success", "failed", "unknown":
