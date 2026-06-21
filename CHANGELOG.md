@@ -15,6 +15,10 @@ and this project follows semantic versioning.
 - Added noninteractive installer controls (`--install-skill`, `--no-install-skill`, `--skill-dir`) with env equivalents in `scripts/install.sh`, plus offline installer fixtures in `scripts/test-release-scripts.sh` for scripted install/no-install paths.
 - Added interactive Step 4 installer onboarding: `/dev/tty` prompt, no-TTY skip behavior, default root resolution (`~/.agents/skills` over `~/.claude/skills`), explicit overwrite prompts, and expanded installer fixture coverage (no-tty skip, env-driven install, identical/different target handling).
 
+### Changed
+
+- Fully refreshed `README.md` for 0.9.0 agent-facing workflows, highlighting contract-first loop commands (`sessions`, `focus`, `replay`, `schema`, `verify diff`), installer option/env examples (`--install-skill`, `--no-install-skill`, `--skill-dir`, `AGENTRECEIPT_INSTALL_SKILL`, `AGENTRECEIPT_SKILL_DIR`), install archive contents, and explicit limitations around privacy, Codex-first capture, and non-policy enforcement.
+
 ## [0.9.0] - 2026-06-21
 
 ### Added

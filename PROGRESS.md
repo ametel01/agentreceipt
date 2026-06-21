@@ -10,17 +10,18 @@
 - Step 2: Completed
 - Step 3: Completed
 - Step 4: Completed
-- Step 5: Next
-- Completed: Step 4
+- Step 5: Completed
+- Step 6: Next
+- Completed: Step 5
 - Last updated: 2026-06-22
 
 ## Checklist
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Add the Versioned AgentReceipt Skill Source
 - [x] Step 2: Package the Skill in Release Archives
-- [x] Step 3: Add Noninteractive Skill Installer Controls
+- [x] Step 3: Add Noninteractive Installer Controls
 - [x] Step 4: Add Interactive Skill Installer Onboarding
-- [ ] Step 5: Fully Update the README
+- [x] Step 5: Fully Update the README
 - [ ] Step 6: Final Release-Path Validation and Cleanup
 
 ## Update Log
@@ -30,3 +31,4 @@
 - 2026-06-22: Step 2 completed (commit `62b36b5`). Updated `scripts/build-release-artifacts.sh` to include `agentreceipt-skill/SKILL.md` from `skills/agentreceipt/SKILL.md` and expanded `scripts/test-release-scripts.sh` to assert archive entry presence, extracted skill parity, and existing checksum validation.
 - 2026-06-22: Step 3 completed (commit `42e6afb`). Added `scripts/install.sh` support for `--install-skill`, `--no-install-skill`, `--skill-dir` plus `AGENTRECEIPT_INSTALL_SKILL` and `AGENTRECEIPT_SKILL_DIR`; added noninteractive installer fixtures in `scripts/test-release-scripts.sh` and updated syntax checks.
 - 2026-06-22: Step 4 completed (commit `f3f9dee`). Added interactive onboarding in `scripts/install.sh` with `/dev/tty` [Y/n] prompt, no-TTY skip behavior, auto-root selection rules, overwrite prompt for existing skill files, and additional fixture coverage for env-driven install/no-tty/identical-divergent target handling.
+- 2026-06-22: Step 5 completed (in-progress commit pending). Rewrote `README.md` for 0.9.0 agent-facing command surfaces and installer behavior, including optional skill install defaults, env/path controls, release archive contents, and limitation notes.
