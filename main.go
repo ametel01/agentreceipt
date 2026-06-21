@@ -11,6 +11,6 @@ import (
 func main() {
 	if err := cmd.Execute(buildinfo.Version()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(cmd.ExitCodeFromError(err))
 	}
 }

@@ -17,7 +17,7 @@ Source documents:
 - [x] Step 5: Capture coding-agent instruction files at session start
 - [x] Step 6: Separate pre-existing and agent-introduced changes
 - [x] Step 7: Add stable JSON schema output
-- [ ] Step 8: Add machine-oriented exit codes for loop-facing commands
+- [x] Step 8: Add machine-oriented exit codes for loop-facing commands
 - [ ] Step 9: Add first-class diff equivalence verification
 - [ ] Step 10: Add loop-health evaluator signals
 - [ ] Step 11: Add evidence reference dereferencing
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 7` completed
-- Next step: `Step 8`
+- Current phase: `Step 8` completed
+- Next step: `Step 9`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -155,3 +155,28 @@ Source documents:
     - `make smoke`
     - `make verify` (fails on existing high-confidence `make security` findings)
   - Commit: `148ff9e`
+
+- 2026-06-21 — Completed Step 8 for machine-oriented focus exit codes.
+  - Added deterministic process exit codes to `agentreceipt focus --json` for loop automation:
+    - `0` pass
+    - `10` review_required
+    - `20` blocker evidence
+    - `30` integrity failure
+    - `40` unverifiable authenticity
+    - `50` patch/workspace mismatch
+    - `60` invalid CLI input
+  - Added `main.go` exit-code plumbing (`cmd.ExitCodeFromError`) so typed errors are surfaced as structured process exits.
+  - Added invalid-input wrapping and report-to-code mapping in `cmd/root.go`.
+  - Added focused tests for focus exit-code mapping and JSON output on non-zero review states.
+  - Updated `README.md`, `CHANGELOG.md`, and `docs/replay-evaluator-contract.md` with machine-facing exit semantics.
+  - Validation:
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `make test-race`
+    - `make security` (fails on existing high-confidence findings in `internal/replay/replay.go` and `internal/capture/instructions/instructions.go`)
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `make verify` (fails on existing high-confidence `make security` findings)
+  - Commit: this step

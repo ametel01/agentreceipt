@@ -18,6 +18,14 @@ and this project follows semantic versioning.
 - Added replay `instruction_files` output and focus report pass-through of captured instruction file evidence.
 - Added workspace change separation in replay/focus (`workspace_change_summary`) to distinguish pre-existing dirty files from session-introduced file changes, and added deterministic checks for final-patch/workspace parity.
 - Added `agentreceipt schema replay` and `agentreceipt schema focus` commands for deterministic JSON Schema output of machine-consumable replay/focus contracts.
+- Added deterministic process exit codes for `agentreceipt focus --json` to support loop automation:
+  - `0` pass
+  - `10` review required
+  - `20` blocker evidence
+  - `30` integrity failure
+  - `40` unverifiable authenticity/trust
+  - `50` workspace diff mismatch
+  - `60` invalid command input
 
 ## [0.7.0] - 2026-06-21
 

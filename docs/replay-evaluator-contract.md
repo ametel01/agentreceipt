@@ -54,6 +54,18 @@ Task kind examples include:
 - `generated_change`
 - `evidence_gap`
 
+## Focus Exit Codes
+
+`agentreceipt focus --json` uses deterministic process exit codes in addition to the `verdict` field:
+
+- `0` when `verdict: "pass"`
+- `10` when `verdict: "review_required"`
+- `20` when blocker evidence is present (failed gates or failed commands)
+- `30` when integrity failed
+- `40` when authenticity/trust signals are `unverifiable`/`not_trusted` while integrity is otherwise valid
+- `50` when final patch/workspace diff mismatch is detected
+- `60` for invalid input (for example missing required source flags or missing `--json`)
+
 ## Report Shape
 
 The top-level `replay.json` payload is additive and keeps the existing verifier fields while adding

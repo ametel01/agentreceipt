@@ -201,6 +201,14 @@ agentreceipt schema focus
 - `focus` review tasks are ranked (`P0` → `P3`) and include `id`, `kind`, `question`, `paths`, `symbols`, `evidence_refs`, `confidence`, and `source` so loop automation can prioritize work.
 - Replay and focus reports also include instruction-file evidence captured at session start (`AGENTS.md`, `CLAUDE.md`) under `instruction_files`.
 - `schema replay` and `schema focus` print machine-consumable JSON Schema definitions for contract consumers and loop validators.
+- `focus` exits with machine-oriented codes for automation flow control:
+  - `0` pass
+  - `10` review required
+  - `20` blocker evidence (failed gates/failed commands)
+  - `30` integrity failure
+  - `40` unverifiable authenticity when integrity is otherwise valid
+  - `50` final patch mismatch against current workspace diff
+  - `60` invalid CLI input
 - Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
 Replay JSON now includes explicit contract fields for verification, quality gates, patch summary,

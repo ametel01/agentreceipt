@@ -45,9 +45,49 @@ const (
 	eventsFormatJSONL = "jsonl"
 )
 
+const (
+	exitCodePass            = 0
+	exitCodeReviewRequired  = 10
+	exitCodeBlockerEvidence = 20
+	exitCodeIntegrity       = 30
+	exitCodeUnverifiable    = 40
+	exitCodePatchMismatch   = 50
+	exitCodeInvalidInput    = 60
+)
+
+const focusTaskKindDiffMismatch = "diff_mismatch"
+
 // Execute runs the AgentReceipt CLI.
 func Execute(version string) error {
 	return NewRootCommand(version).Execute()
+}
+
+// ExitError carries a specific process exit code while preserving a message.
+type ExitError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ExitError) Unwrap() error {
+	return e.Err
+}
+
+// ExitCodeFromError returns the process exit code for a command error.
+func ExitCodeFromError(err error) int {
+	var exitErr *ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.Code
+	}
+
+	return 1
+}
+
+func invalidInputError(err error) error {
+	return &ExitError{Code: exitCodeInvalidInput, Err: err}
 }
 
 // NewRootCommand builds the command tree. Tests use this directly to verify
@@ -1061,20 +1101,23 @@ func newFocusCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			options, err := focusOptionsFromCommand(cmd)
 			if err != nil {
-				return err
+				return invalidInputError(err)
 			}
 			asJSON, err := cmd.Flags().GetBool("json")
 			if err != nil {
-				return err
+				return invalidInputError(err)
 			}
 			if !asJSON {
-				return fmt.Errorf("focus command requires --json")
+				return invalidInputError(fmt.Errorf("focus command requires --json"))
 			}
 
 			var report replay.Report
 			switch {
 			case options.ReplayPath != "":
 				report, err = readReplayJSON(options.ReplayPath)
+				if err != nil {
+					return invalidInputError(err)
+				}
 			default:
 				replayOptions := replay.Options{
 					RepoPath:            options.RepoPath,
@@ -1082,15 +1125,24 @@ func newFocusCommand() *cobra.Command {
 					TrustedSignerKeyIDs: options.TrustedSignerKeyIDs,
 				}
 				report, err = replay.Build(cmd.Context(), replayOptions)
+				if err != nil {
+					return err
+				}
 			}
-			if err != nil {
-				return err
-			}
-
 			focusReport := replay.BuildFocusReport(report)
 			encoder := json.NewEncoder(cmd.OutOrStdout())
 			encoder.SetIndent("", "  ")
-			return encoder.Encode(focusReport)
+			if err := encoder.Encode(focusReport); err != nil {
+				return err
+			}
+			if code := focusExitCodeFromReport(report, focusReport); code != exitCodePass {
+				return &ExitError{
+					Code: code,
+					Err:  fmt.Errorf("focus report requires review action: %s", focusReport.Verdict),
+				}
+			}
+
+			return nil
 		},
 	}
 	focusCmd.Flags().String("session", "", "Build focus from a specific finalized session ID")
@@ -1735,6 +1787,34 @@ func focusOptionsFromCommand(cmd *cobra.Command) (focusOptions, error) {
 		ReplayPath:          replayPath,
 		TrustedSignerKeyIDs: normalizedTrustedSignerKeyIDs,
 	}, nil
+}
+
+func focusExitCodeFromReport(report replay.Report, focusReport replay.FocusReport) int {
+	if !report.Verification.IntegrityValid {
+		return exitCodeIntegrity
+	}
+	if focusReportContainsDiffMismatch(focusReport) {
+		return exitCodePatchMismatch
+	}
+	switch focusReport.Verdict {
+	case "block":
+		return exitCodeBlockerEvidence
+	case "unverifiable":
+		return exitCodeUnverifiable
+	case "review_required":
+		return exitCodeReviewRequired
+	default:
+		return exitCodePass
+	}
+}
+
+func focusReportContainsDiffMismatch(focusReport replay.FocusReport) bool {
+	for _, task := range focusReport.ReviewTasks {
+		if task.Kind == focusTaskKindDiffMismatch {
+			return true
+		}
+	}
+	return false
 }
 
 func readReplayJSON(path string) (replay.Report, error) {
