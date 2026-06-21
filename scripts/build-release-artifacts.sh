@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+
 usage() {
 	cat <<'USAGE'
 Usage:
@@ -51,7 +54,9 @@ for target in $targets; do
 	mkdir -p "$package_dir"
 
 	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "$ldflags" -o "$package_dir/agentreceipt" .
-	tar -C "$package_dir" -czf "$dist/agentreceipt_${goos}_${goarch}.tar.gz" agentreceipt
+	mkdir -p "$package_dir/agentreceipt-skill"
+	cp "$repo_root/skills/agentreceipt/SKILL.md" "$package_dir/agentreceipt-skill/SKILL.md"
+	tar -C "$package_dir" -czf "$dist/agentreceipt_${goos}_${goarch}.tar.gz" agentreceipt agentreceipt-skill/SKILL.md
 done
 
 (

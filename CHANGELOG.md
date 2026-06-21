@@ -11,6 +11,7 @@ and this project follows semantic versioning.
 
 - Added Step 0 rollout tracking setup for the AgentReceipt skill installer rollout (`PROGRESS.md`) and initial changelog entry under Unreleased.
 - Added the repository-owned AgentReceipt coding-agent skill source at `skills/agentreceipt/SKILL.md` and release-script checks for required frontmatter/agent-facing references.
+- Added release packaging of `agentreceipt-skill/SKILL.md` into every archive via `scripts/build-release-artifacts.sh`, and expanded `scripts/test-release-scripts.sh` checks to verify the archived skill path and content.
 
 ## [0.9.0] - 2026-06-21
 
