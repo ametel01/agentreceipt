@@ -8,6 +8,21 @@ The new `agentreceipt focus --json` command consumes the same `replay.json` payl
 replay evidence (not a replacement for `replay`), with deterministic `verdict`, `top_reasons`,
 `review_tasks`, `changed_files`, `failed_gates`, and `evidence_refs`.
 
+`changed_files` entries are per-file dossiers with:
+
+- `path`
+- `action`
+- `category`
+- `sensitive`
+- `dependency`
+- `symbols`
+- `read_before_edit` (`pass`, `fail`, `warn`, `unknown`, or `not_applicable`)
+- `related_context_read` (`pass`, `fail`, `warn`, `unknown`, or `not_applicable`)
+- `tests_related` (explicitly matched test commands)
+- `commands_touching_file` (explicitly matched commands)
+- `review_reasons`
+- `evidence_refs`
+
 `review_tasks` entries are structured and ranked with:
 
 - `id`

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ametel01/agentreceipt/internal/model"
 )
@@ -53,10 +54,18 @@ type FocusReport struct {
 }
 
 type FocusChangedFile struct {
-	Path      string `json:"path"`
-	Action    string `json:"action,omitempty"`
-	Category  string `json:"category,omitempty"`
-	Sensitive bool   `json:"sensitive,omitempty"`
+	Path                 string   `json:"path"`
+	Action               string   `json:"action,omitempty"`
+	Category             string   `json:"category,omitempty"`
+	Sensitive            bool     `json:"sensitive,omitempty"`
+	Dependency           bool     `json:"dependency,omitempty"`
+	Symbols              []string `json:"symbols,omitempty"`
+	ReadBeforeEdit       string   `json:"read_before_edit,omitempty"`
+	RelatedContextRead   string   `json:"related_context_read,omitempty"`
+	TestsRelated         []string `json:"tests_related,omitempty"`
+	CommandsTouchingFile []string `json:"commands_touching_file,omitempty"`
+	ReviewReasons        []string `json:"review_reasons,omitempty"`
+	EvidenceRefs         []string `json:"evidence_refs,omitempty"`
 }
 
 type FailedGate struct {
@@ -528,46 +537,327 @@ func collectFailedGates(gates QualityGates) []FailedGate {
 }
 
 func collectFocusChangedFiles(replay Report) []FocusChangedFile {
-	files := make([]FocusChangedFile, 0, max(len(replay.PatchSummary.ChangedFiles), len(replay.Files)))
-	for _, file := range replay.PatchSummary.ChangedFiles {
-		files = append(files, FocusChangedFile{
-			Path:      file.Path,
-			Action:    file.Action,
-			Category:  file.Category,
-			Sensitive: file.Sensitive,
-		})
-	}
-
-	if len(files) == 0 {
+	source := replay.PatchSummary.ChangedFiles
+	if len(source) == 0 {
+		source = make([]PatchSummaryFile, 0, len(replay.Files))
 		for _, file := range replay.Files {
-			files = append(files, FocusChangedFile{
-				Path:      file.Path,
-				Action:    file.Action,
-				Sensitive: file.Sensitive,
-				Category:  focusFileCategory(file),
+			source = append(source, PatchSummaryFile{
+				Path:         file.Path,
+				Action:       file.Action,
+				Category:     focusFileCategory(file),
+				Sensitive:    file.Sensitive,
+				Dependency:   file.Dependency,
+				EvidenceRefs: file.EvidenceRefs,
 			})
 		}
 	}
+	if len(source) == 0 {
+		return nil
+	}
 
-	unique := make([]FocusChangedFile, 0, len(files))
-	seen := map[string]FocusChangedFile{}
-	for _, file := range files {
+	filePaths := make([]string, 0, len(source))
+	filesByPath := make(map[string]FocusChangedFile, len(source))
+	for _, file := range source {
 		if file.Path == "" {
 			continue
 		}
-		seen[file.Path] = file
-	}
-	for _, file := range seen {
-		unique = append(unique, file)
-	}
-	sort.SliceStable(unique, func(i, j int) bool {
-		if unique[i].Path == unique[j].Path {
-			return unique[i].Action < unique[j].Action
+		filesByPath[file.Path] = FocusChangedFile{
+			Path:         file.Path,
+			Action:       file.Action,
+			Category:     file.Category,
+			Sensitive:    file.Sensitive,
+			Dependency:   file.Dependency,
+			Symbols:      uniqueSorted(file.Symbols),
+			EvidenceRefs: uniqueSorted(file.EvidenceRefs),
 		}
-		return unique[i].Path < unique[j].Path
-	})
+	}
+	for path := range filesByPath {
+		filePaths = append(filePaths, path)
+	}
 
-	return unique
+	policyChecksByName := policyChecksByName(replay.PolicyChecks)
+	commandsByFile := focusCommandAssociations(replay.Commands, filePaths)
+	evidence := commandEvidenceFromAssociations(commandsByFile)
+
+	readBeforeEditStatus := policyCheckStatusForFile(filePaths, policyChecksByName["target_file_read_before_edit"])
+	relatedContextStatus := policyCheckStatusForFile(filePaths, policyChecksByName["related_context_read_before_edit"])
+
+	hasTestCommand := hasAnyTestCommand(replay.Commands)
+
+	changed := make([]FocusChangedFile, 0, len(filesByPath))
+	for path, file := range filesByPath {
+		file.ReadBeforeEdit = readBeforeEditStatus[path]
+		file.RelatedContextRead = relatedContextStatus[path]
+		file.CommandsTouchingFile = uniqueSorted(commandsByPath(commandsByFile[path]))
+		file.TestsRelated = uniqueSorted(commandsByPathTests(commandsByFile[path]))
+		file.EvidenceRefs = uniqueSorted(append(file.EvidenceRefs, evidence[path]...))
+		if check, ok := policyChecksByName["target_file_read_before_edit"]; ok {
+			file.EvidenceRefs = uniqueSorted(append(file.EvidenceRefs, check.EvidenceRefs...))
+		}
+		if check, ok := policyChecksByName["related_context_read_before_edit"]; ok {
+			file.EvidenceRefs = uniqueSorted(append(file.EvidenceRefs, check.EvidenceRefs...))
+		}
+
+		file.ReviewReasons = collectFocusFileReasons(
+			file,
+			readBeforeEditStatus[path],
+			relatedContextStatus[path],
+			commandsByFile[path],
+			hasTestCommand,
+			replay.PatchSummary,
+			policyChecksByName,
+		)
+
+		changed = append(changed, file)
+	}
+
+	sort.SliceStable(changed, func(i, j int) bool {
+		if changed[i].Path == changed[j].Path {
+			return changed[i].Action < changed[j].Action
+		}
+		return changed[i].Path < changed[j].Path
+	})
+	return changed
+}
+
+type focusCommandAssociation struct {
+	commands     []string
+	commandRefs  []string
+	testCommands []string
+	failedFiles  []string
+}
+
+func focusCommandAssociations(commands []Command, filePaths []string) map[string]focusCommandAssociation {
+	associations := make(map[string]focusCommandAssociation, len(filePaths))
+	for _, path := range filePaths {
+		associations[path] = focusCommandAssociation{}
+	}
+
+	for _, command := range commands {
+		commandText := strings.TrimSpace(command.Command)
+		for _, path := range filePaths {
+			if !commandTouchesFilePath(commandText, path) {
+				continue
+			}
+			association := associations[path]
+			association.commands = append(association.commands, command.Command)
+			association.commandRefs = append(association.commandRefs, command.EvidenceRefs...)
+			if isLikelyTestCommand(command.Command) {
+				association.testCommands = append(association.testCommands, command.Command)
+			}
+			if command.Status == "failed" {
+				association.failedFiles = append(association.failedFiles, command.Command)
+			}
+			associations[path] = association
+		}
+	}
+
+	return associations
+}
+
+func commandEvidenceFromAssociations(associations map[string]focusCommandAssociation) map[string][]string {
+	evidence := make(map[string][]string, len(associations))
+	for path, association := range associations {
+		evidence[path] = uniqueSorted(append([]string(nil), association.commandRefs...))
+	}
+	return evidence
+}
+
+func commandsByPath(association focusCommandAssociation) []string {
+	return uniqueSorted(append([]string(nil), association.commands...))
+}
+
+func commandsByPathTests(association focusCommandAssociation) []string {
+	return uniqueSorted(append([]string(nil), association.testCommands...))
+}
+
+func hasAnyTestCommand(commands []Command) bool {
+	for _, command := range commands {
+		if isLikelyTestCommand(command.Command) {
+			return true
+		}
+	}
+	return false
+}
+
+func policyChecksByName(checks []PolicyCheck) map[string]PolicyCheck {
+	m := make(map[string]PolicyCheck, len(checks))
+	for _, check := range checks {
+		if check.Name == "" {
+			continue
+		}
+		m[check.Name] = check
+	}
+	return m
+}
+
+func policyCheckStatusForFile(paths []string, check PolicyCheck) map[string]string {
+	statuses := make(map[string]string, len(paths))
+	for _, path := range paths {
+		statuses[path] = policyCheckStatusNotApplicable
+	}
+	if check.Name == "" {
+		return statuses
+	}
+	for _, path := range paths {
+		statuses[path] = check.Status
+	}
+	return statuses
+}
+
+func collectFocusFileReasons(
+	file FocusChangedFile,
+	readBeforeEditStatus string,
+	relatedContextStatus string,
+	association focusCommandAssociation,
+	hasTestCommand bool,
+	summary PatchSummary,
+	policyChecksByName map[string]PolicyCheck,
+) []string {
+	reasons := make([]string, 0)
+
+	switch {
+	case file.Dependency || file.Category == patchCategoryDependency:
+		reasons = append(reasons, "Dependency file changed.")
+	case file.Category == patchCategoryGeneratedOrUnknown:
+		reasons = append(reasons, "Generated or unknown file changed.")
+	}
+
+	if file.Sensitive {
+		reasons = append(reasons, "Sensitive file changed.")
+	}
+	if isCIOrSecurityPatchFile(file.Path) {
+		reasons = append(reasons, "CI or security file changed.")
+	}
+	if summary.ProductionChangedWithoutTestsChanged && file.Category == patchCategoryProduction {
+		reasons = append(reasons, "Production code changed without test file changes.")
+	}
+
+	if readBeforeEditStatus == policyCheckStatusFail || readBeforeEditStatus == policyCheckStatusWarn || readBeforeEditStatus == policyCheckStatusUnknown {
+		if check, ok := policyChecksByName["target_file_read_before_edit"]; ok && check.Message != "" {
+			reasons = append(reasons, check.Message)
+		}
+	}
+	if relatedContextStatus == policyCheckStatusFail || relatedContextStatus == policyCheckStatusWarn || relatedContextStatus == policyCheckStatusUnknown {
+		if check, ok := policyChecksByName["related_context_read_before_edit"]; ok && check.Message != "" {
+			reasons = append(reasons, check.Message)
+		}
+	}
+	if len(association.failedFiles) > 0 {
+		reasons = append(reasons, "A failed command touched this file.")
+	}
+	if file.Category == patchCategoryProduction && hasTestCommand && len(file.TestsRelated) == 0 {
+		reasons = append(reasons, "No file-specific test command was identified for this file.")
+	}
+
+	return uniqueSorted(reasons)
+}
+
+func commandTouchesFilePath(commandText string, filePath string) bool {
+	commandText = strings.ToLower(filepath.ToSlash(strings.TrimSpace(commandText)))
+	filePath = strings.ToLower(filepath.ToSlash(strings.TrimSpace(filePath)))
+	if commandText == "" || filePath == "" {
+		return false
+	}
+	filePath = strings.TrimPrefix(filePath, "./")
+	fileDir := strings.ToLower(filepath.ToSlash(filepath.Dir(filePath)))
+	if fileDir == "." {
+		fileDir = ""
+	}
+	fileBase := filepath.Base(filePath)
+
+	for _, token := range commandPathTokens(commandText) {
+		if commandPathTokenReferencesFile(token, filePath, fileDir, fileBase) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func commandPathTokens(commandText string) []string {
+	return strings.FieldsFunc(commandText, func(r rune) bool {
+		if unicode.IsSpace(r) {
+			return true
+		}
+		switch r {
+		case '&', ';', '|', '(', ')', '{', '}', '[', ']', '<', '>', '"', '\'', '`', ',':
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+func commandPathTokenReferencesFile(token string, filePath string, fileDir string, fileBase string) bool {
+	token = strings.ToLower(filepath.ToSlash(strings.TrimSpace(token)))
+	if token == "" {
+		return false
+	}
+	token = strings.TrimPrefix(token, "./")
+	if token == "" {
+		return false
+	}
+
+	if token == filePath || token == fileBase {
+		return true
+	}
+	if fileDir != "" && token == fileDir {
+		return true
+	}
+
+	if token == "..." || token == "." || token == "./" || token == "../" {
+		return false
+	}
+	if strings.HasSuffix(token, "/...") {
+		prefix := strings.TrimSuffix(token, "/...")
+		prefix = strings.TrimPrefix(prefix, "./")
+		if prefix == "" || prefix == "." {
+			return false
+		}
+		return pathHasPrefix(filePath, prefix) || pathHasPrefix(fileDir, prefix)
+	}
+	if !strings.Contains(token, "/") && !strings.Contains(token, ".") {
+		return false
+	}
+
+	return pathHasPrefix(filePath, token) || pathHasPrefix(fileDir, token)
+}
+
+func pathHasPrefix(path string, prefix string) bool {
+	if path == "" || prefix == "" {
+		return false
+	}
+	if path == prefix {
+		return true
+	}
+	return strings.HasPrefix(path, prefix+"/")
+}
+
+func isLikelyTestCommand(commandText string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(commandText))
+	switch {
+	case normalized == "":
+		return false
+	case strings.HasPrefix(normalized, "go test"):
+		return true
+	case strings.HasPrefix(normalized, "npm test"), strings.HasPrefix(normalized, "npm run test"):
+		return true
+	case strings.HasPrefix(normalized, "pnpm test"), strings.HasPrefix(normalized, "pnpm run test"):
+		return true
+	case strings.HasPrefix(normalized, "yarn test"), strings.HasPrefix(normalized, "yarn run test"):
+		return true
+	case strings.HasPrefix(normalized, "bun test"), strings.HasPrefix(normalized, "bun run test"):
+		return true
+	case strings.HasPrefix(normalized, "make test"):
+		return true
+	case strings.HasPrefix(normalized, "pytest"):
+		return true
+	case strings.HasPrefix(normalized, "cargo test"):
+		return true
+	default:
+		return false
+	}
 }
 
 func focusFileCategory(file File) string {

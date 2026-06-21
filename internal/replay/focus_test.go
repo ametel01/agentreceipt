@@ -342,6 +342,251 @@ func TestBuildFocusReportFailedCommandTaskIncludesPathsAndSymbols(t *testing.T) 
 	}
 }
 
+func TestBuildFocusReportChangedFileDossierForProductionPath(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{
+				Path:         "internal/replay/focus.go",
+				Action:       "modify",
+				Category:     patchCategoryProduction,
+				Symbols:      []string{"BuildFocusReport"},
+				EvidenceRefs: []string{"files/internal/replay/focus.go"},
+			},
+		},
+	}
+	replay.Files = []File{
+		{
+			Path:         "internal/replay/focus.go",
+			Action:       "modify",
+			EvidenceRefs: []string{"files/internal/replay/focus.go"},
+		},
+	}
+	replay.PolicyChecks = []PolicyCheck{
+		{Name: "target_file_read_before_edit", Status: policyCheckStatusPass, Message: "Read commands were observed before edits.", EvidenceRefs: []string{"events.jsonl#seq=1"}},
+		{Name: "related_context_read_before_edit", Status: policyCheckStatusPass, Message: "Changed-file context was read before edits.", EvidenceRefs: []string{"events.jsonl#seq=2"}},
+	}
+	replay.Commands = []Command{
+		{Command: "cat internal/replay/focus.go", EvidenceRefs: []string{"events.jsonl#seq=10"}},
+		{Command: "go test ./internal/replay", EvidenceRefs: []string{"events.jsonl#seq=11"}},
+	}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.ChangedFiles) != 1 {
+		t.Fatalf("changed_files = %#v", focus.ChangedFiles)
+	}
+
+	file := focus.ChangedFiles[0]
+	switch {
+	case file.Path != "internal/replay/focus.go":
+		t.Fatalf("changed file path = %q", file.Path)
+	case file.Category != patchCategoryProduction:
+		t.Fatalf("category = %q, want %q", file.Category, patchCategoryProduction)
+	case !containsSlice(file.Symbols, "BuildFocusReport"):
+		t.Fatalf("symbols = %#v", file.Symbols)
+	case file.ReadBeforeEdit != policyCheckStatusPass:
+		t.Fatalf("read_before_edit = %q, want %q", file.ReadBeforeEdit, policyCheckStatusPass)
+	case file.RelatedContextRead != policyCheckStatusPass:
+		t.Fatalf("related_context_read = %q, want %q", file.RelatedContextRead, policyCheckStatusPass)
+	case !containsSlice(file.CommandsTouchingFile, "cat internal/replay/focus.go"):
+		t.Fatalf("commands_touching_file = %#v", file.CommandsTouchingFile)
+	case !containsSlice(file.TestsRelated, "go test ./internal/replay"):
+		t.Fatalf("tests_related = %#v", file.TestsRelated)
+	case !containsSlice(file.EvidenceRefs, "files/internal/replay/focus.go"):
+		t.Fatalf("evidence_refs = %#v", file.EvidenceRefs)
+	}
+	if len(file.ReviewReasons) != 0 {
+		t.Fatalf("review_reasons should be empty for clean production dossier: %#v", file.ReviewReasons)
+	}
+}
+
+func TestBuildFocusReportChangedFileDossierForDocsOnly(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{
+				Path:         "docs/overview.md",
+				Action:       "modify",
+				Category:     patchCategoryDocs,
+				EvidenceRefs: []string{"files/docs/overview.md"},
+			},
+		},
+	}
+	replay.Files = []File{
+		{
+			Path:         "docs/overview.md",
+			Action:       "modify",
+			EvidenceRefs: []string{"files/docs/overview.md"},
+		},
+	}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.ChangedFiles) != 1 {
+		t.Fatalf("changed_files = %#v", focus.ChangedFiles)
+	}
+	file := focus.ChangedFiles[0]
+	if file.Category != patchCategoryDocs {
+		t.Fatalf("category = %q, want %q", file.Category, patchCategoryDocs)
+	}
+}
+
+func TestBuildFocusReportChangedFileDossierForDependency(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{
+				Path:         "go.mod",
+				Action:       "modify",
+				Category:     patchCategoryDependency,
+				Dependency:   true,
+				EvidenceRefs: []string{"files/go.mod"},
+			},
+		},
+	}
+	replay.Files = []File{
+		{
+			Path:         "go.mod",
+			Action:       "modify",
+			Dependency:   true,
+			EvidenceRefs: []string{"files/go.mod"},
+		},
+	}
+	replay.Commands = []Command{{Command: "cat go.mod", EvidenceRefs: []string{"events.jsonl#seq=1"}}}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.ChangedFiles) != 1 {
+		t.Fatalf("changed_files = %#v", focus.ChangedFiles)
+	}
+	file := focus.ChangedFiles[0]
+	if !file.Dependency {
+		t.Fatalf("dependency = %t, want true", file.Dependency)
+	}
+	if !containsSlice(file.ReviewReasons, "Dependency file changed.") {
+		t.Fatalf("review_reasons = %#v", file.ReviewReasons)
+	}
+}
+
+func TestBuildFocusReportChangedFileDossierForSensitiveAndNoCommandInference(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{
+				Path:         "internal/secrets/keys.go",
+				Action:       "modify",
+				Category:     patchCategoryProduction,
+				Sensitive:    true,
+				EvidenceRefs: []string{"files/internal/secrets/keys.go"},
+			},
+		},
+		ProductionChangedWithoutTestsChanged: true,
+	}
+	replay.Files = []File{
+		{
+			Path:         "internal/secrets/keys.go",
+			Action:       "modify",
+			Sensitive:    true,
+			EvidenceRefs: []string{"files/internal/secrets/keys.go"},
+		},
+	}
+	replay.PolicyChecks = []PolicyCheck{
+		{Name: "target_file_read_before_edit", Status: policyCheckStatusFail, Message: "No read command was observed before edits.", EvidenceRefs: []string{"events.jsonl#seq=2"}},
+		{Name: "related_context_read_before_edit", Status: policyCheckStatusWarn, Message: "Read commands were observed, but none obviously referenced changed files.", EvidenceRefs: []string{"events.jsonl#seq=3"}},
+	}
+	replay.Commands = []Command{
+		{Command: "go test ./...", EvidenceRefs: []string{"events.jsonl#seq=10"}},
+		{Command: "cat internal/secrets/keys.go", Status: "failed", EvidenceRefs: []string{"events.jsonl#seq=11"}},
+	}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.ChangedFiles) != 1 {
+		t.Fatalf("changed_files = %#v", focus.ChangedFiles)
+	}
+	file := focus.ChangedFiles[0]
+	if !file.Sensitive {
+		t.Fatalf("sensitive = %t, want true", file.Sensitive)
+	}
+	if !containsSlice(file.ReviewReasons, "Sensitive file changed.") {
+		t.Fatalf("review_reasons = %#v", file.ReviewReasons)
+	}
+	if file.ReadBeforeEdit != policyCheckStatusFail {
+		t.Fatalf("read_before_edit = %q, want %q", file.ReadBeforeEdit, policyCheckStatusFail)
+	}
+	if file.RelatedContextRead != policyCheckStatusWarn {
+		t.Fatalf("related_context_read = %q, want %q", file.RelatedContextRead, policyCheckStatusWarn)
+	}
+	if !containsSlice(file.ReviewReasons, "A failed command touched this file.") {
+		t.Fatalf("review_reasons = %#v", file.ReviewReasons)
+	}
+	if !containsSlice(file.ReviewReasons, "No file-specific test command was identified for this file.") {
+		t.Fatalf("review_reasons = %#v", file.ReviewReasons)
+	}
+	if len(file.TestsRelated) != 0 {
+		t.Fatalf("tests_related should remain empty for broad tests: %#v", file.TestsRelated)
+	}
+}
+
+func TestBuildFocusReportChangedFileDossierCommandAssociationForPackages(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.PatchSummary = PatchSummary{
+		ChangedFiles: []PatchSummaryFile{
+			{
+				Path:         "internal/replay/focus.go",
+				Action:       "modify",
+				Category:     patchCategoryProduction,
+				EvidenceRefs: []string{"files/internal/replay/focus.go"},
+			},
+			{
+				Path:         "internal/tool/reporter.go",
+				Action:       "modify",
+				Category:     patchCategoryProduction,
+				EvidenceRefs: []string{"files/internal/tool/reporter.go"},
+			},
+		},
+	}
+	replay.Files = []File{
+		{Path: "internal/replay/focus.go", Action: "modify", EvidenceRefs: []string{"files/internal/replay/focus.go"}},
+		{Path: "internal/tool/reporter.go", Action: "modify", EvidenceRefs: []string{"files/internal/tool/reporter.go"}},
+	}
+	replay.Commands = []Command{
+		{Command: "go test ./...", EvidenceRefs: []string{"events.jsonl#seq=10"}},
+		{Command: "go test ./internal/replay/...", EvidenceRefs: []string{"events.jsonl#seq=11"}},
+	}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.ChangedFiles) != 2 {
+		t.Fatalf("changed_files len = %d", len(focus.ChangedFiles))
+	}
+
+	var replayFile, toolFile FocusChangedFile
+	for _, file := range focus.ChangedFiles {
+		switch file.Path {
+		case "internal/replay/focus.go":
+			replayFile = file
+		case "internal/tool/reporter.go":
+			toolFile = file
+		}
+	}
+	if replayFile.Path == "" || toolFile.Path == "" {
+		t.Fatalf("changed files missing: %#v", focus.ChangedFiles)
+	}
+	if !containsSlice(replayFile.TestsRelated, "go test ./internal/replay/...") {
+		t.Fatalf("replay tests_related = %#v", replayFile.TestsRelated)
+	}
+	if len(toolFile.TestsRelated) != 0 {
+		t.Fatalf("tool tests_related should be empty: %#v", toolFile.TestsRelated)
+	}
+}
+
 func containsSlice(values []string, value string) bool {
 	for _, item := range values {
 		if item == value {

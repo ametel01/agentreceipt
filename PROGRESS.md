@@ -13,7 +13,7 @@ Source documents:
 - [x] Step 1: Add the compact focus report model
 - [x] Step 2: Add `agentreceipt focus --json`
 - [x] Step 3: Add ranked structured review tasks
-- [ ] Step 4: Add per-file evidence dossiers
+- [x] Step 4: Add per-file evidence dossiers
 - [ ] Step 5: Capture coding-agent instruction files at session start
 - [ ] Step 6: Separate pre-existing and agent-introduced changes
 - [ ] Step 7: Add stable JSON schema output
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 3` completed
-- Next step: `Step 4`
+- Current phase: `Step 4` completed
+- Next step: `Step 5`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -85,3 +85,19 @@ Source documents:
     - `make smoke`
     - `make verify`
   - Commit: `db21000`
+
+- 2026-06-21 — Completed Step 4 for per-file evidence dossiers.
+  - Expanded focus dossier entries in `internal/replay` to include dependency/symbol signals, read and related-context status, command/test associations, review reasons, and merged evidence references.
+  - Added conservative command-to-file association logic, explicit file-level reason synthesis, and targeted dossier tests covering production/docs/dependency/sensitive paths plus conservative test inference.
+  - Updated `docs/replay-evaluator-contract.md` to document the new `changed_files` dossier field surface and status enums.
+  - Validation:
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `make test-race`
+    - `make security`
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `make verify` (fails reproducibly in this run: `TestSessionCapturesFilesystemChanges` in `internal/session` reports `decode session state: unexpected end of JSON input`)
+  - Commit: `184cdb2`

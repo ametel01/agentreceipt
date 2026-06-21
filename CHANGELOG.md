@@ -13,6 +13,7 @@ and this project follows semantic versioning.
 - Added internal compact focus reporting in `internal/replay` with deterministic verdicts (`pass`, `review_required`, `block`, `unverifiable`), capped evidence artifacts, and stable `review_tasks`/`top_reasons` generation.
 - Added `agentreceipt focus --json` command for loop-oriented focus report generation from `replay --session` or `--replay replay.json`.
 - Added ranked structured `review_tasks` in focus reports with stable `P0`-`P3` priorities, task kinds (`integrity_failure`, `failed_gate`, `failed_command`, etc.), and deterministic task ordering/ID assignment.
+- Added Step 4 per-file evidence dossiers to focus reports, including dependency/symbol/policy status fields, explicit command/test associations, review reasons, and enriched file-level evidence references.
 
 ## [0.7.0] - 2026-06-21
 
