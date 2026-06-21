@@ -13,6 +13,7 @@ and this project follows semantic versioning.
 - Deepened Provider Evidence handling behind a typed module so Codex and Claude adapters construct the shared event-log shape in one place, while review, session confidence, and watch token baselines read provider commands, results, risk signals, labels, and token totals through one interface.
 - Refactored replay-safe evidence extraction into `internal/evidence` so reviewer replay and future verifier-facing replay can reuse deterministic event-derived summary, confidence, risk, gaps, and timeline logic without invoking git commands.
 - Added artifact-only receipt verification in `internal/receipt` so bundle and local verification share a single artifact-hash/signature validation path while local checks continue to include workspace diff parity validation.
+- Documented the production replay evaluator contract in README and `docs/replay-evaluator-contract.md`, covering verification, trust, quality gates, policy checks, privacy, claims, and outcome semantics.
 
 ### Added
 - Added evaluator-loop replay implementation tracking (`PLAN.md` Step 0).

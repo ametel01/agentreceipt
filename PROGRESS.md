@@ -4,13 +4,12 @@ Plan source: [`PLAN.md`](./PLAN.md)
 
 ## Status
 
-- Current status: Step 8 complete
-- Next step: Step 9
-- Last updated: 2026-06-21T09:05:40Z
+- Current status: Step 9 complete
+- Next step: none
+- Last updated: 2026-06-21T01:09:47Z
 - Validation results:
-  - `make fmt` (pass)
-  - `go test ./internal/replay` (pass)
-  - `make verify` (pass)
+  - `make fmt` (pass, Step 9)
+  - `make verify` (pass, Step 9)
 
 ## Step Checklist
 
@@ -23,7 +22,7 @@ Plan source: [`PLAN.md`](./PLAN.md)
 - [x] Step 6: Add Patch Semantic Summary
 - [x] Step 7: Add Policy Checks and Review Focus
 - [x] Step 8: Add Privacy Report, Claim Confidence, and Outcome Classification
-- [ ] Step 9: Document the Production Replay Evaluator Contract
+- [x] Step 9: Document the Production Replay Evaluator Contract
 
 ## Implementation Notes
 
@@ -88,3 +87,8 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Added top-level `outcome` classification with completed, completed_with_gaps, failed, abandoned, committed, and needs_human_review states derived from replay evidence.
   - Added replay coverage for privacy redaction reporting, raw provider log exposure, completed and completed_with_gaps outcomes, and failed versus abandoned outcome inference.
   - Commit: `42ffe9b` (`Add replay evaluator outcome reporting`)
+
+- Step 9 completed:
+  - Added `docs/replay-evaluator-contract.md` as the focused replay contract reference for verification semantics, trust policy inputs, quality gates, patch summary, policy checks, privacy guarantees, claims, and outcome states.
+  - Updated `README.md` replay documentation to point readers to the contract doc and to note the additive evaluator-facing replay fields.
+  - Updated `CHANGELOG.md` with the replay contract documentation entry.

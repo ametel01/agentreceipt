@@ -192,6 +192,10 @@ agentreceipt replay --session <id> --bundle ./replay-bundle
 - Evaluator conclusions should be inferred from command/output evidence and integrity status in `replay.json`, not by any built-in policy rule in this command.
 - Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
+Replay JSON now includes explicit contract fields for verification, quality gates, patch summary,
+policy checks, review focus, privacy, claims, and final outcome. The detailed contract is documented
+in [docs/replay-evaluator-contract.md](docs/replay-evaluator-contract.md).
+
 ### 8) Export for PRs
 
 ```bash
