@@ -42,4 +42,8 @@ Source documents:
     - `make build`
     - `make smoke`
     - `make verify`
-  - Commit: pending
+  - Commit: `ae904ee`
+
+- 2026-06-21 — Step 2 is next.
+  - Focus ranking and file-classification work remains to be implemented from `PLAN.md`.
+  - Current tracker state is ready for the next feature commit.
