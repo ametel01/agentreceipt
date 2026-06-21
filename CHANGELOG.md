@@ -7,6 +7,10 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added reviewer-agent implementation tracking for the loop-facing feature plan (Step 0), including `PLAN.md`-driven progress tracking setup.
+
 ## [0.7.0] - 2026-06-21
 
 ### Changed
