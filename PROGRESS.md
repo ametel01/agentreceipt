@@ -67,7 +67,7 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Added top-level `failed_command_details` entries for failed commands, including command working directory, timestamp, exit code, redacted `failed_reason`, redacted `stderr_or_error_summary`, redacted `stdout_summary`, truncation flag, evidence refs, and confidence.
   - Added `cwd` and `time` fields to command records for richer failure context and paired command result metadata.
   - Added replay tests for successful `make verify` quality gates, failed `go test` gates and failed-command evidence, missing lint/typecheck gate runs, and sensitive output redaction in failure details.
-  - Commit: `Add replay quality gate evidence`.
+  - Commit: `7d16758` (`Add replay patch summary`) and `63557de` (`Add replay quality gate tests`).
 
 - Step 6 completed:
   - Added top-level `patch_summary` with file counts by category, additions/deletions, semantic changed-file entries, Go symbol hints, and test/production change relationship signals.
