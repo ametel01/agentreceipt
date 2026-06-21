@@ -530,6 +530,194 @@ func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testin
 	}
 }
 
+func TestBuildIncludesQualityGatesForVerifyCommand(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_verify",
+						"command": "make verify",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_verify",
+					"command":   "make verify",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if report.QualityGates.Verify.Status != qualityGateStatusPassed {
+		t.Fatalf("verify gate status = %q", report.QualityGates.Verify.Status)
+	}
+	if report.QualityGates.Verify.LastExitCode == nil || *report.QualityGates.Verify.LastExitCode != 0 {
+		t.Fatalf("verify gate last_exit_code = %+v", report.QualityGates.Verify.LastExitCode)
+	}
+	if report.QualityGates.Tests.Status != qualityGateStatusPassed {
+		t.Fatalf("tests gate status = %q", report.QualityGates.Tests.Status)
+	}
+	if !containsEvidencePrefix(report.QualityGates.Verify.EvidenceRefs, "events.jsonl#seq=") {
+		t.Fatalf("verify gate evidence refs = %+v", report.QualityGates.Verify.EvidenceRefs)
+	}
+	if len(report.QualityGates.Verify.Commands) == 0 || report.QualityGates.Verify.Commands[0] != "make verify" {
+		t.Fatalf("verify gate commands = %+v", report.QualityGates.Verify.Commands)
+	}
+}
+
+func TestBuildIncludesFailedCommandDetailsForFailedTestCommand(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_failed_test",
+						"command": "go test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":          "call_failed_test",
+					"command":          "go test ./...",
+					"status":           "failed",
+					"exit_code":        1,
+					"failed_reason":    "command failed due to api_key=sk-REDACTED",
+					"stdout":           "go test output: secret token=sk-super-secret",
+					"stdout_truncated": true,
+					"stderr_or_error":  "authorization=Bearer another-secret-token",
+				},
+			},
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if report.QualityGates.Tests.Status != qualityGateStatusFailed {
+		t.Fatalf("tests gate status = %q", report.QualityGates.Tests.Status)
+	}
+	if report.QualityGates.Tests.LastExitCode == nil || *report.QualityGates.Tests.LastExitCode != 1 {
+		t.Fatalf("tests gate last_exit_code = %+v", report.QualityGates.Tests.LastExitCode)
+	}
+	if len(report.FailedCommandDetails) != 1 {
+		t.Fatalf("failed_command_details = %+v", report.FailedCommandDetails)
+	}
+
+	detail := report.FailedCommandDetails[0]
+	if detail.ExitCode == nil || *detail.ExitCode != 1 {
+		t.Fatalf("failed detail exit_code = %+v", detail.ExitCode)
+	}
+	if detail.Cwd == "" {
+		t.Fatalf("failed detail missing cwd")
+	}
+	if detail.Time == "" {
+		t.Fatalf("failed detail missing time")
+	}
+	if detail.FailedReason == "" {
+		t.Fatalf("missing failed_reason: %+v", detail)
+	}
+	if detail.OutputTruncated != true {
+		t.Fatalf("expected output_truncated=true, got %+v", detail.OutputTruncated)
+	}
+	if detail.StdoutSummary == "" {
+		t.Fatalf("missing stdout_summary: %+v", detail)
+	}
+	if !strings.Contains(detail.StderrOrErrorSummary, "[REDACTED]") {
+		t.Fatalf("expected redacted stderr summary, got %q", detail.StderrOrErrorSummary)
+	}
+	if !strings.Contains(detail.StdoutSummary, "[REDACTED]") {
+		t.Fatalf("expected redacted stdout summary, got %q", detail.StdoutSummary)
+	}
+	if !strings.Contains(detail.FailedReason, "[REDACTED]") {
+		t.Fatalf("expected redacted failed_reason, got %q", detail.FailedReason)
+	}
+}
+
+func TestBuildMarksMissingQualityGateSignals(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_test",
+						"command": "go test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id": "call_test",
+					"command": "go test ./...",
+					"status":  "success",
+				},
+			},
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if report.QualityGates.Lint.Status != qualityGateStatusNotRun {
+		t.Fatalf("lint gate status = %q", report.QualityGates.Lint.Status)
+	}
+	if report.QualityGates.Typecheck.Status != qualityGateStatusNotRun {
+		t.Fatalf("typecheck gate status = %q", report.QualityGates.Typecheck.Status)
+	}
+	if report.QualityGates.Coverage.Status != qualityGateStatusNotRun {
+		t.Fatalf("coverage gate status = %q", report.QualityGates.Coverage.Status)
+	}
+	if report.QualityGates.Tests.Status != qualityGateStatusPassed {
+		t.Fatalf("tests gate status = %q", report.QualityGates.Tests.Status)
+	}
+}
+
 func TestBuildCapturesMissingEvidenceGaps(t *testing.T) {
 	t.Parallel()
 
