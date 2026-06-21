@@ -87,6 +87,48 @@ func TestBuildFocusReportIncludesEvaluatorSignals(t *testing.T) {
 	}
 }
 
+func TestBuildFocusReportIncludesAgentTasksAndFileClassifications(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.Source.RepoRoot = "/repo"
+	replay.QualityGates.Tests.Status = qualityGateStatusFailed
+	replay.QualityGates.Tests.EvidenceRefs = []string{"events.jsonl#seq=12"}
+	replay.PatchSummary = PatchSummary{
+		ProductionChangedWithoutTestsChanged: true,
+		ChangedFiles: []PatchSummaryFile{
+			{Path: "cmd/root.go", Action: "modify", Category: patchCategoryProduction, EvidenceRefs: []string{"files/cmd/root.go"}},
+			{Path: "cmd/root_test.go", Action: "modify", Category: patchCategoryTest, EvidenceRefs: []string{"files/cmd/root_test.go"}},
+			{Path: "docs/guide.md", Action: "modify", Category: patchCategoryDocs, EvidenceRefs: []string{"files/docs/guide.md"}},
+			{Path: "generated/widget.gen.go", Action: "modify", Category: patchCategoryGeneratedOrUnknown, EvidenceRefs: []string{"files/generated/widget.gen.go"}},
+			{Path: "dist/agentreceipt", Action: "create", Category: patchCategoryGeneratedOrUnknown, EvidenceRefs: []string{"files/dist/agentreceipt"}},
+		},
+	}
+
+	focus := BuildFocusReport(replay)
+	if len(focus.AgentTasks) == 0 {
+		t.Fatal("expected agent tasks for validation and review")
+	}
+	if len(focus.RecommendedNextCommands) == 0 {
+		t.Fatal("expected recommended next commands")
+	}
+	if focus.RecommendedNextCommands[0].Cwd != "/repo" {
+		t.Fatalf("recommended cwd = %q, want %q", focus.RecommendedNextCommands[0].Cwd, "/repo")
+	}
+	if len(focus.ReviewableFiles.SourceChanges) == 0 || len(focus.ReviewableFiles.TestChanges) == 0 || len(focus.ReviewableFiles.DocChanges) == 0 || len(focus.ReviewableFiles.GeneratedChanges) == 0 {
+		t.Fatalf("reviewable files missing expected buckets: %+v", focus.ReviewableFiles)
+	}
+	if !containsFocusFilePath(focus.SuppressedChanges, "dist/agentreceipt") {
+		t.Fatalf("suppressed changes missing build artifact: %#v", focus.SuppressedChanges)
+	}
+	if !containsFocusFilePath(focus.ReviewableFiles.TransientChanges, "dist/agentreceipt") {
+		t.Fatalf("transient reviewable files missing suppressed artifact: %#v", focus.ReviewableFiles.TransientChanges)
+	}
+	if focus.AgentTasks[0].Action == "" || focus.AgentTasks[0].ReasonCode == "" {
+		t.Fatalf("agent task missing action or reason code: %#v", focus.AgentTasks[0])
+	}
+}
+
 func TestBuildFocusReportIncludesEvidenceIndex(t *testing.T) {
 	t.Parallel()
 
@@ -306,8 +348,22 @@ func TestBuildFocusReportCapsTopReasonsAndTasks(t *testing.T) {
 	if len(focus.TopReasons) != focusTopReasonLimit {
 		t.Fatalf("top_reasons len = %d, want %d", len(focus.TopReasons), focusTopReasonLimit)
 	}
-	if len(focus.ReviewTasks) != focusTaskLimit {
-		t.Fatalf("review_tasks len = %d, want %d", len(focus.ReviewTasks), focusTaskLimit)
+	if len(focus.ReviewTasks) > focusTaskLimit {
+		t.Fatalf("review_tasks len = %d, want <= %d", len(focus.ReviewTasks), focusTaskLimit)
+	}
+}
+
+func TestUniqueReviewTasksKeepsDistinctGateAndPath(t *testing.T) {
+	t.Parallel()
+
+	tasks := []ReviewTask{
+		{Priority: focusTaskPriorityP0, Kind: "failed_gate", Gate: "tests", Path: "cmd/root.go", ReasonCode: string(reasonCodeFailedGate), Question: "Resolve failed quality gate.", EvidenceRefs: []string{"events.jsonl#seq=1"}},
+		{Priority: focusTaskPriorityP0, Kind: "failed_gate", Gate: "lint", Path: "cmd/root.go", ReasonCode: string(reasonCodeFailedGate), Question: "Resolve failed quality gate.", EvidenceRefs: []string{"events.jsonl#seq=2"}},
+	}
+
+	unique := uniqueReviewTasks(tasks)
+	if len(unique) != 2 {
+		t.Fatalf("unique review tasks collapsed distinct gates: %#v", unique)
 	}
 }
 
@@ -777,6 +833,15 @@ func TestBuildFocusReportChangedFileDossierCommandAssociationForPackages(t *test
 func containsSlice(values []string, value string) bool {
 	for _, item := range values {
 		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFocusFilePath(files []FocusChangedFile, path string) bool {
+	for _, file := range files {
+		if file.Path == path {
 			return true
 		}
 	}

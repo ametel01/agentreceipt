@@ -41,22 +41,26 @@ const (
 
 // FocusReport is a compact reviewer-agent output for a replay session.
 type FocusReport struct {
-	SchemaVersion    int                    `json:"schema_version"`
-	Kind             string                 `json:"kind"`
-	SessionID        string                 `json:"session_id"`
-	GeneratedAt      time.Time              `json:"generated_at"`
-	Verdict          FocusVerdict           `json:"verdict"`
-	ProcessContract  ProcessContract        `json:"process_contract"`
-	Reviewability    Reviewability          `json:"reviewability"`
-	TopReasons       []string               `json:"top_reasons,omitempty"`
-	ReviewTasks      []ReviewTask           `json:"review_tasks,omitempty"`
-	ChangedFiles     []FocusChangedFile     `json:"changed_files,omitempty"`
-	FailedGates      []FailedGate           `json:"failed_gates,omitempty"`
-	WorkspaceChanges WorkspaceChangeSummary `json:"workspace_change_summary"`
-	InstructionFiles []InstructionFile      `json:"instruction_files,omitempty"`
-	EvidenceIndex    []EvidenceEntry        `json:"evidence_index,omitempty"`
-	EvaluatorSignals EvaluatorSignals       `json:"evaluator_signals,omitempty"`
-	EvidenceRefs     []string               `json:"evidence_refs,omitempty"`
+	SchemaVersion           int                      `json:"schema_version"`
+	Kind                    string                   `json:"kind"`
+	SessionID               string                   `json:"session_id"`
+	GeneratedAt             time.Time                `json:"generated_at"`
+	Verdict                 FocusVerdict             `json:"verdict"`
+	ProcessContract         ProcessContract          `json:"process_contract"`
+	Reviewability           Reviewability            `json:"reviewability"`
+	AgentTasks              []AgentTask              `json:"agent_tasks"`
+	RecommendedNextCommands []RecommendedNextCommand `json:"recommended_next_commands"`
+	TopReasons              []string                 `json:"top_reasons,omitempty"`
+	ReviewTasks             []ReviewTask             `json:"review_tasks,omitempty"`
+	ChangedFiles            []FocusChangedFile       `json:"changed_files,omitempty"`
+	ReviewableFiles         ReviewableFiles          `json:"reviewable_files"`
+	SuppressedChanges       []FocusChangedFile       `json:"suppressed_changes"`
+	FailedGates             []FailedGate             `json:"failed_gates,omitempty"`
+	WorkspaceChanges        WorkspaceChangeSummary   `json:"workspace_change_summary"`
+	InstructionFiles        []InstructionFile        `json:"instruction_files,omitempty"`
+	EvidenceIndex           []EvidenceEntry          `json:"evidence_index,omitempty"`
+	EvaluatorSignals        EvaluatorSignals         `json:"evaluator_signals,omitempty"`
+	EvidenceRefs            []string                 `json:"evidence_refs,omitempty"`
 }
 
 type FocusChangedFile struct {
@@ -93,6 +97,8 @@ type ReviewTask struct {
 	ID           string           `json:"id,omitempty"`
 	Priority     string           `json:"priority"`
 	Kind         string           `json:"kind"`
+	Gate         string           `json:"gate,omitempty"`
+	Path         string           `json:"path,omitempty"`
 	ReasonCode   string           `json:"reason_code,omitempty"`
 	Question     string           `json:"question"`
 	Paths        []string         `json:"paths,omitempty"`
@@ -100,6 +106,39 @@ type ReviewTask struct {
 	EvidenceRefs []string         `json:"evidence_refs,omitempty"`
 	Confidence   model.Confidence `json:"confidence,omitempty"`
 	Source       string           `json:"source,omitempty"`
+}
+
+type AgentTask struct {
+	ID            string           `json:"id,omitempty"`
+	Priority      string           `json:"priority"`
+	Kind          string           `json:"kind"`
+	Gate          string           `json:"gate,omitempty"`
+	Path          string           `json:"path,omitempty"`
+	ReasonCode    string           `json:"reason_code,omitempty"`
+	Action        string           `json:"action"`
+	Question      string           `json:"question"`
+	Paths         []string         `json:"paths,omitempty"`
+	Symbols       []string         `json:"symbols,omitempty"`
+	EvidenceRefs  []string         `json:"evidence_refs,omitempty"`
+	Confidence    model.Confidence `json:"confidence,omitempty"`
+	BlocksVerdict bool             `json:"blocks_verdict"`
+	Source        string           `json:"source,omitempty"`
+}
+
+type RecommendedNextCommand struct {
+	Cwd        string   `json:"cwd"`
+	Argv       []string `json:"argv"`
+	Purpose    string   `json:"purpose"`
+	ReasonCode string   `json:"reason_code,omitempty"`
+	TaskIDs    []string `json:"task_ids,omitempty"`
+}
+
+type ReviewableFiles struct {
+	SourceChanges    []FocusChangedFile `json:"source_changes,omitempty"`
+	TestChanges      []FocusChangedFile `json:"test_changes,omitempty"`
+	DocChanges       []FocusChangedFile `json:"doc_changes,omitempty"`
+	GeneratedChanges []FocusChangedFile `json:"generated_changes,omitempty"`
+	TransientChanges []FocusChangedFile `json:"transient_changes,omitempty"`
 }
 
 // BuildFocusReport builds a compact reviewer-agent focus report from an existing replay report.
@@ -121,12 +160,16 @@ func BuildFocusReport(replay Report) FocusReport {
 	focus.EvaluatorSignals = replay.EvaluatorSignals
 	focus.Verdict = determineFocusVerdict(replay, reasons)
 	focus.Reviewability = buildReviewability(replay)
+	focus.ReviewableFiles, focus.SuppressedChanges = collectReviewableFiles(replay)
 	focus.TopReasons = capSortedStrings(focusReasonsToStrings(reasons), focusTopReasonLimit)
 
 	for index := range tasks {
+		tasks[index] = enrichReviewTask(tasks[index])
 		tasks[index].ID = fmt.Sprintf("task_%03d", index+1)
 	}
 	focus.ReviewTasks = capSortedReviewTasks(tasks, focusTaskLimit)
+	focus.AgentTasks = capSortedAgentTasks(buildAgentTasks(focus.ReviewTasks, replay), focusTaskLimit)
+	focus.RecommendedNextCommands = buildRecommendedNextCommands(focus.AgentTasks, replay)
 	focus.EvidenceRefs = capSortedStrings(collectFocusEvidenceRefs(reasons, focus.ReviewTasks, focus.FailedGates), 200)
 	focus.ProcessContract = buildProcessContractForFocus(replay, focus)
 
@@ -729,6 +772,185 @@ func collectFocusChangedFiles(replay Report) []FocusChangedFile {
 	return changed
 }
 
+func collectReviewableFiles(replay Report) (ReviewableFiles, []FocusChangedFile) {
+	source := replay.PatchSummary.ChangedFiles
+	if len(source) == 0 {
+		source = make([]PatchSummaryFile, 0, len(replay.Files))
+		for _, file := range replay.Files {
+			source = append(source, PatchSummaryFile{
+				Path:         file.Path,
+				Action:       file.Action,
+				Category:     focusFileCategory(file),
+				Sensitive:    file.Sensitive,
+				Dependency:   file.Dependency,
+				EvidenceRefs: file.EvidenceRefs,
+				Symbols:      nil,
+			})
+		}
+	}
+
+	buckets := ReviewableFiles{}
+	suppressed := make([]FocusChangedFile, 0)
+	if len(source) == 0 {
+		return buckets, suppressed
+	}
+
+	items := make([]FocusChangedFile, 0, len(source))
+	for _, file := range source {
+		if file.Path == "" {
+			continue
+		}
+		item := FocusChangedFile{
+			Path:          file.Path,
+			Action:        file.Action,
+			Category:      file.Category,
+			Sensitive:     file.Sensitive,
+			Dependency:    file.Dependency,
+			Symbols:       uniqueSorted(file.Symbols),
+			EvidenceRefs:  uniqueSorted(file.EvidenceRefs),
+			ReviewReasons: reviewableFileReasons(file),
+		}
+		items = append(items, item)
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if reviewableFilePriority(items[i]) != reviewableFilePriority(items[j]) {
+			return reviewableFilePriority(items[i]) < reviewableFilePriority(items[j])
+		}
+		if items[i].Path != items[j].Path {
+			return items[i].Path < items[j].Path
+		}
+		return items[i].Action < items[j].Action
+	})
+
+	for _, item := range items {
+		if isSuppressedFocusFile(item.Path) {
+			suppressed = append(suppressed, item)
+			if !containsFocusFile(buckets.TransientChanges, item.Path) {
+				buckets.TransientChanges = append(buckets.TransientChanges, item)
+			}
+			continue
+		}
+		switch item.Category {
+		case patchCategoryProduction:
+			buckets.SourceChanges = append(buckets.SourceChanges, item)
+		case patchCategoryTest:
+			buckets.TestChanges = append(buckets.TestChanges, item)
+		case patchCategoryDocs:
+			buckets.DocChanges = append(buckets.DocChanges, item)
+		case patchCategoryGeneratedOrUnknown:
+			buckets.GeneratedChanges = append(buckets.GeneratedChanges, item)
+		default:
+			buckets.TransientChanges = append(buckets.TransientChanges, item)
+		}
+	}
+
+	sortFocusChangedFiles(&buckets.SourceChanges)
+	sortFocusChangedFiles(&buckets.TestChanges)
+	sortFocusChangedFiles(&buckets.DocChanges)
+	sortFocusChangedFiles(&buckets.GeneratedChanges)
+	sortFocusChangedFiles(&buckets.TransientChanges)
+	sortFocusChangedFiles(&suppressed)
+
+	return buckets, suppressed
+}
+
+func sortFocusChangedFiles(files *[]FocusChangedFile) {
+	sort.SliceStable(*files, func(i, j int) bool {
+		if reviewableFilePriority((*files)[i]) != reviewableFilePriority((*files)[j]) {
+			return reviewableFilePriority((*files)[i]) < reviewableFilePriority((*files)[j])
+		}
+		if (*files)[i].Path != (*files)[j].Path {
+			return (*files)[i].Path < (*files)[j].Path
+		}
+		return (*files)[i].Action < (*files)[j].Action
+	})
+}
+
+func containsFocusFile(files []FocusChangedFile, path string) bool {
+	for _, file := range files {
+		if file.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func reviewableFilePriority(file FocusChangedFile) int {
+	switch {
+	case isSuppressedFocusFile(file.Path):
+		return 4
+	case file.Sensitive || file.Dependency:
+		return 0
+	case file.Category == patchCategoryProduction:
+		return 1
+	case file.Category == patchCategoryTest:
+		return 2
+	case file.Category == patchCategoryDocs:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func reviewableFileReasons(file PatchSummaryFile) []string {
+	reasons := make([]string, 0, 4)
+	switch {
+	case file.Dependency:
+		reasons = append(reasons, "Dependency file changed.")
+	case file.Category == patchCategoryGeneratedOrUnknown:
+		reasons = append(reasons, "Generated or unknown file changed.")
+	}
+	if file.Sensitive {
+		reasons = append(reasons, "Sensitive file changed.")
+	}
+	if isCIOrSecurityPatchFile(file.Path) {
+		reasons = append(reasons, "CI or security file changed.")
+	}
+	if isSuppressedFocusFile(file.Path) {
+		reasons = append(reasons, "Suppressed transient artifact.")
+	}
+	return uniqueSorted(reasons)
+}
+
+func isSuppressedFocusFile(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if path == "" {
+		return false
+	}
+	base := filepath.Base(path)
+	switch base {
+	case ".ds_store", "thumbs.db", "coverage.out":
+		return true
+	}
+	switch {
+	case strings.HasSuffix(base, "~"),
+		strings.HasSuffix(base, ".bak"),
+		strings.HasSuffix(base, ".orig"),
+		strings.HasSuffix(base, ".rej"),
+		strings.HasSuffix(base, ".swp"),
+		strings.HasSuffix(base, ".swo"),
+		strings.HasSuffix(base, ".tmp"),
+		strings.HasSuffix(base, ".temp"),
+		strings.HasSuffix(base, ".log"),
+		strings.HasSuffix(base, ".exe"),
+		strings.HasSuffix(base, ".o"),
+		strings.HasSuffix(base, ".out"):
+		return true
+	}
+	for _, marker := range []string{"/.cache/", "/cache/", "/dist/", "/build/", "/tmp/", "/node_modules/", "/vendor/"} {
+		if strings.Contains(path, marker) {
+			return true
+		}
+	}
+	for _, prefix := range []string{"dist/", "build/", "tmp/", "cache/", "node_modules/", "vendor/"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 type focusCommandAssociation struct {
 	commands     []string
 	commandRefs  []string
@@ -993,6 +1215,15 @@ func compareFocusTasks(a ReviewTask, b ReviewTask) bool {
 	if a.Kind != b.Kind {
 		return a.Kind < b.Kind
 	}
+	if a.Gate != b.Gate {
+		return a.Gate < b.Gate
+	}
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	if a.ReasonCode != b.ReasonCode {
+		return a.ReasonCode < b.ReasonCode
+	}
 	if a.Source != b.Source {
 		return a.Source < b.Source
 	}
@@ -1003,6 +1234,335 @@ func compareFocusTasks(a ReviewTask, b ReviewTask) bool {
 		return a.Question < b.Question
 	}
 	return strings.Join(a.EvidenceRefs, "|") < strings.Join(b.EvidenceRefs, "|")
+}
+
+func enrichReviewTask(task ReviewTask) ReviewTask {
+	task.Path = reviewTaskPrimaryPath(task.Paths)
+	task.Gate = reviewTaskGate(task)
+	if task.ReasonCode == "" {
+		task.ReasonCode = reviewTaskReasonCode(task.Kind, task.Question, task.Source)
+	}
+	return task
+}
+
+func reviewTaskPrimaryPath(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+func reviewTaskGate(task ReviewTask) string {
+	if task.Gate != "" {
+		return task.Gate
+	}
+	question := strings.ToLower(task.Question)
+	switch {
+	case strings.HasPrefix(question, "resolve failed quality gate: "):
+		return strings.TrimSuffix(strings.TrimPrefix(task.Question, "Resolve failed quality gate: "), ".")
+	case strings.HasPrefix(question, "confirm quality gate "):
+		question = strings.TrimPrefix(task.Question, "Confirm quality gate ")
+		question = strings.TrimSuffix(question, " or record explicit rationale.")
+		return question
+	case strings.Contains(question, "tests"):
+		return "tests"
+	case strings.Contains(question, "lint"):
+		return "lint"
+	case strings.Contains(question, "security"):
+		return "security"
+	case strings.Contains(question, "coverage"):
+		return "coverage"
+	case strings.Contains(question, "build"):
+		return "build"
+	case strings.Contains(question, "smoke"):
+		return "smoke"
+	case strings.Contains(question, "verify"):
+		return "verify"
+	default:
+		return ""
+	}
+}
+
+func buildAgentTasks(tasks []ReviewTask, replay Report) []AgentTask {
+	agentTasks := make([]AgentTask, 0, len(tasks))
+	for _, task := range tasks {
+		agentTask := AgentTask{
+			Priority:      task.Priority,
+			Kind:          task.Kind,
+			Gate:          task.Gate,
+			Path:          task.Path,
+			ReasonCode:    task.ReasonCode,
+			Action:        agentTaskAction(task),
+			Question:      task.Question,
+			Paths:         uniqueSorted(task.Paths),
+			Symbols:       uniqueSorted(task.Symbols),
+			EvidenceRefs:  uniqueSorted(task.EvidenceRefs),
+			Confidence:    task.Confidence,
+			BlocksVerdict: agentTaskBlocksVerdict(task),
+			Source:        task.Source,
+		}
+		if agentTask.Path == "" {
+			agentTask.Path = reviewTaskPrimaryPath(task.Paths)
+		}
+		agentTasks = append(agentTasks, agentTask)
+	}
+
+	return uniqueAgentTasks(agentTasks)
+}
+
+func agentTaskAction(task ReviewTask) string {
+	switch task.Kind {
+	case "integrity_failure":
+		return "inspect_integrity"
+	case "diff_mismatch":
+		return "compare_patches"
+	case "failed_gate", "missing_gate":
+		return "run_validation"
+	case "failed_command":
+		return "inspect_command"
+	case "missing_test":
+		return "run_validation"
+	case "dependency_change", "sensitive_change", "generated_change", "risky_file", "pre_existing_dirty", "pre_existing_touched", "branch_diff_mismatch":
+		return "inspect_file"
+	case "evidence_gap":
+		return "inspect_evidence"
+	default:
+		return "review"
+	}
+}
+
+func agentTaskBlocksVerdict(task ReviewTask) bool {
+	if focusTaskPriorityRank(task.Priority) <= focusTaskPriorityRank(focusTaskPriorityP1) {
+		return true
+	}
+	switch task.Kind {
+	case "integrity_failure", "diff_mismatch", "failed_gate", "failed_command":
+		return true
+	default:
+		return false
+	}
+}
+
+func uniqueAgentTasks(tasks []AgentTask) []AgentTask {
+	seen := make(map[string]AgentTask)
+	for _, task := range tasks {
+		if task.Kind == "" && task.Action == "" {
+			continue
+		}
+		key := task.Kind + "|" + task.Gate + "|" + task.Path + "|" + task.ReasonCode
+		if existing, ok := seen[key]; ok {
+			existing.EvidenceRefs = uniqueSorted(append(existing.EvidenceRefs, task.EvidenceRefs...))
+			existing.Paths = uniqueSorted(append(existing.Paths, task.Paths...))
+			existing.Symbols = uniqueSorted(append(existing.Symbols, task.Symbols...))
+			existing.BlocksVerdict = existing.BlocksVerdict || task.BlocksVerdict
+			if existing.Confidence == "" {
+				existing.Confidence = task.Confidence
+			}
+			if existing.Source == "" {
+				existing.Source = task.Source
+			}
+			if existing.Priority == "" {
+				existing.Priority = task.Priority
+			}
+			if existing.Action == "" {
+				existing.Action = task.Action
+			}
+			seen[key] = existing
+			continue
+		}
+		task.Paths = uniqueSorted(task.Paths)
+		task.Symbols = uniqueSorted(task.Symbols)
+		task.EvidenceRefs = uniqueSorted(task.EvidenceRefs)
+		seen[key] = task
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	unique := make([]AgentTask, 0, len(seen))
+	for _, key := range keys {
+		unique = append(unique, seen[key])
+	}
+	for index := range unique {
+		unique[index].ID = ""
+	}
+	return unique
+}
+
+func capSortedAgentTasks(tasks []AgentTask, limit int) []AgentTask {
+	if tasks == nil {
+		tasks = []AgentTask{}
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		return compareAgentTasks(tasks[i], tasks[j])
+	})
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	for index := range tasks {
+		tasks[index].ID = fmt.Sprintf("agent_task_%03d", index+1)
+	}
+	return tasks
+}
+
+func compareAgentTasks(a AgentTask, b AgentTask) bool {
+	aRank := focusTaskPriorityRank(a.Priority)
+	bRank := focusTaskPriorityRank(b.Priority)
+	if aRank != bRank {
+		return aRank < bRank
+	}
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Gate != b.Gate {
+		return a.Gate < b.Gate
+	}
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	if a.ReasonCode != b.ReasonCode {
+		return a.ReasonCode < b.ReasonCode
+	}
+	if a.Action != b.Action {
+		return a.Action < b.Action
+	}
+	if a.Confidence != b.Confidence {
+		return a.Confidence > b.Confidence
+	}
+	return strings.Join(a.EvidenceRefs, "|") < strings.Join(b.EvidenceRefs, "|")
+}
+
+func buildRecommendedNextCommands(tasks []AgentTask, replay Report) []RecommendedNextCommand {
+	cwd := strings.TrimSpace(replay.Source.RepoRoot)
+	if cwd == "" {
+		cwd = "."
+	}
+	next := make([]RecommendedNextCommand, 0, len(tasks))
+	for _, task := range tasks {
+		command, ok := commandForAgentTask(task, cwd)
+		if !ok {
+			continue
+		}
+		next = append(next, command)
+	}
+	return uniqueRecommendedNextCommands(next)
+}
+
+func commandForAgentTask(task AgentTask, cwd string) (RecommendedNextCommand, bool) {
+	switch task.Kind {
+	case "failed_gate", "missing_gate":
+		return commandForGateTask(task, cwd)
+	case "missing_test":
+		return RecommendedNextCommand{
+			Cwd:        cwd,
+			Argv:       []string{"make", "test"},
+			Purpose:    "rerun validation for missing tests",
+			ReasonCode: task.ReasonCode,
+			TaskIDs:    []string{task.ID},
+		}, true
+	case "failed_command":
+		return RecommendedNextCommand{
+			Cwd:        cwd,
+			Argv:       []string{"git", "status", "--short"},
+			Purpose:    "inspect the workspace after a failed command",
+			ReasonCode: task.ReasonCode,
+			TaskIDs:    []string{task.ID},
+		}, true
+	case "diff_mismatch":
+		return RecommendedNextCommand{
+			Cwd:        cwd,
+			Argv:       []string{"git", "diff", "--stat"},
+			Purpose:    "compare the current workspace diff against the recorded patch",
+			ReasonCode: task.ReasonCode,
+			TaskIDs:    []string{task.ID},
+		}, true
+	case "dependency_change":
+		return RecommendedNextCommand{
+			Cwd:        cwd,
+			Argv:       []string{"go", "test", "./..."},
+			Purpose:    "validate dependency-related changes",
+			ReasonCode: task.ReasonCode,
+			TaskIDs:    []string{task.ID},
+		}, true
+	case "sensitive_change":
+		return RecommendedNextCommand{
+			Cwd:        cwd,
+			Argv:       []string{"git", "diff", "--", task.Path},
+			Purpose:    "inspect the sensitive file change directly",
+			ReasonCode: task.ReasonCode,
+			TaskIDs:    []string{task.ID},
+		}, true
+	case "generated_change":
+		return RecommendedNextCommand{
+			Cwd:        cwd,
+			Argv:       []string{"git", "status", "--short"},
+			Purpose:    "check generated artifacts for drift",
+			ReasonCode: task.ReasonCode,
+			TaskIDs:    []string{task.ID},
+		}, true
+	case "pre_existing_dirty", "pre_existing_touched", "branch_diff_mismatch":
+		return RecommendedNextCommand{
+			Cwd:        cwd,
+			Argv:       []string{"git", "diff", "--", task.Path},
+			Purpose:    "inspect the affected file directly",
+			ReasonCode: task.ReasonCode,
+			TaskIDs:    []string{task.ID},
+		}, task.Path != ""
+	default:
+		return RecommendedNextCommand{}, false
+	}
+}
+
+func commandForGateTask(task AgentTask, cwd string) (RecommendedNextCommand, bool) {
+	switch task.Gate {
+	case "tests":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "test"}, Purpose: "rerun test validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "lint":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "lint"}, Purpose: "rerun lint validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "race_tests":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "test-race"}, Purpose: "rerun race-test validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "typecheck":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "lint"}, Purpose: "rerun typecheck-related validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "security":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "security"}, Purpose: "rerun security validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "coverage":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "coverage"}, Purpose: "rerun coverage validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "build":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "build"}, Purpose: "rerun build validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "smoke":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "smoke"}, Purpose: "rerun smoke validation", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "verify":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "verify"}, Purpose: "rerun full verification", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	case "format":
+		return RecommendedNextCommand{Cwd: cwd, Argv: []string{"make", "fmt-check"}, Purpose: "check formatting", ReasonCode: task.ReasonCode, TaskIDs: []string{task.ID}}, true
+	default:
+		return RecommendedNextCommand{}, false
+	}
+}
+
+func uniqueRecommendedNextCommands(commands []RecommendedNextCommand) []RecommendedNextCommand {
+	seen := make(map[string]RecommendedNextCommand)
+	for _, command := range commands {
+		key := command.Cwd + "|" + strings.Join(command.Argv, "\x00") + "|" + command.Purpose + "|" + command.ReasonCode
+		if existing, ok := seen[key]; ok {
+			existing.TaskIDs = uniqueSorted(append(existing.TaskIDs, command.TaskIDs...))
+			seen[key] = existing
+			continue
+		}
+		command.TaskIDs = uniqueSorted(command.TaskIDs)
+		seen[key] = command
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	unique := make([]RecommendedNextCommand, 0, len(seen))
+	for _, key := range keys {
+		unique = append(unique, seen[key])
+	}
+	return unique
 }
 
 func focusTaskPriorityRank(priority string) int {
@@ -1193,7 +1753,8 @@ func uniqueReviewTasks(tasks []ReviewTask) []ReviewTask {
 		if task.Question == "" || task.Kind == "" {
 			continue
 		}
-		key := task.Kind + "|" + task.Priority + "|" + task.Question
+		task = enrichReviewTask(task)
+		key := task.Kind + "|" + task.Gate + "|" + task.Path + "|" + task.ReasonCode
 		if existing, ok := seen[key]; ok {
 			existing.EvidenceRefs = uniqueSorted(append(existing.EvidenceRefs, task.EvidenceRefs...))
 			existing.Paths = uniqueSorted(append(existing.Paths, task.Paths...))

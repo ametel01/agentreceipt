@@ -389,7 +389,7 @@ func TestSchemaReplayCommandOutputsSchema(t *testing.T) {
 		t.Fatal("schema replay missing reviewability object")
 	}
 	required := requiredStringList(schema["required"])
-	if !containsString(required, "kind") || !containsString(required, "session_id") {
+	if !containsString(required, "kind") || !containsString(required, "session_id") || !containsString(required, "process_contract") || !containsString(required, "reviewability") {
 		t.Fatalf("schema replay missing required fields: %v", schema["required"])
 	}
 }
@@ -422,8 +422,20 @@ func TestSchemaFocusCommandOutputsSchema(t *testing.T) {
 	if _, ok := properties["reviewability"].(map[string]any); !ok {
 		t.Fatal("schema focus missing reviewability object")
 	}
+	if _, ok := properties["agent_tasks"].(map[string]any); !ok {
+		t.Fatal("schema focus missing agent_tasks array")
+	}
+	if _, ok := properties["recommended_next_commands"].(map[string]any); !ok {
+		t.Fatal("schema focus missing recommended_next_commands array")
+	}
+	if _, ok := properties["reviewable_files"].(map[string]any); !ok {
+		t.Fatal("schema focus missing reviewable_files object")
+	}
+	if _, ok := properties["suppressed_changes"].(map[string]any); !ok {
+		t.Fatal("schema focus missing suppressed_changes array")
+	}
 	required := requiredStringList(schema["required"])
-	if !containsString(required, "top_reasons") || !containsString(required, "review_tasks") {
+	if !containsString(required, "top_reasons") || !containsString(required, "review_tasks") || !containsString(required, "agent_tasks") || !containsString(required, "recommended_next_commands") || !containsString(required, "reviewable_files") || !containsString(required, "suppressed_changes") {
 		t.Fatalf("schema focus missing required fields: %v", schema["required"])
 	}
 }
@@ -538,6 +550,9 @@ func TestFocusCommandOutputsJSONByDefault(t *testing.T) {
 	}
 	if payload.Kind != "agentreceipt.session_focus" {
 		t.Fatalf("focus kind = %q, want %q", payload.Kind, "agentreceipt.session_focus")
+	}
+	if !strings.Contains(output, "\"agent_tasks\"") || !strings.Contains(output, "\"recommended_next_commands\"") || !strings.Contains(output, "\"reviewable_files\"") || !strings.Contains(output, "\"suppressed_changes\"") {
+		t.Fatalf("focus output missing new fields: %s", output)
 	}
 }
 

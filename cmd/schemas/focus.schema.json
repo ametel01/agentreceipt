@@ -10,9 +10,13 @@
     "verdict",
     "process_contract",
     "reviewability",
+    "agent_tasks",
+    "recommended_next_commands",
     "top_reasons",
     "review_tasks",
     "changed_files",
+    "reviewable_files",
+    "suppressed_changes",
     "failed_gates",
     "evidence_refs"
   ],
@@ -55,6 +59,41 @@
         "primary_blocker": { "type": "string" }
       }
     },
+    "agent_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "priority": { "type": "string" },
+          "kind": { "type": "string" },
+          "gate": { "type": "string" },
+          "path": { "type": "string" },
+          "reason_code": { "type": "string" },
+          "action": { "type": "string" },
+          "question": { "type": "string" },
+          "paths": { "type": "array", "items": { "type": "string" } },
+          "symbols": { "type": "array", "items": { "type": "string" } },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "string" },
+          "blocks_verdict": { "type": "boolean" },
+          "source": { "type": "string" }
+        }
+      }
+    },
+    "recommended_next_commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cwd": { "type": "string" },
+          "argv": { "type": "array", "items": { "type": "string" } },
+          "purpose": { "type": "string" },
+          "reason_code": { "type": "string" },
+          "task_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
     "top_reasons": {
       "type": "array",
       "items": { "type": "string" }
@@ -70,6 +109,8 @@
             "enum": ["P0", "P1", "P2", "P3"]
           },
           "kind": { "type": "string" },
+          "gate": { "type": "string" },
+          "path": { "type": "string" },
           "reason_code": { "type": "string" },
           "question": { "type": "string" },
           "paths": {
@@ -123,6 +164,20 @@
           }
         }
       }
+    },
+    "reviewable_files": {
+      "type": "object",
+      "properties": {
+        "source_changes": { "type": "array", "items": { "type": "object" } },
+        "test_changes": { "type": "array", "items": { "type": "object" } },
+        "doc_changes": { "type": "array", "items": { "type": "object" } },
+        "generated_changes": { "type": "array", "items": { "type": "object" } },
+        "transient_changes": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "suppressed_changes": {
+      "type": "array",
+      "items": { "type": "object" }
     },
     "failed_gates": {
       "type": "array",

@@ -308,6 +308,7 @@ func focusContainsReasonCode(focus FocusReport, code ReasonCode) bool {
 }
 
 func reviewTaskReasonCode(kind string, question string, source string) string {
+	normalizedQuestion := strings.ToLower(strings.TrimSpace(question))
 	switch kind {
 	case "integrity_failure":
 		return string(reasonCodeIntegrityFailure)
@@ -316,6 +317,14 @@ func reviewTaskReasonCode(kind string, question string, source string) string {
 	case "failed_gate":
 		return string(reasonCodeFailedGate)
 	case "failed_command":
+		switch {
+		case strings.Contains(normalizedQuestion, "streak"):
+			return "failed_command_streak"
+		case strings.Contains(normalizedQuestion, "detail"):
+			return "failed_command_detail"
+		case strings.Contains(normalizedQuestion, "before approving"):
+			return "failed_command_evidence"
+		}
 		return string(reasonCodeFailedCommand)
 	case "missing_test":
 		return string(reasonCodeMissingTests)
@@ -326,6 +335,16 @@ func reviewTaskReasonCode(kind string, question string, source string) string {
 	case "generated_change":
 		return string(reasonCodeGeneratedChange)
 	case "evidence_gap":
+		switch {
+		case strings.Contains(normalizedQuestion, "validation after the last edit"):
+			return "validation_after_last_edit"
+		case strings.Contains(normalizedQuestion, "provider tool events"):
+			return string(reasonCodeProviderCommandMissing)
+		case strings.Contains(normalizedQuestion, "command evidence was available to determine whether"):
+			return string(reasonCodeCommandEvidenceMissing)
+		case strings.Contains(normalizedQuestion, "quality gate"):
+			return "missing_gate"
+		}
 		return string(reasonCodeEvidenceGap)
 	default:
 		if source == "review_focus" {
