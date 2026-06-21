@@ -11,7 +11,7 @@ and this project follows semantic versioning.
 
 ### Fixed
 
-- Relaxed the installer no-TTY fixture so Ubuntu CI validates the behavior invariant (binary install succeeds and no skill is created) without depending on an environment-specific skip message.
+- Made the installer no-TTY fixture deterministic on Ubuntu by running it under `setsid` with stdin detached, while skipping that portability check when `setsid` is unavailable.
 
 ## [0.10.0] - 2026-06-22
 
