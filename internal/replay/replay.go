@@ -20,6 +20,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/buildinfo"
 	"github.com/ametel01/agentreceipt/internal/capture/fswatcher"
 	"github.com/ametel01/agentreceipt/internal/capture/gitmonitor"
+	"github.com/ametel01/agentreceipt/internal/commandrisk"
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/evidence"
@@ -53,20 +54,21 @@ type Options struct {
 
 // Report is the verifier-facing replay payload.
 type Report struct {
-	SchemaVersion int            `json:"schema_version"`
-	Kind          string         `json:"kind"`
-	SessionID     string         `json:"session_id"`
-	GeneratedAt   time.Time      `json:"generated_at"`
-	Source        Source         `json:"source"`
-	Verification  Verification   `json:"verification"`
-	Summary       Summary        `json:"summary"`
-	Timeline      []TimelineItem `json:"timeline"`
-	Commands      []Command      `json:"commands"`
-	Files         []File         `json:"files"`
-	Risks         []Risk         `json:"risks"`
-	Gaps          []string       `json:"gaps"`
-	VerifierTasks []string       `json:"verifier_tasks"`
-	Artifacts     []Artifact     `json:"artifacts"`
+	SchemaVersion    int              `json:"schema_version"`
+	Kind             string           `json:"kind"`
+	SessionID        string           `json:"session_id"`
+	GeneratedAt      time.Time        `json:"generated_at"`
+	Source           Source           `json:"source"`
+	Verification     Verification     `json:"verification"`
+	Summary          Summary          `json:"summary"`
+	EvaluatorSignals EvaluatorSignals `json:"evaluator_signals"`
+	Timeline         []TimelineItem   `json:"timeline"`
+	Commands         []Command        `json:"commands"`
+	Files            []File           `json:"files"`
+	Risks            []Risk           `json:"risks"`
+	Gaps             []string         `json:"gaps"`
+	VerifierTasks    []string         `json:"verifier_tasks"`
+	Artifacts        []Artifact       `json:"artifacts"`
 }
 
 type Source struct {
@@ -134,6 +136,25 @@ type Summary struct {
 	LintDetected      bool            `json:"lint_detected"`
 	TypecheckDetected bool            `json:"typecheck_detected"`
 	FinalRisk         model.RiskLevel `json:"final_risk"`
+}
+
+type EvaluatorSignals struct {
+	ReadCommandCount           int `json:"read_command_count"`
+	WriteCommandCount          int `json:"write_command_count"`
+	EditCommandCount           int `json:"edit_command_count"`
+	TestCommandCount           int `json:"test_command_count"`
+	LintCommandCount           int `json:"lint_command_count"`
+	TypecheckCommandCount      int `json:"typecheck_command_count"`
+	FailedCommandCount         int `json:"failed_command_count"`
+	NetworkCommandCount        int `json:"network_command_count"`
+	DestructiveCommandCount    int `json:"destructive_command_count"`
+	GitMutationCommandCount    int `json:"git_mutation_command_count"`
+	DependencyFileChangeCount  int `json:"dependency_file_change_count"`
+	SensitiveFileChangeCount   int `json:"sensitive_file_change_count"`
+	CommitCount                int `json:"commit_count"`
+	ChangedProductionFileCount int `json:"changed_production_file_count"`
+	ChangedTestFileCount       int `json:"changed_test_file_count"`
+	ChangedDocFileCount        int `json:"changed_doc_file_count"`
 }
 
 type TimelineItem struct {
@@ -278,13 +299,14 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			TypecheckDetected: evidenceSummary.TypecheckDetected,
 			FinalRisk:         model.RiskInfo,
 		},
-		Timeline:      timeline,
-		Commands:      commands,
-		Files:         files,
-		Risks:         nil,
-		Gaps:          uniqueSorted(gaps),
-		VerifierTasks: uniqueSorted(gaps),
-		Artifacts:     artifacts,
+		EvaluatorSignals: buildEvaluatorSignals(commands, files),
+		Timeline:         timeline,
+		Commands:         commands,
+		Files:            files,
+		Risks:            nil,
+		Gaps:             uniqueSorted(gaps),
+		VerifierTasks:    uniqueSorted(gaps),
+		Artifacts:        artifacts,
 	}
 
 	return report, nil
@@ -463,6 +485,174 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 	})
 
 	return commands, commandGaps
+}
+
+func buildEvaluatorSignals(commands []Command, files []File) EvaluatorSignals {
+	evaluatorSignals := EvaluatorSignals{}
+	for _, command := range commands {
+		if isReadCommand(command.Command) {
+			evaluatorSignals.ReadCommandCount++
+		}
+		if isWriteCommand(command.Command) {
+			evaluatorSignals.WriteCommandCount++
+		}
+		if isEditCommand(command.Command) {
+			evaluatorSignals.EditCommandCount++
+		}
+		switch command.Kind {
+		case "test":
+			evaluatorSignals.TestCommandCount++
+		case "lint":
+			evaluatorSignals.LintCommandCount++
+		case "typecheck":
+			evaluatorSignals.TypecheckCommandCount++
+		}
+		if isCommandFailed(command) {
+			evaluatorSignals.FailedCommandCount++
+		}
+		commandSignals := commandrisk.Classify(command.Command)
+		if commandSignalsHas(commandSignals, "network_egress", "remote_code_execution", "cloud_or_deploy_mutation") {
+			evaluatorSignals.NetworkCommandCount++
+		}
+		if commandSignalsHas(commandSignals, "destructive_filesystem", "destructive_git", "container_destructive", "find_delete", "mass_edit_or_overwrite") {
+			evaluatorSignals.DestructiveCommandCount++
+		}
+		if commandSignalsHas(commandSignals, "git_mutation") {
+			evaluatorSignals.GitMutationCommandCount++
+		}
+		if isCommitLikeCommand(command.Command) {
+			evaluatorSignals.CommitCount++
+		}
+	}
+
+	for _, file := range files {
+		if file.Dependency {
+			evaluatorSignals.DependencyFileChangeCount++
+		}
+		if file.Sensitive {
+			evaluatorSignals.SensitiveFileChangeCount++
+		}
+		switch {
+		case isTestFile(file.Path):
+			evaluatorSignals.ChangedTestFileCount++
+		case isDocFile(file.Path):
+			evaluatorSignals.ChangedDocFileCount++
+		default:
+			evaluatorSignals.ChangedProductionFileCount++
+		}
+	}
+
+	return evaluatorSignals
+}
+
+func commandSignalsHas(signals []commandrisk.Classification, names ...string) bool {
+	for _, signal := range signals {
+		for _, target := range names {
+			if signal.Signal == target {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func isCommandFailed(command Command) bool {
+	if command.Status == "failed" {
+		return true
+	}
+	if command.ExitCode == nil {
+		return false
+	}
+
+	return *command.ExitCode != 0
+}
+
+func isCommitLikeCommand(commandText string) bool {
+	text := strings.TrimSpace(strings.ToLower(commandText))
+	return strings.HasPrefix(text, "git commit ") ||
+		text == "git commit" ||
+		strings.HasPrefix(text, "git commit;") ||
+		strings.Contains(text, "&& git commit")
+}
+
+func isReadCommand(commandText string) bool {
+	commandText = strings.ToLower(strings.TrimSpace(commandText))
+	switch {
+	case commandText == "":
+		return false
+	case strings.HasPrefix(commandText, "cat >"):
+		return false
+	case strings.HasPrefix(commandText, "cat "):
+		return true
+	case strings.HasPrefix(commandText, "less "):
+		return true
+	case strings.HasPrefix(commandText, "more "):
+		return true
+	case strings.HasPrefix(commandText, "head "):
+		return true
+	case strings.HasPrefix(commandText, "tail "):
+		return true
+	case strings.HasPrefix(commandText, "grep "):
+		return true
+	case strings.HasPrefix(commandText, "rg "):
+		return true
+	case strings.HasPrefix(commandText, "find "):
+		return true
+	case strings.HasPrefix(commandText, "ls "):
+		return true
+	case strings.HasPrefix(commandText, "git diff"):
+		return true
+	case strings.HasPrefix(commandText, "git show"):
+		return true
+	case strings.HasPrefix(commandText, "git log"):
+		return true
+	case strings.HasPrefix(commandText, "git status"):
+		return true
+	}
+
+	return false
+}
+
+func isWriteCommand(commandText string) bool {
+	commandText = strings.TrimSpace(strings.ToLower(commandText))
+	return strings.HasPrefix(commandText, "touch ") ||
+		strings.HasPrefix(commandText, "mkdir ") ||
+		strings.HasPrefix(commandText, "cp ") ||
+		strings.HasPrefix(commandText, "mv ") ||
+		strings.Contains(commandText, " > ") ||
+		strings.Contains(commandText, ">>") ||
+		strings.Contains(commandText, "tee ")
+}
+
+func isEditCommand(commandText string) bool {
+	commandText = strings.ToLower(strings.TrimSpace(commandText))
+	return strings.Contains(commandText, "sed -i") ||
+		strings.Contains(commandText, "perl -pi") ||
+		strings.Contains(commandText, "apply_patch") ||
+		strings.Contains(commandText, "cat >")
+}
+
+func isTestFile(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	return strings.HasSuffix(path, "_test.go") ||
+		strings.HasSuffix(path, "_test.ts") ||
+		strings.HasSuffix(path, "_test.tsx") ||
+		strings.HasSuffix(path, "_test.js") ||
+		strings.HasSuffix(path, "_test.jsx") ||
+		strings.HasSuffix(path, "_test.mjs") ||
+		strings.HasSuffix(path, "_test.mts") ||
+		strings.HasSuffix(path, "_test.cts")
+}
+
+func isDocFile(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	switch filepath.Ext(path) {
+	case ".md", ".mdx", ".rst", ".txt", ".adoc":
+		return true
+	default:
+		return false
+	}
 }
 
 func pairResult(attempt commandAttempt, results []commandResultMeta, used map[int64]bool) (commandResultMeta, bool) {

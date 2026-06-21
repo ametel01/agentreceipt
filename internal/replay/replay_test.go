@@ -303,6 +303,233 @@ func TestBuildDoesNotExposeProviderRiskSignalRawField(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_test",
+						"command": "go test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_test",
+					"command":   "go test ./...",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_cat",
+						"command": "cat main.go",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":          "call_cat",
+					"command":          "cat main.go",
+					"status":           "success",
+					"stdout":           "ok",
+					"stdout_truncated": false,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_edit",
+						"command": "cat > main.go",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_edit",
+					"command":   "cat > main.go",
+					"status":    "failed",
+					"exit_code": 2,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_rm",
+						"command": "rm -rf /tmp",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id": "call_rm",
+					"command": "rm -rf /tmp",
+					"status":  "success",
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_fetch",
+						"command": "curl https://example.com",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_fetch",
+					"command":   "curl https://example.com",
+					"status":    "failed",
+					"exit_code": 1,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"command": "git commit -m \"oops\"",
+					"status":  "failed",
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "main.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "main_test.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "docs/guide.md",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "go.mod",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": true,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       ".env.local",
+					"action":     "modify",
+					"sensitive":  true,
+					"dependency": false,
+				},
+			},
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	signals := report.EvaluatorSignals
+	if signals.TestCommandCount != 1 {
+		t.Fatalf("test_command_count = %d, want 1", signals.TestCommandCount)
+	}
+	if signals.LintCommandCount != 0 {
+		t.Fatalf("lint_command_count = %d, want 0", signals.LintCommandCount)
+	}
+	if signals.TypecheckCommandCount != 0 {
+		t.Fatalf("typecheck_command_count = %d, want 0", signals.TypecheckCommandCount)
+	}
+	if signals.ReadCommandCount != 1 {
+		t.Fatalf("read_command_count = %d, want 1", signals.ReadCommandCount)
+	}
+	if signals.EditCommandCount != 1 {
+		t.Fatalf("edit_command_count = %d, want 1", signals.EditCommandCount)
+	}
+	if signals.WriteCommandCount != 1 {
+		t.Fatalf("write_command_count = %d, want 1", signals.WriteCommandCount)
+	}
+	if signals.FailedCommandCount != 3 {
+		t.Fatalf("failed_command_count = %d, want 3", signals.FailedCommandCount)
+	}
+	if signals.NetworkCommandCount != 1 {
+		t.Fatalf("network_command_count = %d, want 1", signals.NetworkCommandCount)
+	}
+	if signals.DestructiveCommandCount != 1 {
+		t.Fatalf("destructive_command_count = %d, want 1", signals.DestructiveCommandCount)
+	}
+	if signals.GitMutationCommandCount != 1 {
+		t.Fatalf("git_mutation_command_count = %d, want 1", signals.GitMutationCommandCount)
+	}
+	if signals.CommitCount != 1 {
+		t.Fatalf("commit_count = %d, want 1", signals.CommitCount)
+	}
+	if signals.DependencyFileChangeCount != 1 {
+		t.Fatalf("dependency_file_change_count = %d, want 1", signals.DependencyFileChangeCount)
+	}
+	if signals.SensitiveFileChangeCount != 1 {
+		t.Fatalf("sensitive_file_change_count = %d, want 1", signals.SensitiveFileChangeCount)
+	}
+	if signals.ChangedTestFileCount != 1 {
+		t.Fatalf("changed_test_file_count = %d, want 1", signals.ChangedTestFileCount)
+	}
+	if signals.ChangedDocFileCount != 1 {
+		t.Fatalf("changed_doc_file_count = %d, want 1", signals.ChangedDocFileCount)
+	}
+	if signals.ChangedProductionFileCount != 3 {
+		t.Fatalf("changed_production_file_count = %d, want 3", signals.ChangedProductionFileCount)
+	}
+}
+
 func TestBuildCapturesMissingEvidenceGaps(t *testing.T) {
 	t.Parallel()
 

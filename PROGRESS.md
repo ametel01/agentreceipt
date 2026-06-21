@@ -4,13 +4,13 @@ Plan source: [`PLAN.md`](./PLAN.md)
 
 ## Status
 
-- Current status: Step 3 complete
-- Next step: Step 4
-- Last updated: 2026-06-21T00:17:18Z
+- Current status: Step 4 complete
+- Next step: Step 5
+- Last updated: 2026-06-21T08:24:12Z
 - Validation results:
   - `make fmt`
   - `go test ./internal/replay ./cmd` (pass)
-  - `go test ./internal/trust ./internal/replay ./cmd` (pass)
+  - `go test ./internal/replay` (pass)
   - `make verify` (fails at coverage gate: `go tool cover -func=coverage.out | awk '/total:/ { if ($3+0 < 80.0) exit 1 }`)
 
 ## Step Checklist
@@ -19,7 +19,7 @@ Plan source: [`PLAN.md`](./PLAN.md)
 - [x] Step 1: Define Explicit Replay Verification Verdicts
 - [x] Step 2: Add Local Trust Policy Evaluation
 - [x] Step 3: Harden Signer Material and Legacy Migration Semantics
-- [ ] Step 4: Add Evaluator Scoring Signals
+- [x] Step 4: Add Evaluator Scoring Signals
 - [ ] Step 5: Add Quality Gate and Command Failure Evidence Schema
 - [ ] Step 6: Add Patch Semantic Summary
 - [ ] Step 7: Add Policy Checks and Review Focus
@@ -54,3 +54,10 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Confirmed replay verification reuses `receipt.VerifyBundle`, so embedded signer metadata flows into replay authenticity checks without requiring local private key state.
   - Kept behavior consistent with unchanged legacy semantics: missing embedded signer surfaces as unauthentic but intact integrity.
   - Commit: `Harden replay signer portability`.
+
+- Step 4 completed:
+  - Added top-level `evaluator_signals` to replay output with deterministic command and file counts for production evaluator workflows.
+  - Derived command counts from existing command-kind classification and `internal/commandrisk` signals, including failed statuses/exit codes and commit-like detection for unpaired command results.
+  - Added file-change category counts for dependency, sensitive, production, test, and docs paths.
+  - Added replay coverage for command attempts, command-result pairing edge cases, commit-like commands, and mixed file-category counting.
+  - Commit: `Add replay evaluator signals`.
