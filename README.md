@@ -24,33 +24,33 @@ curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh
 Pin a specific version:
 
 ```bash
-curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.9.0
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.10.0
 ```
 
 Install binary and ask whether to install the skill (interactive prompt):
 
 ```bash
-curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.9.0
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.10.0
 # ... prompts: Install the AgentReceipt coding-agent skill? [Y/n]
 ```
 
 Install binary and skill non-interactively:
 
 ```bash
-curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.9.0 --install-skill
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.10.0 --install-skill
 ```
 
 Install binary to a custom directory and install skill to a custom root:
 
 ```bash
-curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.9.0 \
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.10.0 \
   --bin-dir "$HOME/tools/bin" --install-skill --skill-dir "$HOME/.config/agentreceipt-skills"
 ```
 
 Skip skill installation:
 
 ```bash
-curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.9.0 --no-install-skill
+curl -fsSL https://ametel.dev/agentreceipt/install.sh | sh -s -- --version v0.10.0 --no-install-skill
 ```
 
 Environment variables:
@@ -58,7 +58,7 @@ Environment variables:
 ```bash
 AGENTRECEIPT_INSTALL_SKILL=1 sh scripts/install.sh   # install skill without prompt
 AGENTRECEIPT_INSTALL_SKILL=1 AGENTRECEIPT_SKILL_DIR="$HOME/.config/agentreceipt-skills" sh scripts/install.sh
-AGENTRECEIPT_INSTALL_SKILL=1 AGENTRECEIPT_INSTALL_VERSION=0.9.0 AGENTRECEIPT_INSTALL_DIR="$HOME/.local/bin" sh scripts/install.sh
+AGENTRECEIPT_INSTALL_SKILL=1 AGENTRECEIPT_INSTALL_VERSION=0.10.0 AGENTRECEIPT_INSTALL_DIR="$HOME/.local/bin" sh scripts/install.sh
 ```
 
 Installed skill location:
