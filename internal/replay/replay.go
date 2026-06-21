@@ -28,6 +28,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/receipt"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/storage"
+	"github.com/ametel01/agentreceipt/internal/trust"
 )
 
 const replayKind = "agentreceipt.session_replay"
@@ -43,10 +44,11 @@ const maxOutputSummaryRunes = 120
 
 // Options controls replay report building.
 type Options struct {
-	RepoPath    string
-	SessionID   string
-	GeneratedAt time.Time
-	BundleDir   string
+	RepoPath            string
+	SessionID           string
+	GeneratedAt         time.Time
+	BundleDir           string
+	TrustedSignerKeyIDs []string
 }
 
 // Report is the verifier-facing replay payload.
@@ -110,10 +112,8 @@ const (
 
 	verificationVerdictIntegrityOnly = "integrity_only"
 	verificationVerdictIntegrityFail = "integrity_failed"
-	verificationVerdictAuthenticity  = "authentic"
 	verificationVerdictUntrusted     = "untrusted_signer"
 	verificationVerdictPolicyFailure = "policy_failed"
-	verificationVerdictPolicyUnknown = "policy_unknown"
 	verificationVerdictPassed        = "passed"
 
 	authenticityStatusAuthentic    = "authenticated"
@@ -122,7 +122,7 @@ const (
 	trustStatusTrusted             = "trusted"
 	trustStatusNotTrusted          = "not_trusted"
 	trustStatusNotConfigured       = "not_configured"
-	trustStatusUnknown             = "unknown"
+	trustStatusPolicyInvalid       = "policy_invalid"
 )
 
 type Summary struct {
@@ -248,7 +248,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	files := buildFiles(cfg, evidenceSummary.ChangedFiles, finalPatch, events)
 	timeline := buildTimeline(events, evidenceConfidence)
 
-	verification, verifyWarnings := buildVerification(layout, eventsErr == nil)
+	verification, verifyWarnings := buildVerification(layout, eventsErr == nil, options)
 	gaps = append(gaps, verifyWarnings...)
 
 	if state.State != model.SessionStateFinalized {
@@ -751,7 +751,7 @@ func timelineConfidence(event model.Event, confidence model.CaptureConfidence) m
 	}
 }
 
-func buildVerification(layout storage.Layout, _ bool) (Verification, []string) {
+func buildVerification(layout storage.Layout, _ bool, options Options) (Verification, []string) {
 	verification := Verification{}
 	verificationWarnings := make([]string, 0)
 	verification.TrustStatus = trustStatusNotConfigured
@@ -815,6 +815,15 @@ func buildVerification(layout storage.Layout, _ bool) (Verification, []string) {
 	} else {
 		verification.AuthenticityStatus = authenticityStatusFailed
 	}
+
+	trustEvaluation := trust.EvaluateSignerTrust(verification.SignedBy, options.TrustedSignerKeyIDs)
+	verification.PolicyValid = trustEvaluation.PolicyValid
+	verification.TrustStatus = trustEvaluation.TrustStatus
+	verification.SignerTrusted = trustEvaluation.SignerTrusted
+	if !trustEvaluation.PolicyValid {
+		verification.TrustStatus = trustStatusPolicyInvalid
+	}
+
 	if verification.SignatureErrorCode == receiptErrLegacySignerMissing {
 		if verification.IntegrityValid {
 			verification.OverallVerdict = verificationVerdictIntegrityOnly
@@ -829,11 +838,13 @@ func buildVerification(layout storage.Layout, _ bool) (Verification, []string) {
 	} else if !verification.SignatureValid {
 		verification.OverallVerdict = verificationVerdictUntrusted
 		verification.OverallReason = "signature verification failed"
+	} else if !trustEvaluation.PolicyValid {
+		verification.OverallVerdict = verificationVerdictPolicyFailure
+		verification.OverallReason = "trust policy is invalid"
+	} else if trustEvaluation.TrustStatus == trustStatusNotTrusted {
+		verification.OverallVerdict = verificationVerdictUntrusted
+		verification.OverallReason = "signer is not trusted"
 	} else {
-		verification.OverallVerdict = verificationVerdictAuthenticity
-		verification.OverallReason = "integrity and signature verified"
-	}
-	if verificationResult.Signature {
 		verification.OverallVerdict = verificationVerdictPassed
 		verification.OverallReason = "integrity checks and signature verification passed"
 	}

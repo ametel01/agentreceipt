@@ -636,6 +636,84 @@ func TestBuildVerificationProvidesComponentFlagsAndSignatureErrorCodes(t *testin
 	}
 }
 
+func TestBuildVerificationTrustPolicyMatchesSignedSigner(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	decoded, err := readReceiptForReplayTest(layout.ReceiptJSON)
+	if err != nil {
+		t.Fatalf("read receipt: %v", err)
+	}
+	trustedSignerKeyIDs := []string{decoded.Verification.SignerKeyID}
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:            repo,
+		SessionID:           sessionID,
+		TrustedSignerKeyIDs: trustedSignerKeyIDs,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !report.Verification.AuthenticityValid {
+		t.Fatalf("expected authenticity_valid=true for trusted signer test: %+v", report.Verification)
+	}
+	if !report.Verification.SignerTrusted {
+		t.Fatalf("expected signer_trusted=true for configured signer: %+v", report.Verification)
+	}
+	if report.Verification.TrustStatus != trustStatusTrusted {
+		t.Fatalf("expected trust_status=%q, got %q", trustStatusTrusted, report.Verification.TrustStatus)
+	}
+	if !report.Verification.PolicyValid {
+		t.Fatalf("expected policy_valid=true for configured valid policy: %+v", report.Verification)
+	}
+	if report.Verification.OverallVerdict != verificationVerdictPassed {
+		t.Fatalf("expected overall_verdict=%q, got %q", verificationVerdictPassed, report.Verification.OverallVerdict)
+	}
+}
+
+func TestBuildVerificationTrustPolicyRejectsUntrustedSigner(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	decoded, err := readReceiptForReplayTest(layout.ReceiptJSON)
+	if err != nil {
+		t.Fatalf("read receipt: %v", err)
+	}
+	if decoded.Verification.SignerKeyID == "" {
+		t.Fatal("receipt signer_key_id should be present for trust policy test")
+	}
+	if decoded.Verification.SignerKeyID == "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatal("test fixture signer key id should not match untrusted test policy")
+	}
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:            repo,
+		SessionID:           sessionID,
+		TrustedSignerKeyIDs: []string{"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !report.Verification.AuthenticityValid {
+		t.Fatalf("expected authenticity_valid=true despite untrusted policy: %+v", report.Verification)
+	}
+	if report.Verification.SignerTrusted {
+		t.Fatalf("expected signer_trusted=false for untrusted signer: %+v", report.Verification)
+	}
+	if report.Verification.TrustStatus != trustStatusNotTrusted {
+		t.Fatalf("expected trust_status=%q, got %q", trustStatusNotTrusted, report.Verification.TrustStatus)
+	}
+	if !report.Verification.PolicyValid {
+		t.Fatalf("expected policy_valid=true for valid policy list: %+v", report.Verification)
+	}
+	if report.Verification.OverallVerdict != verificationVerdictUntrusted {
+		t.Fatalf("expected overall_verdict=%q for untrusted signer, got %q", verificationVerdictUntrusted, report.Verification.OverallVerdict)
+	}
+	if report.Verification.OverallReason != "signer is not trusted" {
+		t.Fatalf("expected overall_reason='signer is not trusted', got %q", report.Verification.OverallReason)
+	}
+}
+
 func readReceiptForReplayTest(path string) (model.Receipt, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

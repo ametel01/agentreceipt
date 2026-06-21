@@ -27,6 +27,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/signing"
 	"github.com/ametel01/agentreceipt/internal/storage"
+	"github.com/ametel01/agentreceipt/internal/trust"
 	"github.com/spf13/cobra"
 )
 
@@ -1043,6 +1044,7 @@ func newReplayCommand() *cobra.Command {
 	replayCmd.Flags().String("session", "", "Replay a specific finalized session ID")
 	replayCmd.Flags().String("bundle", "", "Write replay artifacts to a bundle directory")
 	replayCmd.Flags().Bool("json", false, "Render replay output as JSON")
+	replayCmd.Flags().StringArray("trusted-signer-key-id", nil, "Trusted signer key ID to apply when evaluating replay authenticity")
 
 	return replayCmd
 }
@@ -1553,6 +1555,10 @@ func replayOptionsFromCommand(cmd *cobra.Command) (replay.Options, error) {
 	if err != nil {
 		return replay.Options{}, err
 	}
+	cfg, err := configFromCommand(cmd)
+	if err != nil {
+		return replay.Options{}, err
+	}
 	sessionID, err := cmd.Flags().GetString("session")
 	if err != nil {
 		return replay.Options{}, err
@@ -1567,7 +1573,19 @@ func replayOptionsFromCommand(cmd *cobra.Command) (replay.Options, error) {
 	if err != nil {
 		return replay.Options{}, err
 	}
-	return replay.Options{RepoPath: repoPath, SessionID: sessionID, BundleDir: bundleDir}, nil
+	trustedSignerKeyIDs, err := cmd.Flags().GetStringArray("trusted-signer-key-id")
+	if err != nil {
+		return replay.Options{}, err
+	}
+	if len(cfg.Trust.TrustedSignerKeyIDs) > 0 {
+		trustedSignerKeyIDs = append(cfg.Trust.TrustedSignerKeyIDs, trustedSignerKeyIDs...)
+	}
+	normalizedTrustedSignerKeyIDs, err := trust.NormalizeTrustedSignerKeyIDs(trustedSignerKeyIDs)
+	if err != nil {
+		return replay.Options{}, err
+	}
+
+	return replay.Options{RepoPath: repoPath, SessionID: sessionID, BundleDir: bundleDir, TrustedSignerKeyIDs: normalizedTrustedSignerKeyIDs}, nil
 }
 
 func repoRootFromCommand(cmd *cobra.Command) (string, error) {

@@ -171,12 +171,36 @@ func TestReplayModeFlags(t *testing.T) {
 	if replayCmd.Flags().Lookup("bundle") == nil {
 		t.Fatal("replay flag \"bundle\" is not registered")
 	}
+	if replayCmd.Flags().Lookup("trusted-signer-key-id") == nil {
+		t.Fatal("replay flag \"trusted-signer-key-id\" is not registered")
+	}
 }
 
 func TestReplayCommandRequiresSession(t *testing.T) {
 	repo := newCommandGitRepo(t)
 	if _, _, err := executeCommand(t, "--repo", repo, "replay"); err == nil {
 		t.Fatal("replay without --session returned nil error")
+	}
+}
+
+func TestReplayCommandRejectsMalformedTrustedSignerKeyID(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+
+	if _, _, err := executeCommand(t, "--repo", repo, "replay", "--session", sessionID, "--trusted-signer-key-id", "not-a-key-id"); err == nil || !strings.Contains(err.Error(), "invalid trusted signer key id") {
+		t.Fatalf("expected malformed key id error, got %v", err)
 	}
 }
 

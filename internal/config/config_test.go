@@ -79,6 +79,9 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 		{name: "max blob bytes", mutate: func(cfg *Config) { cfg.Privacy.MaxBlobBytes = 0 }},
 		{name: "sensitive paths", mutate: func(cfg *Config) { cfg.SensitivePaths = nil }},
 		{name: "test commands", mutate: func(cfg *Config) { cfg.TestCommands = nil }},
+		{name: "trusted signer key ids", mutate: func(cfg *Config) {
+			cfg.Trust.TrustedSignerKeyIDs = []string{"not-a-key-id"}
+		}},
 	}
 	for _, test := range tests {
 		cfg := Default()

@@ -1,358 +1,613 @@
 # Implementation Plan
 
 ## Source Documents
-- Path: Inline prompt from current conversation
-  - Role: Primary implementation brief
-  - Summary: Fix verifier replay so it reports factual session evidence only, rebuilds the CLI before judging output, parses command statuses correctly when nested exit markers appear, derives replay files from `diffs/final.patch`, excludes review/evaluation conclusions from replay gaps, and exposes component-level verification details.
+
+- Path: `/Users/alexmetelli/source/agentreceipt/evaluator-loop-spec.md.`
+  - Role: Primary evaluator-loop specification.
+  - Summary: Requires replay verification to distinguish internal integrity from signer authenticity, fix or clearly report missing embedded signer public keys, add trust-policy semantics, handle legacy receipts, and make replay output useful as a production-grade evaluator contract with quality gates, policy checks, scoring signals, command failure evidence, patch summaries, review focus, confidence, privacy reporting, and outcome classification.
 
 ## Goals
-- Make `agentreceipt replay` a factual, artifact-only session reconstruction surface for evaluator agents.
-- Ensure replay command status and exit code fields match the actual tool execution result, including Codex outputs with nested exit markers.
-- Ensure replay file lists reflect the final patch even when filesystem watcher events are missing.
-- Keep replay gaps limited to integrity and evidence availability issues, not quality-policy judgments.
-- Make verification failures actionable by exposing component validity and signature failure reason.
-- Ensure the locally built `./agentreceipt` binary reflects source changes before replay behavior is evaluated.
+
+- Make `agentreceipt replay` cryptographically explicit by splitting integrity, authenticity, trust, policy, and overall verdicts.
+- Preserve compatibility with existing replay fields while adding a clearer evaluator-oriented contract.
+- Ensure new finalized receipts and replay bundles expose enough signer material for portable signature verification, and make legacy missing-signer receipts explicitly `integrity_valid=true` but `authenticity=unverifiable`.
+- Add a trust-policy layer so production agent loops can distinguish "signature matches embedded key" from "signer is trusted by this workspace or organization."
+- Add machine-readable evaluator signals for commands, quality gates, policy checks, file/change scope, redaction, confidence, review focus, and final outcome.
+- Keep replay privacy-safe by continuing to redact sensitive command output and by adding a redaction/privacy report.
+- Document the replay evaluator contract and migration path for legacy sessions.
 
 ## Non-Goals
-- Do not reintroduce replay risk scoring, quality scoring, or policy evaluation.
-- Do not rerun recorded commands, reapply patches, call models, or mutate workspace state during replay.
-- Do not change receipt signing semantics beyond reporting clearer verification status.
-- Do not remove review-side risk, lint, test, or typecheck guidance; those remain review/evaluator concerns.
-- Do not migrate or rewrite historical session artifacts.
+
+- Do not implement remote transparency logs, Sigstore integration, GitHub OIDC signing, or an organization CA in the first pass.
+- Do not change private key storage format unless required for compatibility with signer metadata.
+- Do not make `agentreceipt replay` mutate legacy sessions by default.
+- Do not expose raw provider logs, raw prompt text, raw command output, or raw `risk_signals` in replay output.
+- Do not replace `agentreceipt verify`; this plan improves replay as evaluator-facing evidence while preserving existing verify behavior.
 
 ## Assumptions and Open Questions
-- Assumption: `replay` may keep `summary.final_risk` temporarily for schema compatibility, but it should remain neutral (`info`) unless a future schema removes it.
-- Assumption: `verifier_tasks` should either mirror factual replay gaps or become empty; this plan uses factual gaps only to avoid evaluator conclusions.
-- Assumption: A final-patch-only file should use `diffs/final.patch` as its evidence reference when no `fs.change` event exists.
-- Open question: Whether the replay JSON schema can add fields without a schema version bump. Conservative approach: add fields and keep existing fields until a deliberate schema migration is planned.
-- Open question: Whether legacy receipts without embedded signer public keys should be reported as `legacy_missing_embedded_signer` or a more general signature error. The implementation should choose a stable machine-readable error code.
+
+- Assumption: Existing `model.Verification` signer fields (`signer_public_key`, `signer_key_id`, `signature_algorithm`, `signature`) are the canonical signer metadata for new receipts. Impact: implementation should harden and expose these fields rather than inventing a second signature envelope.
+- Assumption: Replay schema version can remain `1` if existing fields stay compatible and new fields are additive. Impact: downstream consumers should not break, but documentation must call out additive fields.
+- Assumption: Trust policy should start with local deterministic inputs such as config and CLI-provided trusted key IDs, not a remote trust service. Impact: this supports production loops without adding external service dependencies.
+- Assumption: Legacy sessions without embedded signer public keys cannot be made authentic unless the original private key or public key is still available. Impact: replay should report them as integrity-only evidence and optionally support a deliberate migration/re-finalization path.
+- Open question: Should unconfigured trust policy default to `signer_trusted=false` or `trust_status=not_configured`? Conservative plan: report `not_configured` separately from `false` so evaluators can decide policy.
+- Open question: Should `policy_valid` fail the overall verdict when no trust policy is configured? Conservative plan: use an explicit `overall_verdict` enum instead of overloading a boolean.
+- Open question: Should full failed command details be capped in replay JSON or only referenced by artifact path? Conservative plan: include redacted, capped detail fields plus evidence refs to `events.jsonl`.
 
 ## Quality Gates
-- Setup status: Existing gates are defined in `Makefile` and enforced by `.github/workflows/ci.yml` through `make verify`.
-- Baseline command: `make verify`
-- Format command: `make fmt-check`
+
+- Setup status: Existing gates are configured in `Makefile` and CI. CI runs `make tools` followed by `make verify` on Ubuntu and macOS.
+- Baseline command: `make tools && make verify`
+- Format command: `make fmt`
+- Format check command: `make fmt-check`
 - Lint command: `make lint`
 - Test command: `make test`
 - Additional gates: `make test-race`, `make security`, `make coverage`, `make build`, `make smoke`, `make verify`
-- Notes: `make tools` installs local lint/security tools if `.tools/bin` is missing. If baseline `make verify` fails before implementation, record the exact failure in `PROGRESS.md` and distinguish it from new regressions.
+- Per-step full gate sequence: `make fmt && make verify`
 
 ## Progress Tracking
+
 - File: `PROGRESS.md`
-- Requirement: Create or refresh `PROGRESS.md` before any implementation work begins.
+- Requirement: Create `PROGRESS.md` before any quality-gate setup or implementation work begins.
 - Update rule: After each step is completed, update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
 
 ## Changelog Tracking
+
 - File: `CHANGELOG.md`
 - Standard: Keep a Changelog 1.0.0, <https://keepachangelog.com/en/1.0.0/>
-- Requirement: Create `CHANGELOG.md` before any implementation work begins if missing; otherwise preserve the existing Keep a Changelog structure.
-- Initial content: Include `# Changelog`, the standard preamble, and an `## [Unreleased]` section.
+- Requirement: `CHANGELOG.md` already exists and must be updated before any implementation step is committed.
+- Initial content: Keep the existing `# Changelog`, standard preamble, and `## [Unreleased]` section.
 - Update rule: After each step is completed and validated, update `CHANGELOG.md` with human-readable notable changes under the appropriate `Unreleased` change-type headings before creating that step's commit.
 
 ## Incremental Steps
 
 ### Step 0: Progress and Changelog Tracking Setup
-Goal: Create or refresh durable progress and changelog tracking for this replay-fix plan.
+
+Goal: Create durable progress tracking for the evaluator-loop replay work and confirm changelog tracking is ready.
 
 Depends on:
 - None
 
 Changes:
-- Update `PROGRESS.md` in the project root for this plan.
-- Add the plan title/source, step checklist, current status, and short update log.
+- Create `PROGRESS.md` in the project root.
+- Add the plan title, source document path, step checklist, current status, and update log.
 - Document that `PROGRESS.md` must be updated after every completed step.
-- Confirm `CHANGELOG.md` exists and follows Keep a Changelog 1.0.0 structure.
-- If `CHANGELOG.md` is missing or malformed, create/fix it before any implementation work begins.
+- Confirm `CHANGELOG.md` already follows Keep a Changelog 1.0.0 structure.
+- Add an `Added` entry under `## [Unreleased]` for establishing evaluator-loop replay implementation tracking.
 
-Acceptance Criteria:
-- `PROGRESS.md` references this replay-fix plan and contains every step below as an unchecked checklist item.
-- `CHANGELOG.md` has `# Changelog`, the standard preamble, and `## [Unreleased]`.
+Acceptance criteria:
+- `PROGRESS.md` exists and includes every plan step.
+- `PROGRESS.md` records the current status and next step.
+- `CHANGELOG.md` retains `# Changelog`, the standard preamble, and `## [Unreleased]`.
+- `CHANGELOG.md` has a human-readable `Added` entry for this planning-control milestone.
 
 Validation:
 - Run `test -f PROGRESS.md`
 - Run `test -f CHANGELOG.md`
-- Run `rg -n "Replay Fix|Step 1|Step 6" PROGRESS.md`
-- Run `rg -n "^# Changelog|^## \\[Unreleased\\]" CHANGELOG.md`
+- Run `make fmt-check`
 
 Progress:
-- Mark Step 0 complete in `PROGRESS.md`, record validation results, set current status, and identify Step 1 as next.
+- Mark Step 0 complete in `PROGRESS.md`, record validation results, set current status to Step 1, and identify Step 1 as next.
 
 Changelog:
-- Add an `Added` entry under `## [Unreleased]` for establishing replay-fix progress tracking if this is notable and not already represented.
+- Add an `Added` entry under `## [Unreleased]` for evaluator-loop replay implementation tracking.
 
 Commit:
-- `docs: start replay fix tracking`
+- `Add evaluator replay progress tracking`
 
-### Step 1: Baseline Replay Characterization and Binary Rebuild
-Goal: Ensure evaluator observations are based on a freshly built binary and capture current replay defects with focused regression tests.
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 1: Define Explicit Replay Verification Verdicts
+
+Goal: Make replay verification explain whether a session is internally intact, cryptographically authentic, trusted by policy, and acceptable overall.
 
 Depends on:
 - Step 0
 
 Changes:
-- Run `make build` before replaying any session so `./agentreceipt` reflects current source.
-- Re-run `./agentreceipt replay --session ar_ses_1781632141211056000_114075a87efc` and record the relevant before/after observations in `PROGRESS.md`.
-- Add or update characterization tests in `internal/replay/replay_test.go`, `internal/provider/codex/codex_test.go`, or `cmd/root_test.go` for currently observed behavior:
-  - stale `risk_signals` must not appear in replay output after rebuild.
-  - nested command output with final non-zero process exit should not be reported as success.
-  - replay should not report review-only gaps such as missing lint once factual gaps are separated in a later step.
-- Avoid relying on the historical session artifact as the only test fixture; use focused synthetic events where possible.
+- Update `internal/replay/replay.go`.
+- Add additive fields to `replay.Verification`, preserving existing fields:
+  - `integrity_valid`
+  - `authenticity_valid`
+  - `authenticity_status`
+  - `trust_status`
+  - `signer_trusted`
+  - `policy_valid`
+  - `overall_verdict`
+  - `overall_reason`
+  - `component_results`
+- Represent legacy missing embedded signer as:
+  - `integrity_valid: true` when event, patch, manifest, and receipt hashes validate.
+  - `authenticity_valid: false`.
+  - `authenticity_status: "unverifiable"`.
+  - `overall_verdict: "integrity_only"` or equivalent documented enum.
+- Preserve existing `valid`, `signature_valid`, `signature_error`, `signature_error_code`, and `signed_by` fields for compatibility.
+- Update `internal/replay/replay_test.go` with characterization tests for:
+  - valid embedded signer receipt.
+  - legacy missing embedded signer receipt.
+  - tampered event, patch, manifest, and receipt artifacts.
+  - signature mismatch with intact hashes.
+- Update `cmd/root_test.go` only if replay JSON assertions need to cover the new fields.
 
-Acceptance Criteria:
-- `make build` refreshes `./agentreceipt`.
-- A replay run from the rebuilt binary no longer includes stale removed fields from prior source revisions.
-- Characterization tests fail for at least one known weak point before its implementation fix, or are added alongside the fix if the current tree already partially addressed it.
+Acceptance criteria:
+- Replay JSON no longer forces evaluators to infer authenticity from `valid=false`.
+- A legacy missing-signer bundle reports integrity separately from authenticity.
+- Existing replay consumers can still read the old verification fields.
+- Tampering still causes integrity failure.
+- Signature mismatch still causes authenticity failure.
 
 Validation:
-- Run `make fmt-check`
-- Run `make lint`
-- Run `make test`
-- Run `make test-race`
-- Run `make security`
-- Run `make coverage`
-- Run `make build`
-- Run `make smoke`
+- Run `make fmt`
+- Run `go test ./internal/replay ./cmd`
 - Run `make verify`
 
 Progress:
-- Update `PROGRESS.md` with baseline replay observations, validation results, commit reference if available, current status, and Step 2 as next.
+- Update `PROGRESS.md` with Step 1 completion notes, validation results, commit reference if available, current status, and next step.
 
 Changelog:
-- Add a `Changed` or `Fixed` entry under `## [Unreleased]` only if test or behavior changes are committed.
+- Add a `Changed` entry under `## [Unreleased]` describing explicit replay verification verdicts.
 
 Commit:
-- `test: characterize replay evaluator defects`
+- `Split replay verification verdicts`
 
-### Step 2: Correct Codex Command Status Parsing
-Goal: Make command result status and exit code reflect the actual command execution result when Codex output contains nested exit markers.
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 2: Add Local Trust Policy Evaluation
+
+Goal: Let production evaluator loops decide whether a cryptographically valid signer is trusted.
 
 Depends on:
+- Step 0
 - Step 1
 
 Changes:
-- Update `internal/provider/codex/codex.go` in `commandStatus`.
-- Prefer `Process exited with code N` markers over wrapper-level `Exit code: N` markers when both are present.
-- If multiple equivalent markers exist, use the last relevant marker so summaries that include nested command output do not mask final failure.
-- Preserve current behavior for simple `Exit code: 0`, `Exit code: 1`, empty output, and failure-marker-only output.
-- Add regression tests in `internal/provider/codex/codex_test.go` for:
-  - `Exit code: 0` followed by `Process exited with code 2` returns `failed`, exit code `2`.
-  - `Exit code: 0` alone returns `success`, exit code `0`.
-  - no marker with non-empty output remains `success` unless failure markers are present.
-- Verify replay pairing still surfaces the corrected status through `internal/replay`.
+- Add a small trust-policy module, likely `internal/trust/trust.go` and `internal/trust/trust_test.go`.
+- Support trusted signer key IDs as deterministic local inputs.
+- Prefer existing config plumbing in `internal/config/config.go`; add fields only if the current config format can support them cleanly.
+- Add replay CLI input in `cmd/root.go` if config alone is not sufficient:
+  - `agentreceipt replay --trusted-signer-key-id sha256:...`
+  - allow repeated values if Cobra flag support is straightforward.
+- Update `replay.Options` to carry trust-policy inputs.
+- Update `internal/replay/replay.go` so `trust_status`, `signer_trusted`, and `policy_valid` are derived from the signature result and trust policy.
+- Add tests in `internal/replay/replay_test.go`, `internal/trust/trust_test.go`, and `cmd/root_test.go` for:
+  - matching trusted key ID.
+  - untrusted but authentic signer.
+  - missing trust policy.
+  - malformed trusted key ID input.
 
-Acceptance Criteria:
-- Replay commands with nested non-zero process exits are reported as `status: "failed"` with the matching `exit_code`.
-- Existing simple command-output status tests continue to pass.
-- No command status is inferred from risk, review policy, or evaluator judgment.
+Acceptance criteria:
+- Replay can report `authenticity_valid=true` while `signer_trusted=false`.
+- Replay can report `trust_status=not_configured` without hiding authenticity status.
+- Trusted signer decisions are deterministic and do not require network access.
+- CLI/config behavior is documented by tests.
 
 Validation:
-- Run `make fmt-check`
-- Run `make lint`
-- Run `make test`
-- Run `make test-race`
-- Run `make security`
-- Run `make coverage`
-- Run `make build`
-- Run `make smoke`
+- Run `make fmt`
+- Run `go test ./internal/trust ./internal/replay ./cmd`
 - Run `make verify`
 
 Progress:
-- Update `PROGRESS.md` with completed scope, validation results, commit reference if available, current status, and Step 3 as next.
+- Update `PROGRESS.md` with Step 2 completion notes, validation results, commit reference if available, current status, and next step.
 
 Changelog:
-- Add a `Fixed` entry under `## [Unreleased]` describing corrected Codex command-result status parsing.
+- Add an `Added` entry under `## [Unreleased]` for local replay signer trust policy evaluation.
 
 Commit:
-- `fix: parse nested Codex command exits correctly`
+- `Add replay signer trust policy`
 
-### Step 3: Derive Replay Files From Final Patch
-Goal: Make replay file output reflect the final artifact patch even when filesystem watcher events are absent or incomplete.
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 3: Harden Signer Material and Legacy Migration Semantics
+
+Goal: Ensure new receipts and replay bundles remain portable while legacy sessions are handled explicitly and safely.
 
 Depends on:
+- Step 0
+- Step 1
 - Step 2
 
 Changes:
-- Update `internal/replay/replay.go`.
-- Extend `buildFiles` or add a helper to parse `diffs/final.patch` diff headers into repo-relative file paths.
-- Union file paths from:
-  - `evidenceSummary.ChangedFiles`
-  - `fs.change` events
-  - parsed `diff --git a/<path> b/<path>` entries from final patch
-- For final-patch-only files:
-  - set `InFinalPatch: true`
-  - use action from diff metadata when practical (`add`, `modify`, `delete`, `rename`), otherwise default to `modify`
-  - set `EvidenceRefs` to a stable final patch reference such as `diffs/final.patch`
-  - keep `Sensitive` and `Dependency` classification by reusing existing changed-file classification helpers where available, or add a replay-local classifier matching existing config behavior.
-- Change replay `summary.changed_file_count` to `len(files)`.
-- Add tests in `internal/replay/replay_test.go` for:
-  - final patch files appear even when no `fs.change` events exist.
-  - files with both event and final patch evidence are deduplicated.
-  - deleted or renamed diff headers are parsed safely.
+- Review and harden `internal/receipt/receipt.go`, `internal/model/model.go`, and `internal/signing/signing.go` around signer metadata.
+- Ensure `receipt.Finalize` always writes `signer_public_key`, `signer_key_id`, `signature_algorithm`, and `signature`.
+- Ensure `receipt.VerifyBundle` and `replay.Build` both use embedded signer material for portable verification when present.
+- Add tests in `internal/receipt/receipt_test.go` and `internal/replay/replay_test.go` preventing regressions in embedded signer fields.
+- Add a deliberate legacy path:
+  - Replay reports missing embedded signer as unauthenticated, not tampered.
+  - If re-finalization/migration is added, expose it as an explicit command or documented manual workflow, never as implicit replay mutation.
+- If a migration command is added, place CLI tests in `cmd/root_test.go` and keep it opt-in.
 
-Acceptance Criteria:
-- A session with non-empty `diffs/final.patch` does not report `files: []`.
-- `changed_file_count` matches the emitted `files` array length.
-- File output remains deterministic and sorted.
+Acceptance criteria:
+- Newly finalized receipts are portable without local key directories.
+- Replay bundles verify signatures using embedded public key material.
+- Legacy receipts without embedded signer material are clearly `integrity_only` or equivalent.
+- No replay command silently changes old session artifacts.
 
 Validation:
-- Run `make fmt-check`
-- Run `make lint`
-- Run `make test`
-- Run `make test-race`
-- Run `make security`
-- Run `make coverage`
-- Run `make build`
-- Run `make smoke`
+- Run `make fmt`
+- Run `go test ./internal/receipt ./internal/replay ./internal/signing ./cmd`
 - Run `make verify`
 
 Progress:
-- Update `PROGRESS.md` with completed scope, validation results, commit reference if available, current status, and Step 4 as next.
+- Update `PROGRESS.md` with Step 3 completion notes, validation results, commit reference if available, current status, and next step.
 
 Changelog:
-- Add a `Fixed` entry under `## [Unreleased]` describing replay file reconstruction from final patches.
+- Add a `Fixed` or `Changed` entry under `## [Unreleased]` for signer material portability and legacy replay semantics.
 
 Commit:
-- `fix: derive replay files from final patch`
+- `Harden replay signer portability`
 
-### Step 4: Limit Replay Gaps to Factual Evidence Issues
-Goal: Remove review/evaluation conclusions from replay gaps and verifier tasks.
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 4: Add Evaluator Scoring Signals
+
+Goal: Provide production agents with structured facts they can score without reparsing timeline events.
 
 Depends on:
-- Step 3
+- Step 0
+- Step 1
 
 Changes:
-- Update `internal/replay/replay.go` so replay no longer calls `evidence.Gaps` directly if that function includes review-policy conclusions.
-- Add a replay-specific factual gap builder that includes only:
-  - unreadable or missing required artifacts
-  - event-chain replay errors
-  - signature/hash verification failures
-  - unknown command status for observed command attempts
-  - unpaired command result events
-  - non-finalized session state
-  - missing provider tool events only if it means the session lacks sequence evidence, not as a quality-policy warning
-- Exclude evaluator judgments such as:
-  - no lint command detected
-  - no test command detected
-  - no typecheck command detected
-  - review focus/risk prompts
-- Set `VerifierTasks` to the factual gaps or an empty array; do not add policy recommendations.
-- Update `internal/replay/replay_test.go` to assert missing lint/test/typecheck are absent from replay gaps while still present in review behavior tests where appropriate.
+- Update `internal/replay/replay.go`.
+- Add an additive top-level `evaluator_signals` object with counts such as:
+  - `read_command_count`
+  - `write_command_count`
+  - `edit_command_count`
+  - `test_command_count`
+  - `lint_command_count`
+  - `typecheck_command_count`
+  - `failed_command_count`
+  - `network_command_count`
+  - `destructive_command_count`
+  - `git_mutation_command_count`
+  - `dependency_file_change_count`
+  - `sensitive_file_change_count`
+  - `commit_count`
+  - `changed_production_file_count`
+  - `changed_test_file_count`
+  - `changed_doc_file_count`
+- Reuse existing command classification where possible, especially `internal/commandrisk`.
+- Add tests in `internal/replay/replay_test.go` covering signal counts for command attempts, command results, file changes, dependency files, sensitive files, and commit-like commands.
+- Keep raw command output redacted and capped.
 
-Acceptance Criteria:
-- Replay output does not include `No lint command detected.` for sessions that simply lack lint evidence.
-- Integrity and evidence-completeness issues remain visible.
-- Review output keeps quality guidance unchanged.
+Acceptance criteria:
+- Evaluator loops can read one object to understand activity volume and risk-relevant behavior.
+- Signals are derived from existing evidence and include evidence refs or are documented as aggregate facts.
+- Counts are deterministic for a fixed event log and final patch.
 
 Validation:
-- Run `make fmt-check`
-- Run `make lint`
-- Run `make test`
-- Run `make test-race`
-- Run `make security`
-- Run `make coverage`
-- Run `make build`
-- Run `make smoke`
+- Run `make fmt`
+- Run `go test ./internal/replay`
 - Run `make verify`
 
 Progress:
-- Update `PROGRESS.md` with completed scope, validation results, commit reference if available, current status, and Step 5 as next.
+- Update `PROGRESS.md` with Step 4 completion notes, validation results, commit reference if available, current status, and next step.
 
 Changelog:
-- Add a `Changed` entry under `## [Unreleased]` describing replay gaps as factual evidence issues only.
+- Add an `Added` entry under `## [Unreleased]` for replay evaluator scoring signals.
 
 Commit:
-- `fix: keep replay gaps factual`
+- `Add replay evaluator signals`
 
-### Step 5: Add Component-Level Verification Details
-Goal: Make replay verification failures actionable without requiring a human to infer which artifact or signature component failed.
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 5: Add Quality Gate and Command Failure Evidence Schema
+
+Goal: Make test, lint, typecheck, security, build, smoke, and failed-command evidence directly consumable by reviewer agents.
 
 Depends on:
+- Step 0
 - Step 4
 
 Changes:
-- Update `internal/replay.Verification` in `internal/replay/replay.go` to include component booleans and stable error fields while preserving existing hash fields:
-  - `event_chain_valid`
-  - `final_patch_hash_valid`
-  - `manifest_hash_valid`
-  - `receipt_hash_valid`
-  - `signature_error,omitempty`
-  - optional stable `signature_error_code,omitempty`
-- Update `buildVerification` to populate these fields from `receipt.VerifyBundle` results and warnings.
-- If `receipt.VerifyBundle` does not expose enough detail, update `internal/receipt.VerifyResult` to carry stable component error details without changing successful verification behavior.
-- Detect legacy/unportable signature cases where `receipt.json` contains a signature but lacks embedded signer public key/key ID, and report a specific signature error.
-- Add tests in `internal/replay/replay_test.go` and/or `internal/receipt/receipt_test.go` for:
-  - valid bundle has all component booleans true.
-  - tampered final patch sets only final patch validity false where practical.
-  - legacy missing embedded signer reports a specific signature error in replay.
+- Update `internal/replay/replay.go`.
+- Add a top-level `quality_gates` object with stable gate names:
+  - `format`
+  - `lint`
+  - `tests`
+  - `race_tests`
+  - `typecheck`
+  - `security`
+  - `coverage`
+  - `build`
+  - `smoke`
+  - `verify`
+- For each gate, include:
+  - `status`: `passed`, `failed`, `not_run`, or `unknown`.
+  - `commands`.
+  - `evidence_refs`.
+  - `last_exit_code` when available.
+  - `confidence`.
+- Add `failed_command_details` or expand `commands` with redacted structured failure fields:
+  - `cwd`
+  - `time`
+  - `exit_code`
+  - `failed_reason`
+  - `stderr_or_error_summary`
+  - `stdout_summary`
+  - `output_truncated`
+  - `evidence_refs`
+- Preserve existing `commands[].output_summary` for compatibility.
+- Add tests in `internal/replay/replay_test.go` for successful `make verify`, failed `go test`, missing lint/typecheck gates, and redaction in failure details.
 
-Acceptance Criteria:
-- Replay verification tells evaluators exactly which component failed.
-- Existing `verification.valid` semantics remain true only when all required integrity and signature components pass.
-- Legacy signature portability problems are distinguishable from tampering.
+Acceptance criteria:
+- Replay output can answer "what gates ran and did they pass?" without natural-language parsing.
+- Failed command details are specific enough for evaluators to identify the failure.
+- Sensitive output remains redacted.
+- Existing summary booleans remain populated.
 
 Validation:
-- Run `make fmt-check`
-- Run `make lint`
-- Run `make test`
-- Run `make test-race`
-- Run `make security`
-- Run `make coverage`
-- Run `make build`
-- Run `make smoke`
+- Run `make fmt`
+- Run `go test ./internal/replay`
 - Run `make verify`
 
 Progress:
-- Step 5 implementation is complete: replay verification now exposes component-level booleans and stable signature error codes, and tests cover valid/tampered and legacy-signer scenarios.
-- Update `PROGRESS.md` with completed scope, validation results, commit reference if available, and Step 6 as next.
+- Update `PROGRESS.md` with Step 5 completion notes, validation results, commit reference if available, current status, and next step.
 
 Changelog:
-- Added entry is now present in `CHANGELOG.md` describing component-level replay verification fields and signature error codes.
+- Add an `Added` entry under `## [Unreleased]` for replay quality-gate and failed-command evidence.
 
 Commit:
-- `feat: report replay verification components`
+- `Add replay quality gate evidence`
 
-### Step 6: Document and Smoke-Test Evaluator Replay Contract
-Goal: Lock in replay as a factual evaluator input and verify the rebuilt CLI emits the intended shape.
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 6: Add Patch Semantic Summary
+
+Goal: Summarize the final patch in a machine-readable way so evaluator agents can focus review without reading the full diff first.
 
 Depends on:
-- Step 5
+- Step 0
+- Step 4
 
 Changes:
-- Update `README.md`, `docs/TECH_SPEC.md`, and any replay-specific docs to clarify:
-  - replay reconstructs sequence and artifact facts only.
-  - replay does not score the agent, classify risk, or decide quality adequacy.
-  - evaluator agents should infer review conclusions from command/files/artifact facts.
-  - `make build` or `make verify` refreshes `./agentreceipt` before local replay checks.
-- Update `scripts/smoke.sh` if needed to assert:
-  - replay JSON omits `risk_signals`
-  - replay gaps exclude review-only lint/test/typecheck conclusions
-  - replay includes final patch files for a smoke session with changes
-  - replay verification exposes component validity fields
-- Rebuild `./agentreceipt` and re-run the original replay command:
-  - `./agentreceipt replay --session ar_ses_1781632141211056000_114075a87efc`
-- Record in `PROGRESS.md` whether the historical session now shows corrected command statuses, final patch files, factual gaps, and detailed verification state.
+- Add `internal/replay/patch_summary.go` and `internal/replay/patch_summary_test.go`, or keep the parser in `internal/replay/replay.go` if it remains small.
+- Parse `diffs/final.patch` into a top-level `patch_summary` object with:
+  - file counts by category: production, test, docs, config, dependency, generated or unknown.
+  - additions and deletions when available from diff hunks.
+  - changed file entries with path, action, category, sensitive/dependency flags, and evidence refs.
+  - likely changed Go symbols where simple and reliable from hunk context or Go parser fallback.
+  - test coverage relationship signals such as `tests_changed` and `production_changed_without_tests_changed`.
+- Avoid including full hunk bodies or sensitive diff content.
+- Add tests in `internal/replay/patch_summary_test.go` for Go code, tests, docs, dependency/config files, binary/renamed files, and malformed patches.
 
-Acceptance Criteria:
-- Documentation matches the final replay behavior.
-- Smoke coverage prevents regression to evaluator/scoring output.
-- The named historical session is useful as a factual review artifact even if its signature remains invalid because of legacy signer portability.
+Acceptance criteria:
+- Replay output identifies what changed at a useful semantic level.
+- Patch summary does not leak raw diff content.
+- Malformed or missing final patch produces a gap, not a panic.
+- The existing `files` array remains available.
 
 Validation:
-- Run `make fmt-check`
-- Run `make lint`
-- Run `make test`
-- Run `make test-race`
-- Run `make security`
-- Run `make coverage`
-- Run `make build`
-- Run `make smoke`
+- Run `make fmt`
+- Run `go test ./internal/replay`
 - Run `make verify`
-- Run `./agentreceipt replay --session ar_ses_1781632141211056000_114075a87efc`
 
 Progress:
-- Update `PROGRESS.md` with completed scope, validation results, final replay observations, commit reference if available, current status, and `Plan complete`.
+- Update `PROGRESS.md` with Step 6 completion notes, validation results, commit reference if available, current status, and next step.
 
 Changelog:
-- Add `Changed` and/or `Fixed` entries under `## [Unreleased]` for documented evaluator replay contract and smoke coverage.
+- Add an `Added` entry under `## [Unreleased]` for replay patch semantic summaries.
 
 Commit:
-- `docs: clarify factual replay contract`
+- `Add replay patch summary`
+
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 7: Add Policy Checks and Review Focus
+
+Goal: Turn replay evidence into evaluator-ready checks and review prompts without making unsupported policy decisions.
+
+Depends on:
+- Step 0
+- Step 4
+- Step 5
+- Step 6
+
+Changes:
+- Update `internal/replay/replay.go`.
+- Add a top-level `policy_checks` array with deterministic checks such as:
+  - `target_file_read_before_edit`
+  - `related_context_read_before_edit`
+  - `tests_run_after_code_changes`
+  - `lint_run_after_code_changes`
+  - `typecheck_run_when_applicable`
+  - `destructive_command_used`
+  - `network_command_used`
+  - `dependency_file_changed`
+  - `sensitive_file_changed`
+  - `ci_or_security_file_changed`
+  - `generated_file_changed`
+  - `commit_created`
+- Each policy check should include:
+  - `status`: `pass`, `fail`, `warn`, `not_applicable`, or `unknown`.
+  - `message`.
+  - `confidence`.
+  - `evidence_refs`.
+- Add a top-level `review_focus` array generated from verification gaps, quality gates, patch summary, sensitive paths, dependency changes, policy warnings, and failed commands.
+- Keep focus prompts factual and bounded; avoid scoring recommendations that are not supported by evidence.
+- Add tests in `internal/replay/replay_test.go` for policy statuses and review focus generation.
+
+Acceptance criteria:
+- Evaluator agents can consume policy checks directly.
+- Review prompts are specific to the session and include evidence refs where possible.
+- Checks distinguish `unknown` from `fail` when evidence is insufficient.
+- Replay remains factual and does not expose raw provider risk fields.
+
+Validation:
+- Run `make fmt`
+- Run `go test ./internal/replay`
+- Run `make verify`
+
+Progress:
+- Update `PROGRESS.md` with Step 7 completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Add an `Added` entry under `## [Unreleased]` for replay policy checks and reviewer focus prompts.
+
+Commit:
+- `Add replay policy checks`
+
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 8: Add Privacy Report, Claim Confidence, and Outcome Classification
+
+Goal: Make replay safe and actionable for automated production loops by exposing privacy handling, confidence per claim, and a final outcome state.
+
+Depends on:
+- Step 0
+- Step 1
+- Step 4
+- Step 5
+- Step 7
+
+Changes:
+- Update `internal/replay/replay.go`.
+- Add a top-level `privacy` or `redaction` report:
+  - `redaction_applied`
+  - `redacted_fields`
+  - `redaction_patterns`
+  - `output_caps`
+  - `sensitive_content_detected`
+  - `raw_provider_logs_exposed`
+- Add `claims` or per-section claim metadata for key evaluator facts:
+  - verification verdict.
+  - signer authenticity.
+  - signer trust.
+  - quality gate statuses.
+  - policy check statuses.
+  - outcome classification.
+- Each claim should include confidence and evidence refs.
+- Add a top-level `outcome` object:
+  - `status`: `completed`, `completed_with_gaps`, `failed`, `abandoned`, `committed`, or `needs_human_review`.
+  - `reasons`.
+  - `confidence`.
+  - `evidence_refs`.
+- Add tests in `internal/replay/replay_test.go` for:
+  - privacy report with redacted secret-like output.
+  - no raw provider logs exposed.
+  - completed session with passing gates.
+  - completed session with gaps.
+  - failed or abandoned session inference from non-finalized state or failed gates.
+
+Acceptance criteria:
+- Replay explicitly reports what was redacted and where raw evidence is not exposed.
+- Evaluator agents can determine final outcome without interpreting free-text gaps.
+- Confidence and evidence refs are attached to key claims.
+- Existing privacy tests continue to pass.
+
+Validation:
+- Run `make fmt`
+- Run `go test ./internal/replay`
+- Run `make verify`
+
+Progress:
+- Update `PROGRESS.md` with Step 8 completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Add an `Added` entry under `## [Unreleased]` for replay privacy reporting, claim confidence, and outcome classification.
+
+Commit:
+- `Add replay evaluator outcome reporting`
+
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.
+
+### Step 9: Document the Production Replay Evaluator Contract
+
+Goal: Make the new replay output contract understandable and safe for humans and downstream agent loops.
+
+Depends on:
+- Step 0
+- Step 1
+- Step 2
+- Step 3
+- Step 4
+- Step 5
+- Step 6
+- Step 7
+- Step 8
+
+Changes:
+- Update `README.md` replay documentation.
+- Add or update a focused document such as `docs/replay-evaluator-contract.md` if a docs directory exists or if README would become too large.
+- Document:
+  - integrity vs authenticity vs trust vs policy.
+  - legacy missing signer behavior.
+  - trust policy inputs.
+  - quality gate schema.
+  - evaluator signals.
+  - policy checks.
+  - privacy/redaction guarantees.
+  - outcome statuses.
+  - stable additive schema compatibility rules.
+- Update `evaluator-loop-spec.md.` only if the team wants the source spec to reflect final decisions; otherwise leave it as historical input.
+- Add README or CLI smoke assertions in `cmd/root_test.go` only if existing tests cover documentation-facing examples.
+
+Acceptance criteria:
+- A production evaluator author can consume replay JSON without reading source code.
+- Documentation explains why `signature_valid=false` may coexist with valid hashes.
+- Documentation explains how to configure signer trust and how to handle legacy receipts.
+- Documentation states privacy boundaries and non-goals.
+
+Validation:
+- Run `make fmt`
+- Run `make verify`
+
+Progress:
+- Update `PROGRESS.md` with Step 9 completion notes, validation results, commit reference if available, current status, and next step.
+
+Changelog:
+- Add a `Changed` entry under `## [Unreleased]` for replay evaluator contract documentation.
+
+Commit:
+- `Document replay evaluator contract`
+
+Every implementation step must end with:
+1. Run all quality gates: `make fmt && make verify`.
+2. Fix any failures before proceeding.
+3. Update `PROGRESS.md` with the completed step, validation results, commit reference if available, current status, and next step.
+4. Update `CHANGELOG.md` with notable completed work under `## [Unreleased]`, using the appropriate Keep a Changelog change-type heading.
+5. Create a commit for that completed step.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ametel01/agentreceipt/internal/trust"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,6 +23,7 @@ type Config struct {
 	Capture        Capture  `yaml:"capture" json:"capture"`
 	Privacy        Privacy  `yaml:"privacy" json:"privacy"`
 	Review         Review   `yaml:"review" json:"review"`
+	Trust          Trust    `yaml:"trust" json:"trust"`
 	SensitivePaths []string `yaml:"sensitive_paths" json:"sensitive_paths"`
 	TestCommands   []string `yaml:"test_commands" json:"test_commands"`
 }
@@ -55,6 +57,10 @@ type Review struct {
 	FlagSecretPaths            bool `yaml:"flag_secret_paths" json:"flag_secret_paths"`
 }
 
+type Trust struct {
+	TrustedSignerKeyIDs []string `yaml:"trusted_signer_key_ids" json:"trusted_signer_key_ids"`
+}
+
 func Default() Config {
 	return Config{
 		Version: SchemaVersion,
@@ -83,6 +89,7 @@ func Default() Config {
 			FlagAuthChanges:            true,
 			FlagSecretPaths:            true,
 		},
+		Trust: Trust{},
 		SensitivePaths: []string{
 			".env",
 			".env.*",
@@ -215,7 +222,11 @@ func Validate(cfg Config) error {
 		return errors.New("sensitive_paths must contain at least one pattern")
 	case len(cfg.TestCommands) == 0:
 		return errors.New("test_commands must contain at least one command")
-	default:
-		return nil
 	}
+
+	if _, err := trust.NormalizeTrustedSignerKeyIDs(cfg.Trust.TrustedSignerKeyIDs); err != nil {
+		return err
+	}
+
+	return nil
 }

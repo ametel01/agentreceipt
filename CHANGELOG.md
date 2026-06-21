@@ -16,6 +16,7 @@ and this project follows semantic versioning.
 
 ### Added
 - Added evaluator-loop replay implementation tracking (`PLAN.md` Step 0).
+- Added local replay signer trust policy support (`PLAN.md` Step 2): configuration-level `trust.trusted_signer_key_ids`, `agentreceipt replay --trusted-signer-key-id`, and deterministic trust status reporting (`trust_status`, `signer_trusted`, `policy_valid`).
 
 - Added replay implementation progress tracking (`PROGRESS.md`) and committed the first planning-control milestone for verifier-facing replay work.
 - Added replay evaluator characterization coverage to ensure replay output does not leak raw provider `risk_signals`.
