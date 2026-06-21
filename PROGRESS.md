@@ -74,4 +74,4 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Added deterministic final-patch parsing that classifies test, docs, config, dependency, production, and generated/unknown paths without exposing raw diff bodies.
   - Added replay coverage for Go code changes, test/docs/dependency/config buckets, binary and rename diffs, malformed final patches, and JSON redaction of patch body content.
   - Added evidence helper coverage to lift repo-wide verification above the coverage gate without changing runtime behavior.
-  - Commit: pending
+  - Commit: `7d16758` (`Add replay patch summary`)
