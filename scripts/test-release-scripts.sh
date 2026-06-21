@@ -126,6 +126,22 @@ mkdir -p "$env_home"
 PATH="$fake_bin:$PATH" HOME="$env_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" AGENTRECEIPT_INSTALL_SKILL="1" AGENTRECEIPT_SKILL_DIR="$env_home/custom-skills" sh "$script_dir/install.sh" --bin-dir "$env_home/bin"
 cmp -s "$expected_skill" "$env_home/custom-skills/agentreceipt/SKILL.md"
 
+# local checkout fallback fixture for older archives without agentreceipt-skill/SKILL.md
+old_dist="$tmpdir/old-dist"
+old_package="$tmpdir/old-package"
+mkdir -p "$old_dist" "$old_package"
+cp "$extract_dir/agentreceipt" "$old_package/agentreceipt"
+tar -C "$old_package" -czf "$old_dist/agentreceipt_linux_amd64.tar.gz" agentreceipt
+(
+	cd "$old_dist"
+	shasum -a 256 *.tar.gz > SHA256SUMS
+)
+old_archive_home="$tmpdir/installer-old-archive"
+mkdir -p "$old_archive_home"
+FAKE_DIST="$old_dist" PATH="$fake_bin:$PATH" HOME="$old_archive_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" AGENTRECEIPT_INSTALL_SKILL="1" AGENTRECEIPT_SKILL_DIR="$old_archive_home/skills" sh "$script_dir/install.sh" --bin-dir "$old_archive_home/bin"
+test -x "$old_archive_home/bin/agentreceipt"
+cmp -s "$expected_skill" "$old_archive_home/skills/agentreceipt/SKILL.md"
+
 # identical skill reuse fixture
 identical_home="$tmpdir/installer-identical"
 mkdir -p "$identical_home/skills/agentreceipt"

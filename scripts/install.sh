@@ -8,6 +8,18 @@ install_skill=0
 requested_skill_install=0
 skill_dir="${AGENTRECEIPT_SKILL_DIR:-}"
 no_install_skill=0
+script_dir=""
+repo_skill_file=""
+
+case "$0" in
+	*/*)
+		script_dir="$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd -P || printf '')"
+		;;
+esac
+
+if [ -n "$script_dir" ] && [ -f "$script_dir/../skills/agentreceipt/SKILL.md" ]; then
+	repo_skill_file="$script_dir/../skills/agentreceipt/SKILL.md"
+fi
 
 usage() {
 	cat <<'USAGE'
@@ -239,25 +251,29 @@ print_step "downloaded ${asset}" 45 "#########" "..........."
 )
 print_step "verified checksum" 70 "##############" "......"
 
-	mkdir -p "$bin_dir"
+mkdir -p "$bin_dir"
 print_step "extracting archive" 85 "#################" "..."
-tar -C "$tmpdir" -xzf "$tmpdir/$asset" agentreceipt agentreceipt-skill/SKILL.md
+tar -C "$tmpdir" -xzf "$tmpdir/$asset" agentreceipt
 install -m 0755 "$tmpdir/agentreceipt" "$bin_dir/agentreceipt"
 print_step "installed binary" 100 "####################" ""
 
 if [ "$install_skill" -ne 0 ]; then
 	skill_archive_file="$tmpdir/agentreceipt-skill/SKILL.md"
-	if [ ! -f "$skill_archive_file" ]; then
-		die "release archive for ${base_url} is missing agentreceipt-skill/SKILL.md"
+	if tar -C "$tmpdir" -xzf "$tmpdir/$asset" agentreceipt-skill/SKILL.md 2>/dev/null && [ -f "$skill_archive_file" ]; then
+		skill_source_file="$skill_archive_file"
+	elif [ -n "$repo_skill_file" ]; then
+		skill_source_file="$repo_skill_file"
+	else
+		die "release archive for ${base_url} is missing agentreceipt-skill/SKILL.md; use a release that includes the skill artifact or run scripts/install.sh from a repo checkout"
 	fi
 	resolve_skill_root
 	target_skill_dir="${skill_dir%/}/agentreceipt"
 	target_skill_file="$target_skill_dir/SKILL.md"
 	mkdir -p "$target_skill_dir"
-	if [ -f "$target_skill_file" ] && ! cmp -s "$skill_archive_file" "$target_skill_file"; then
+	if [ -f "$target_skill_file" ] && ! cmp -s "$skill_source_file" "$target_skill_file"; then
 		if [ "$interactive_skill_prompt" -eq 1 ] && has_tty; then
 			if prompt_bool "Target skill already exists at ${target_skill_file}; overwrite? [y/N]"; then
-				cp "$skill_archive_file" "$target_skill_file"
+				cp "$skill_source_file" "$target_skill_file"
 			else
 				printf 'Keeping existing AgentReceipt skill at %s\n' "$target_skill_file"
 			fi
@@ -265,7 +281,7 @@ if [ "$install_skill" -ne 0 ]; then
 			die "existing skill at ${target_skill_file} differs; remove it first for noninteractive installs"
 		fi
 	else
-		cp "$skill_archive_file" "$target_skill_file"
+		cp "$skill_source_file" "$target_skill_file"
 	fi
 fi
 
