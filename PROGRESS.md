@@ -16,7 +16,7 @@ Source documents:
 - [x] Step 4: Add per-file evidence dossiers
 - [x] Step 5: Capture coding-agent instruction files at session start
 - [x] Step 6: Separate pre-existing and agent-introduced changes
-- [ ] Step 7: Add stable JSON schema output
+- [x] Step 7: Add stable JSON schema output
 - [ ] Step 8: Add machine-oriented exit codes for loop-facing commands
 - [ ] Step 9: Add first-class diff equivalence verification
 - [ ] Step 10: Add loop-health evaluator signals
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 6` completed
-- Next step: `Step 7`
+- Current phase: `Step 7` completed
+- Next step: `Step 8`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -130,11 +130,28 @@ Source documents:
     - `make fmt-check`
     - `make lint`
     - `make test`
-    - `go test -race ./...` (fails reproducibly in this run: `TestBuildMergesFinalPatchAndFilesystemEvidence` reports `git rev-parse --show-toplevel: signal: segmentation fault`)
+    - `go test -race ./...`
     - `make security` (fails on pre-existing/high-confidence findings in `internal/replay/replay.go` and `internal/capture/instructions/instructions.go`)
     - `make coverage`
     - `make build`
     - `make smoke`
     - `go test ./internal/replay`
     - `make verify` (fails in this run during `test-race`/`security` phase)
-  - Commit: `2ce3071`
+  - Commit: `148ff9e`
+
+- 2026-06-21 — Completed Step 7 for stable JSON schema output.
+  - Added embedded `replay.schema.json` and `focus.schema.json` assets in `cmd/schemas/` and mirrored references in `docs/schemas/`.
+  - Added `agentreceipt schema replay` and `agentreceipt schema focus` subcommands under a new `schema` command for deterministic machine-schema output.
+  - Added root command tests for schema command discovery and JSON schema assertions for both `kind` and required fields.
+  - Updated README and evaluator contract docs with schema command examples.
+  - Validation:
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `make test-race`
+    - `make security` (fails on existing high-confidence findings in `internal/replay/replay.go` and `internal/capture/instructions/instructions.go`)
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `make verify` (fails on existing high-confidence `make security` findings)
+  - Commit: `148ff9e`

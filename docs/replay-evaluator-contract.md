@@ -8,6 +8,8 @@ The new `agentreceipt focus --json` command consumes the same `replay.json` payl
 replay evidence (not a replacement for `replay`), with deterministic `verdict`, `top_reasons`,
 `review_tasks`, `changed_files`, `failed_gates`, and `evidence_refs`.
 
+`agentreceipt schema replay` and `agentreceipt schema focus` print stable JSON Schema documents for each contract so loop validators can pin parsing behavior to versioned fields.
+
 `instruction_files` from replay is forwarded to focus output so loop callers can reconcile
 start-up policy files without re-parsing events.
 

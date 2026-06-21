@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentReceipt Focus Report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "session_id",
+    "generated_at",
+    "verdict",
+    "top_reasons",
+    "review_tasks",
+    "changed_files",
+    "failed_gates",
+    "evidence_refs"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "kind": { "type": "string", "const": "agentreceipt.session_focus" },
+    "session_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "review_required",
+        "block",
+        "unverifiable"
+      ]
+    },
+    "top_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "review_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "priority": {
+            "type": "string",
+            "enum": ["P0", "P1", "P2", "P3"]
+          },
+          "kind": { "type": "string" },
+          "question": { "type": "string" },
+          "paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "symbols": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "confidence": { "type": "string" },
+          "source": { "type": "string" }
+        }
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "action": { "type": "string" },
+          "category": { "type": "string" },
+          "sensitive": { "type": "boolean" },
+          "dependency": { "type": "boolean" },
+          "symbols": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "read_before_edit": { "type": "string" },
+          "related_context_read": { "type": "string" },
+          "tests_related": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "commands_touching_file": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "review_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "failed_gates": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "workspace_change_summary": {
+      "type": "object",
+      "properties": {
+        "pre_existing_dirty_files": { "type": "array", "items": { "type": "string" } },
+        "agent_touched_pre_existing_files": { "type": "array", "items": { "type": "string" } },
+        "agent_created_changes": { "type": "array", "items": { "type": "string" } },
+        "agent_modified_clean_files": { "type": "array", "items": { "type": "string" } },
+        "final_diff_matches_workspace": { "type": "boolean" },
+        "final_diff_matches_branch": { "type": "boolean" }
+      }
+    },
+    "instruction_files": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

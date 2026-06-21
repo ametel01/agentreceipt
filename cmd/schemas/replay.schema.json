@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentReceipt Replay Report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "session_id",
+    "generated_at",
+    "source",
+    "verification",
+    "summary",
+    "evaluator_signals",
+    "quality_gates",
+    "patch_summary",
+    "policy_checks",
+    "review_focus",
+    "privacy",
+    "claims",
+    "outcome",
+    "timeline",
+    "commands",
+    "files",
+    "gaps",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "kind": { "type": "string", "const": "agentreceipt.session_replay" },
+    "session_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "source": { "type": "object" },
+    "verification": { "type": "object" },
+    "summary": { "type": "object" },
+    "evaluator_signals": { "type": "object" },
+    "quality_gates": { "type": "object" },
+    "patch_summary": { "type": "object" },
+    "policy_checks": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "review_focus": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "privacy": { "type": "object" },
+    "claims": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "outcome": { "type": "object" },
+    "timeline": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "commands": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "instruction_files": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "failed_command_details": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "gaps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "workspace_change_summary": {
+      "type": "object",
+      "properties": {
+        "pre_existing_dirty_files": { "type": "array", "items": { "type": "string" } },
+        "agent_touched_pre_existing_files": { "type": "array", "items": { "type": "string" } },
+        "agent_created_changes": { "type": "array", "items": { "type": "string" } },
+        "agent_modified_clean_files": { "type": "array", "items": { "type": "string" } },
+        "final_diff_matches_workspace": { "type": "boolean" },
+        "final_diff_matches_branch": { "type": "boolean" }
+      }
+    }
+  }
+}

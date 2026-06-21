@@ -175,6 +175,8 @@ agentreceipt replay --session <id> --json
 agentreceipt replay --session <id> --bundle ./replay-bundle
 agentreceipt focus --session <id> --json
 agentreceipt focus --replay ./replay.json --json
+agentreceipt schema replay
+agentreceipt schema focus
 ```
 
 `replay` builds a verifier-facing JSON report from stored session artifacts.
@@ -198,6 +200,7 @@ agentreceipt focus --replay ./replay.json --json
 - `focus --replay ./replay.json --json` emits the same compact focus result directly from a replay report.
 - `focus` review tasks are ranked (`P0` → `P3`) and include `id`, `kind`, `question`, `paths`, `symbols`, `evidence_refs`, `confidence`, and `source` so loop automation can prioritize work.
 - Replay and focus reports also include instruction-file evidence captured at session start (`AGENTS.md`, `CLAUDE.md`) under `instruction_files`.
+- `schema replay` and `schema focus` print machine-consumable JSON Schema definitions for contract consumers and loop validators.
 - Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
 Replay JSON now includes explicit contract fields for verification, quality gates, patch summary,
@@ -349,6 +352,8 @@ The visible CLI surface is:
 | `agentreceipt stop` | Finalize the active capture session. |
 | `agentreceipt review` | Build a reviewer-focused receipt summary. |
 | `agentreceipt focus` | Build a compact reviewer-agent JSON focus report from a session or existing `replay.json`. |
+| `agentreceipt schema replay` | Print the JSON Schema contract for `agentreceipt replay --json` output. |
+| `agentreceipt schema focus` | Print the JSON Schema contract for `agentreceipt focus --json` output. |
 | `agentreceipt verify` | Verify receipt integrity and signatures. |
 | `agentreceipt verify bundle <path>` | Verify a local AgentReceipt artifact bundle. |
 | `agentreceipt replay` | Build a machine-readable verifier replay report from a specific session and optionally write a portable replay bundle. Replay reports evidence facts only; no session scoring or policy decisions are made. |

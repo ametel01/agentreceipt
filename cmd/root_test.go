@@ -43,6 +43,8 @@ func TestRootHelpListsCommandSurface(t *testing.T) {
 		"focus",
 		"review",
 		"replay",
+		"schema replay",
+		"schema focus",
 		"verify",
 		"export",
 		"import codex-jsonl",
@@ -103,6 +105,8 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		{"focus"},
 		{"review"},
 		{"replay"},
+		{"schema", "replay"},
+		{"schema", "focus"},
 		{"verify"},
 		{"verify", "bundle"},
 		{"export"},
@@ -123,6 +127,62 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 	}
 	if !live.Hidden {
 		t.Fatalf("live command should be a hidden compatibility alias")
+	}
+}
+
+func TestSchemaReplayCommandOutputsSchema(t *testing.T) {
+	t.Parallel()
+
+	stdout, _, err := executeCommand(t, "schema", "replay")
+	if err != nil {
+		t.Fatalf("schema replay command returned error: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(stdout), &schema); err != nil {
+		t.Fatalf("schema replay output is invalid JSON: %v", err)
+	}
+	if got := schema["title"]; got != "AgentReceipt Replay Report" {
+		t.Fatalf("schema replay title mismatch: %v", got)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("schema replay missing properties object")
+	}
+	kind, ok := properties["kind"].(map[string]any)
+	if !ok || kind["const"] != "agentreceipt.session_replay" {
+		t.Fatalf("schema replay kind hint missing or incorrect: %v", kind)
+	}
+	required := requiredStringList(schema["required"])
+	if !containsString(required, "kind") || !containsString(required, "session_id") {
+		t.Fatalf("schema replay missing required fields: %v", schema["required"])
+	}
+}
+
+func TestSchemaFocusCommandOutputsSchema(t *testing.T) {
+	t.Parallel()
+
+	stdout, _, err := executeCommand(t, "schema", "focus")
+	if err != nil {
+		t.Fatalf("schema focus command returned error: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(stdout), &schema); err != nil {
+		t.Fatalf("schema focus output is invalid JSON: %v", err)
+	}
+	if got := schema["title"]; got != "AgentReceipt Focus Report" {
+		t.Fatalf("schema focus title mismatch: %v", got)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("schema focus missing properties object")
+	}
+	kind, ok := properties["kind"].(map[string]any)
+	if !ok || kind["const"] != "agentreceipt.session_focus" {
+		t.Fatalf("schema focus kind hint missing or incorrect: %v", kind)
+	}
+	required := requiredStringList(schema["required"])
+	if !containsString(required, "top_reasons") || !containsString(required, "review_tasks") {
+		t.Fatalf("schema focus missing required fields: %v", schema["required"])
 	}
 }
 
@@ -1659,6 +1719,29 @@ func executeCommand(t *testing.T, args ...string) (string, string, error) {
 	err := root.Execute()
 
 	return stdout.String(), stderr.String(), err
+}
+
+func requiredStringList(raw any) []string {
+	values, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	parts := make([]string, 0, len(values))
+	for _, item := range values {
+		if value, ok := item.(string); ok {
+			parts = append(parts, value)
+		}
+	}
+	return parts
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func newCommandGitRepo(t *testing.T) string {

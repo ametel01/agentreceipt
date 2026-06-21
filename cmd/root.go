@@ -86,6 +86,7 @@ func NewRootCommand(version string) *cobra.Command {
 		newReviewCommand(),
 		newReplayCommand(),
 		newFocusCommand(),
+		newSchemaCommand(),
 		newVerifyCommand(),
 		newExportCommand(),
 		newImportCommand(),
@@ -159,6 +160,8 @@ Core commands:
   review
   focus
   replay
+  schema replay
+  schema focus
   verify
   export
   import codex-jsonl
@@ -1096,6 +1099,49 @@ func newFocusCommand() *cobra.Command {
 	focusCmd.Flags().StringArray("trusted-signer-key-id", nil, "Trusted signer key ID to apply when evaluating replay authenticity")
 
 	return focusCmd
+}
+
+func newSchemaCommand() *cobra.Command {
+	schema := &cobra.Command{
+		Use:   "schema",
+		Short: "Print schema artifacts for machine consumers",
+	}
+	schema.AddCommand(
+		newSchemaReplayCommand(),
+		newSchemaFocusCommand(),
+	)
+
+	return schema
+}
+
+func newSchemaReplayCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "replay",
+		Short: "Print the replay JSON schema",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			payload, err := schemaPayload("replay")
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(payload)
+			return err
+		},
+	}
+}
+
+func newSchemaFocusCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "focus",
+		Short: "Print the focus JSON schema",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			payload, err := schemaPayload("focus")
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(payload)
+			return err
+		},
+	}
 }
 
 func newVerifyCommand() *cobra.Command {
