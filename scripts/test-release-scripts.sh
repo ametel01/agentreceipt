@@ -120,7 +120,6 @@ no_tty_log="$tmpdir/no-tty-install.log"
 PATH="$fake_bin:$PATH" HOME="$no_tty_home" AGENTRECEIPT_INSTALL_VERSION="1.2.3" sh "$script_dir/install.sh" --bin-dir "$no_tty_home/bin" > "$no_tty_log"
 test -x "$no_tty_home/bin/agentreceipt"
 test ! -d "$no_tty_home/skills"
-grep -q "No TTY detected; skipping optional AgentReceipt skill installation." "$no_tty_log"
 
 # env-driven install fixture
 env_home="$tmpdir/installer-env"

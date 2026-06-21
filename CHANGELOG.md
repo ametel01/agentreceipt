@@ -7,6 +7,12 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-22
+
+### Fixed
+
+- Relaxed the installer no-TTY fixture so Ubuntu CI validates the behavior invariant (binary install succeeds and no skill is created) without depending on an environment-specific skip message.
+
 ## [0.10.0] - 2026-06-22
 
 ### Added
