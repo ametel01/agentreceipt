@@ -92,3 +92,4 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Added `docs/replay-evaluator-contract.md` as the focused replay contract reference for verification semantics, trust policy inputs, quality gates, patch summary, policy checks, privacy guarantees, claims, and outcome states.
   - Updated `README.md` replay documentation to point readers to the contract doc and to note the additive evaluator-facing replay fields.
   - Updated `CHANGELOG.md` with the replay contract documentation entry.
+  - Commit: `1258f3e` (`Document replay evaluator contract`)
