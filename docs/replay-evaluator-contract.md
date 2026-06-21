@@ -93,6 +93,16 @@ evaluator-facing sections:
 - `gaps`
 - `artifacts`
 
+`evaluator_signals` contains factual loop-health values only. These fields do not affect receipt
+integrity and do not form a score:
+
+- `total_tokens` sums provider token totals when provider evidence includes them.
+- `failed_command_streak` reports the longest observed consecutive failed-command run.
+- `same_file_edit_count` reports the highest observed edit count for one file from filesystem and patch evidence.
+- `read_to_edit_ratio` compares observed read commands with edit/write commands.
+- `validation_after_last_edit` reports whether a validation command appeared after the last edit/write command.
+- `last_edit_time` and `last_validation_time` carry the relevant command timestamps when known.
+
 `instruction_files` includes metadata captured from `AGENTS.md` and `CLAUDE.md` at session start:
 
 - `path`

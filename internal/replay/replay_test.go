@@ -846,6 +846,32 @@ func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testin
 		[]model.Event{
 			{
 				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeEvent,
+				Payload: map[string]any{
+					"payload_type": "token_count",
+					"token_usage": map[string]any{
+						"total_tokens": 88,
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeEvent,
+				Payload: map[string]any{
+					"payload_type": "token_count",
+					"raw": map[string]any{
+						"payload": map[string]any{
+							"info": map[string]any{
+								"last_token_usage": map[string]any{
+									"total_tokens": 12,
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
 				Type:   providerevidence.TypeCommand,
 				Payload: map[string]any{
 					"tool_call": map[string]any{
@@ -946,10 +972,40 @@ func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testin
 			},
 			{
 				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_make_test",
+						"command": "make test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_make_test",
+					"command":   "make test ./...",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
 				Type:   providerevidence.TypeCommandResult,
 				Payload: map[string]any{
 					"command": "git commit -m \"oops\"",
 					"status":  "failed",
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "main.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
 				},
 			},
 			{
@@ -1015,8 +1071,11 @@ func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testin
 	}
 
 	signals := report.EvaluatorSignals
-	if signals.TestCommandCount != 1 {
-		t.Fatalf("test_command_count = %d, want 1", signals.TestCommandCount)
+	if signals.TestCommandCount != 2 {
+		t.Fatalf("test_command_count = %d, want 2", signals.TestCommandCount)
+	}
+	if signals.TotalTokens != 100 {
+		t.Fatalf("total_tokens = %d, want 100", signals.TotalTokens)
 	}
 	if signals.LintCommandCount != 0 {
 		t.Fatalf("lint_command_count = %d, want 0", signals.LintCommandCount)
@@ -1029,6 +1088,24 @@ func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testin
 	}
 	if signals.EditCommandCount != 1 {
 		t.Fatalf("edit_command_count = %d, want 1", signals.EditCommandCount)
+	}
+	if signals.FailedCommandStreak != 1 {
+		t.Fatalf("failed_command_streak = %d, want 1", signals.FailedCommandStreak)
+	}
+	if signals.SameFileEditCount != 2 {
+		t.Fatalf("same_file_edit_count = %d, want 2", signals.SameFileEditCount)
+	}
+	if signals.ReadToEditRatio != 0.5 {
+		t.Fatalf("read_to_edit_ratio = %f, want 0.5", signals.ReadToEditRatio)
+	}
+	if !signals.ValidationAfterLastEdit {
+		t.Fatalf("validation_after_last_edit = %v, want true", signals.ValidationAfterLastEdit)
+	}
+	if signals.LastEditTime == "" || signals.LastValidationTime == "" {
+		t.Fatalf("validation timing signals missing: last_edit_time=%q last_validation_time=%q", signals.LastEditTime, signals.LastValidationTime)
+	}
+	if signals.LastValidationTime < signals.LastEditTime {
+		t.Fatalf("last_validation_time %q should be >= last_edit_time %q", signals.LastValidationTime, signals.LastEditTime)
 	}
 	if signals.WriteCommandCount != 1 {
 		t.Fatalf("write_command_count = %d, want 1", signals.WriteCommandCount)
@@ -1062,6 +1139,44 @@ func TestBuildIncludesEvaluatorSignalsForAttemptsResultsAndFileSignals(t *testin
 	}
 	if signals.ChangedProductionFileCount != 3 {
 		t.Fatalf("changed_production_file_count = %d, want 3", signals.ChangedProductionFileCount)
+	}
+}
+
+func TestBuildEvaluatorSignalsHandlesNoCommandEvidence(t *testing.T) {
+	t.Parallel()
+
+	signals := buildEvaluatorSignals(nil, nil, nil)
+	if signals.TotalTokens != 0 {
+		t.Fatalf("total_tokens = %d, want 0", signals.TotalTokens)
+	}
+	if signals.FailedCommandStreak != 0 {
+		t.Fatalf("failed_command_streak = %d, want 0", signals.FailedCommandStreak)
+	}
+	if signals.SameFileEditCount != 0 {
+		t.Fatalf("same_file_edit_count = %d, want 0", signals.SameFileEditCount)
+	}
+	if signals.ReadToEditRatio != 0 {
+		t.Fatalf("read_to_edit_ratio = %f, want 0", signals.ReadToEditRatio)
+	}
+	if signals.ValidationAfterLastEdit {
+		t.Fatalf("validation_after_last_edit = %v, want false", signals.ValidationAfterLastEdit)
+	}
+	if signals.LastEditTime != "" || signals.LastValidationTime != "" {
+		t.Fatalf("unexpected validation timestamps: last_edit_time=%q last_validation_time=%q", signals.LastEditTime, signals.LastValidationTime)
+	}
+}
+
+func TestBuildEvaluatorSignalsCountsFailedCommandStreak(t *testing.T) {
+	t.Parallel()
+
+	signals := buildEvaluatorSignals([]Command{
+		{Command: "go test ./...", Status: "failed"},
+		{Command: "make test", Status: "failed"},
+		{Command: "cat main.go", Status: "success"},
+		{Command: "go test ./internal/replay", Status: "failed"},
+	}, nil, nil)
+	if signals.FailedCommandStreak != 2 {
+		t.Fatalf("failed_command_streak = %d, want 2", signals.FailedCommandStreak)
 	}
 }
 

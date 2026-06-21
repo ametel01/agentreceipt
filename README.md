@@ -186,6 +186,7 @@ agentreceipt schema focus
 - `--session <id>` is required; there is no implicit latest/active-session replay.
 - Output is machine-readable JSON with `kind: "agentreceipt.session_replay"`.
 - Replay is a factual evidence surface: it reports sequence events, commands, file evidence, integrity checks, and gaps, but it does not score the session or apply policy.
+- `evaluator_signals` includes factual reviewer-loop counters such as token totals, failed-command streaks, repeated file edits, read-to-edit ratio, and whether validation ran after the last edit. Missing provider token evidence stays at the zero value.
 - `--bundle <path>` writes a portable replay bundle containing:
   - `replay.json`
   - `receipt.json`

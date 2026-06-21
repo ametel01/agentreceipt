@@ -115,6 +115,7 @@
       "type": "array",
       "items": { "type": "object" }
     },
+    "evaluator_signals": { "type": "object" },
     "evidence_refs": {
       "type": "array",
       "items": { "type": "string" }

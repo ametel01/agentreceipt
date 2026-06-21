@@ -162,22 +162,29 @@ type Summary struct {
 }
 
 type EvaluatorSignals struct {
-	ReadCommandCount           int `json:"read_command_count"`
-	WriteCommandCount          int `json:"write_command_count"`
-	EditCommandCount           int `json:"edit_command_count"`
-	TestCommandCount           int `json:"test_command_count"`
-	LintCommandCount           int `json:"lint_command_count"`
-	TypecheckCommandCount      int `json:"typecheck_command_count"`
-	FailedCommandCount         int `json:"failed_command_count"`
-	NetworkCommandCount        int `json:"network_command_count"`
-	DestructiveCommandCount    int `json:"destructive_command_count"`
-	GitMutationCommandCount    int `json:"git_mutation_command_count"`
-	DependencyFileChangeCount  int `json:"dependency_file_change_count"`
-	SensitiveFileChangeCount   int `json:"sensitive_file_change_count"`
-	CommitCount                int `json:"commit_count"`
-	ChangedProductionFileCount int `json:"changed_production_file_count"`
-	ChangedTestFileCount       int `json:"changed_test_file_count"`
-	ChangedDocFileCount        int `json:"changed_doc_file_count"`
+	ReadCommandCount           int     `json:"read_command_count"`
+	WriteCommandCount          int     `json:"write_command_count"`
+	EditCommandCount           int     `json:"edit_command_count"`
+	TestCommandCount           int     `json:"test_command_count"`
+	LintCommandCount           int     `json:"lint_command_count"`
+	TypecheckCommandCount      int     `json:"typecheck_command_count"`
+	FailedCommandCount         int     `json:"failed_command_count"`
+	NetworkCommandCount        int     `json:"network_command_count"`
+	DestructiveCommandCount    int     `json:"destructive_command_count"`
+	GitMutationCommandCount    int     `json:"git_mutation_command_count"`
+	DependencyFileChangeCount  int     `json:"dependency_file_change_count"`
+	SensitiveFileChangeCount   int     `json:"sensitive_file_change_count"`
+	CommitCount                int     `json:"commit_count"`
+	ChangedProductionFileCount int     `json:"changed_production_file_count"`
+	ChangedTestFileCount       int     `json:"changed_test_file_count"`
+	ChangedDocFileCount        int     `json:"changed_doc_file_count"`
+	TotalTokens                int     `json:"total_tokens"`
+	FailedCommandStreak        int     `json:"failed_command_streak"`
+	SameFileEditCount          int     `json:"same_file_edit_count"`
+	ReadToEditRatio            float64 `json:"read_to_edit_ratio"`
+	ValidationAfterLastEdit    bool    `json:"validation_after_last_edit"`
+	LastEditTime               string  `json:"last_edit_time"`
+	LastValidationTime         string  `json:"last_validation_time"`
 }
 
 type TimelineItem struct {
@@ -408,7 +415,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			TypecheckDetected: evidenceSummary.TypecheckDetected,
 			FinalRisk:         model.RiskInfo,
 		},
-		EvaluatorSignals:     buildEvaluatorSignals(commands, files),
+		EvaluatorSignals:     buildEvaluatorSignals(commands, files, events),
 		QualityGates:         qualityGates,
 		PatchSummary:         patchSummary,
 		PolicyChecks:         policyChecks,
@@ -654,8 +661,15 @@ func buildFailedCommandDetail(command Command) FailedCommandDetail {
 	}
 }
 
-func buildEvaluatorSignals(commands []Command, files []File) EvaluatorSignals {
+func buildEvaluatorSignals(commands []Command, files []File, events []model.Event) EvaluatorSignals {
 	evaluatorSignals := EvaluatorSignals{}
+	for _, event := range events {
+		total, ok := providerevidence.TokenTotal(event)
+		if ok {
+			evaluatorSignals.TotalTokens += total
+		}
+	}
+
 	for _, command := range commands {
 		if isReadCommand(command.Command) {
 			evaluatorSignals.ReadCommandCount++
@@ -692,6 +706,11 @@ func buildEvaluatorSignals(commands []Command, files []File) EvaluatorSignals {
 		}
 	}
 
+	evaluatorSignals.FailedCommandStreak = maxConsecutiveFailedCommands(commands)
+	evaluatorSignals.SameFileEditCount = maxSameFileEditCount(events, files)
+	evaluatorSignals.ReadToEditRatio = readToEditRatio(evaluatorSignals.ReadCommandCount, evaluatorSignals.WriteCommandCount+evaluatorSignals.EditCommandCount)
+	evaluatorSignals.ValidationAfterLastEdit, evaluatorSignals.LastEditTime, evaluatorSignals.LastValidationTime = validationAfterLastEditSignals(commands)
+
 	for _, file := range files {
 		if file.Dependency {
 			evaluatorSignals.DependencyFileChangeCount++
@@ -710,6 +729,149 @@ func buildEvaluatorSignals(commands []Command, files []File) EvaluatorSignals {
 	}
 
 	return evaluatorSignals
+}
+
+func maxConsecutiveFailedCommands(commands []Command) int {
+	maxStreak := 0
+	current := 0
+	for _, command := range commands {
+		if isCommandFailed(command) {
+			current++
+			if current > maxStreak {
+				maxStreak = current
+			}
+			continue
+		}
+		current = 0
+	}
+
+	return maxStreak
+}
+
+func maxSameFileEditCount(events []model.Event, files []File) int {
+	editCounts := map[string]int{}
+	for _, event := range events {
+		if event.Source != "fs_watcher" || event.Type != "fs.change" {
+			continue
+		}
+		path := filepath.ToSlash(strings.TrimSpace(stringFromEventPayload(event.Payload, "path")))
+		if path == "" {
+			continue
+		}
+		editCounts[path]++
+	}
+
+	for _, file := range files {
+		path := filepath.ToSlash(strings.TrimSpace(file.Path))
+		if path == "" {
+			continue
+		}
+		if _, ok := editCounts[path]; !ok {
+			editCounts[path] = 1
+		}
+	}
+
+	maxCount := 0
+	for _, count := range editCounts {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+
+	return maxCount
+}
+
+func readToEditRatio(readCount int, editCount int) float64 {
+	if readCount == 0 || editCount == 0 {
+		return 0
+	}
+
+	return float64(readCount) / float64(editCount)
+}
+
+func validationAfterLastEditSignals(commands []Command) (bool, string, string) {
+	lastEditIndex := -1
+	validationIndexes := make([]int, 0)
+	commandTimes := make([]string, 0, len(commands))
+
+	for index := range commands {
+		commandTimes = append(commandTimes, commands[index].Time)
+		if isWriteCommand(commands[index].Command) || isEditCommand(commands[index].Command) {
+			lastEditIndex = index
+		}
+		if isValidationCommand(commands[index]) {
+			validationIndexes = append(validationIndexes, index)
+		}
+	}
+
+	if len(commands) == 0 {
+		return false, "", ""
+	}
+
+	lastValidationTime := ""
+	if len(validationIndexes) > 0 {
+		lastValidationTime = commandTimes[validationIndexes[len(validationIndexes)-1]]
+	}
+
+	if lastEditIndex < 0 {
+		return false, "", lastValidationTime
+	}
+
+	lastEditTime := commandTimes[lastEditIndex]
+	for _, index := range validationIndexes {
+		if index > lastEditIndex {
+			return true, lastEditTime, lastValidationTime
+		}
+	}
+
+	return false, lastEditTime, lastValidationTime
+}
+
+func isValidationCommand(command Command) bool {
+	if command.Kind == "test" || command.Kind == "lint" || command.Kind == "typecheck" {
+		return true
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(command.Command))
+	validationPrefixes := []string{
+		"make test",
+		"make lint",
+		"make typecheck",
+		"make build",
+		"make verify",
+		"make smoke",
+		"npm run test",
+		"npm run lint",
+		"npm run build",
+		"npm run verify",
+		"pnpm test",
+		"pnpm lint",
+		"pnpm run test",
+		"pnpm run lint",
+		"pnpm run build",
+		"pnpm run verify",
+		"yarn test",
+		"yarn lint",
+		"yarn run test",
+		"yarn run lint",
+		"yarn run build",
+		"yarn run verify",
+		"go test",
+		"go vet",
+		"go fmt",
+		"pytest",
+		"cargo test",
+		"cargo fmt",
+		"make format",
+		"yarn format",
+	}
+	for _, prefix := range validationPrefixes {
+		if strings.HasPrefix(normalized, prefix+" ") || normalized == prefix {
+			return true
+		}
+	}
+
+	return isLikelyTestCommand(command.Command)
 }
 
 func buildQualityGates(commands []Command) QualityGates {

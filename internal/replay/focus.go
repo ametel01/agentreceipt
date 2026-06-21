@@ -52,6 +52,7 @@ type FocusReport struct {
 	FailedGates      []FailedGate           `json:"failed_gates,omitempty"`
 	WorkspaceChanges WorkspaceChangeSummary `json:"workspace_change_summary"`
 	InstructionFiles []InstructionFile      `json:"instruction_files,omitempty"`
+	EvaluatorSignals EvaluatorSignals       `json:"evaluator_signals,omitempty"`
 	EvidenceRefs     []string               `json:"evidence_refs,omitempty"`
 }
 
@@ -111,6 +112,7 @@ func BuildFocusReport(replay Report) FocusReport {
 	focus.WorkspaceChanges = replay.WorkspaceChange
 
 	reasons, tasks := collectFocusReasonsAndTasks(replay, focus.FailedGates)
+	focus.EvaluatorSignals = replay.EvaluatorSignals
 	focus.Verdict = determineFocusVerdict(replay, reasons)
 	focus.TopReasons = capSortedStrings(focusReasonsToStrings(reasons), focusTopReasonLimit)
 
@@ -363,6 +365,36 @@ func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]Foc
 				"commands",
 			)
 		}
+	}
+
+	if replay.EvaluatorSignals.FailedCommandStreak > 1 {
+		refs := failedCommandRefs(replay.Commands)
+		addReason("Consecutive failed commands were observed.", refs, focusReasonReview, true)
+		addTask(
+			"failed_command",
+			focusTaskPriorityP1,
+			fmt.Sprintf("Review failed command streak of %d commands.", replay.EvaluatorSignals.FailedCommandStreak),
+			nil,
+			nil,
+			refs,
+			model.ConfidenceMedium,
+			"evaluator_signals",
+		)
+	}
+
+	if replay.EvaluatorSignals.LastEditTime != "" && !replay.EvaluatorSignals.ValidationAfterLastEdit {
+		refs := lastEditCommandRefs(replay.Commands)
+		addReason("No validation command was observed after the last edit.", refs, focusReasonReview, true)
+		addTask(
+			"evidence_gap",
+			focusTaskPriorityP1,
+			"Run or justify validation after the last edit.",
+			nil,
+			nil,
+			refs,
+			model.ConfidenceMedium,
+			"evaluator_signals",
+		)
 	}
 
 	for _, namedGate := range listQualityGates(replay.QualityGates) {
@@ -1015,6 +1047,18 @@ func policyCheckPaths(name string, files []File) []string {
 	default:
 		return nil
 	}
+}
+
+func lastEditCommandRefs(commands []Command) []string {
+	refs := make([]string, 0)
+	for _, command := range commands {
+		if !isWriteCommand(command.Command) && !isEditCommand(command.Command) {
+			continue
+		}
+		refs = append(refs, command.EvidenceRefs...)
+	}
+
+	return uniqueSorted(refs)
 }
 
 func policyCheckPriority(name string) string {

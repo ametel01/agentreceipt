@@ -19,14 +19,14 @@ Source documents:
 - [x] Step 7: Add stable JSON schema output
 - [x] Step 8: Add machine-oriented exit codes for loop-facing commands
 - [x] Step 9: Add first-class diff equivalence verification
-- [ ] Step 10: Add loop-health evaluator signals
+- [x] Step 10: Add loop-health evaluator signals
 - [ ] Step 11: Add evidence reference dereferencing
 - [ ] Step 12: Final documentation and contract hardening
 
 ## Status
 
-- Current phase: `Step 9` completed
-- Next step: `Step 10`
+- Current phase: `Step 10` completed
+- Next step: `Step 11`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -206,3 +206,21 @@ Source documents:
     - `make smoke`
     - `make verify`
   - Commit: `ca63a42`
+
+- 2026-06-21 — Completed Step 10 for loop-health evaluator signals.
+  - Extended replay evaluator signals with factual loop-health fields:
+    - `total_tokens`
+    - `failed_command_streak`
+    - `same_file_edit_count`
+    - `read_to_edit_ratio`
+    - `validation_after_last_edit`
+    - `last_edit_time`
+    - `last_validation_time`
+  - Forwarded evaluator signals into focus output for reviewer-loop consumption.
+  - Added focus review tasks for failed-command streaks and missing validation after the last edit.
+  - Added tests for token extraction, failed-command streaks, no-command evidence, repeated file edits, validation after last edit, and loop-health task generation.
+  - Updated README and evaluator contract docs with loop-health semantics.
+  - Validation:
+    - `go test ./internal/replay`
+    - `make verify`
+  - Commit: this step

@@ -31,6 +31,7 @@ and this project follows semantic versioning.
   - `30` integrity failure
   - `50` patch mismatch
   - `60` invalid input
+- Added loop-health evaluator signals in replay and focus output, including token totals, failed-command streaks, repeated file edit counts, read-to-edit ratio, validation-after-last-edit state, and related review tasks.
 
 ## [0.7.0] - 2026-06-21
 

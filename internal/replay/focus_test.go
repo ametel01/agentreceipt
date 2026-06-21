@@ -61,6 +61,88 @@ func TestBuildFocusReportIncludesInstructionFiles(t *testing.T) {
 	}
 }
 
+func TestBuildFocusReportIncludesEvaluatorSignals(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.EvaluatorSignals = EvaluatorSignals{
+		ReadCommandCount:        2,
+		WriteCommandCount:       1,
+		EditCommandCount:        1,
+		FailedCommandCount:      1,
+		TotalTokens:             128,
+		FailedCommandStreak:     1,
+		ReadToEditRatio:         1.0,
+		ValidationAfterLastEdit: true,
+		LastEditTime:            "2026-06-21T10:05:00Z",
+		LastValidationTime:      "2026-06-21T10:06:00Z",
+	}
+
+	focus := BuildFocusReport(replay)
+	if focus.EvaluatorSignals.ReadCommandCount != replay.EvaluatorSignals.ReadCommandCount {
+		t.Fatalf("evaluator_signals read_command_count = %d, want %d", focus.EvaluatorSignals.ReadCommandCount, replay.EvaluatorSignals.ReadCommandCount)
+	}
+	if !focus.EvaluatorSignals.ValidationAfterLastEdit {
+		t.Fatalf("validation_after_last_edit = %v, want true", focus.EvaluatorSignals.ValidationAfterLastEdit)
+	}
+}
+
+func TestBuildFocusReportAddsLoopHealthReviewTasks(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.Commands = []Command{
+		{
+			Command:      "cat > main.go",
+			Status:       "success",
+			EvidenceRefs: []string{"events.jsonl#seq=10"},
+		},
+		{
+			Command:      "go test ./...",
+			Status:       "failed",
+			EvidenceRefs: []string{"events.jsonl#seq=11"},
+		},
+		{
+			Command:      "make test",
+			Status:       "failed",
+			EvidenceRefs: []string{"events.jsonl#seq=12"},
+		},
+	}
+	replay.EvaluatorSignals = EvaluatorSignals{
+		FailedCommandStreak:     2,
+		ValidationAfterLastEdit: false,
+		LastEditTime:            "2026-06-21T10:05:00Z",
+		LastValidationTime:      "2026-06-21T10:04:00Z",
+	}
+
+	focus := BuildFocusReport(replay)
+	var foundStreak bool
+	var foundMissingValidation bool
+	for _, task := range focus.ReviewTasks {
+		if task.Source != "evaluator_signals" {
+			continue
+		}
+		switch task.Question {
+		case "Review failed command streak of 2 commands.":
+			foundStreak = true
+			if !containsSlice(task.EvidenceRefs, "events.jsonl#seq=11") || !containsSlice(task.EvidenceRefs, "events.jsonl#seq=12") {
+				t.Fatalf("failed streak task missing command refs: %#v", task)
+			}
+		case "Run or justify validation after the last edit.":
+			foundMissingValidation = true
+			if !containsSlice(task.EvidenceRefs, "events.jsonl#seq=10") {
+				t.Fatalf("missing validation task should point to last edit refs: %#v", task)
+			}
+		}
+	}
+	if !foundStreak {
+		t.Fatalf("expected failed command streak loop-health task: %#v", focus.ReviewTasks)
+	}
+	if !foundMissingValidation {
+		t.Fatalf("expected missing validation loop-health task: %#v", focus.ReviewTasks)
+	}
+}
+
 func TestBuildFocusReportIncludesWorkspaceContextWithoutBlocking(t *testing.T) {
 	t.Parallel()
 
