@@ -10,6 +10,7 @@ and this project follows semantic versioning.
 ### Added
 
 - Added reviewer-agent implementation tracking for the loop-facing feature plan (Step 0), including `PLAN.md`-driven progress tracking setup.
+- Added internal compact focus reporting in `internal/replay` with deterministic verdicts (`pass`, `review_required`, `block`, `unverifiable`), capped evidence artifacts, and stable `review_tasks`/`top_reasons` generation.
 
 ## [0.7.0] - 2026-06-21
 

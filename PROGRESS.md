@@ -10,7 +10,7 @@ Source documents:
 ## Step Checklist
 
 - [x] Step 0: Progress and Changelog Tracking Setup
-- [ ] Step 1: Add the compact focus report model
+- [x] Step 1: Add the compact focus report model
 - [ ] Step 2: Add `agentreceipt focus --json`
 - [ ] Step 3: Add ranked structured review tasks
 - [ ] Step 4: Add per-file evidence dossiers
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 0` completed
-- Next step: `Step 1`
+- Current phase: `Step 1` completed
+- Next step: `Step 2`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -37,3 +37,17 @@ Source documents:
   - Marked Step 0 as complete and set Step 1 as next.
   - Validation: `test -f PROGRESS.md`; `grep -q "Step 1: Add the compact focus report model" PROGRESS.md`; `test -f CHANGELOG.md`; `grep -q "^## \\[Unreleased\\]" CHANGELOG.md` (pass).
   - Commit: `5744cb7`
+
+- 2026-06-21 — Completed Step 1 for compact focus report model.
+  - Added `FocusReport` builder and related models in `internal/replay` and covered pass/review/block/unverifiable behavior plus deterministic output in unit tests.
+  - Validation:
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `make test-race`
+    - `make security`
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `make verify`
+  - Commit: (this commit)
