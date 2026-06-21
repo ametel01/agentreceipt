@@ -1,248 +1,30 @@
-# Reviewer-Agent Loop Implementation Progress
+# AI Agent Command Improvements Progress
 
 Source documents:
-- `/Users/alexmetelli/source/agentreceipt/improve.md`
-- `docs/replay-evaluator-contract.md`
-- `docs/GITHUB_PR_WORKFLOW_DESIGN.md`
+- `/Users/alexmetelli/source/agentreceipt/PLAN.md`
+- `docs/AI_AGENT_COMMAND_IMPROVEMENTS.md`
 - `README.md`
-- `PLAN.md`
+- `Makefile`
 
 ## Step Checklist
 
 - [x] Step 0: Progress and Changelog Tracking Setup
-- [x] Step 1: Add the compact focus report model
-- [x] Step 2: Add `agentreceipt focus --json`
-- [x] Step 3: Add ranked structured review tasks
-- [x] Step 4: Add per-file evidence dossiers
-- [x] Step 5: Capture coding-agent instruction files at session start
-- [x] Step 6: Separate pre-existing and agent-introduced changes
-- [x] Step 7: Add stable JSON schema output
-- [x] Step 8: Add machine-oriented exit codes for loop-facing commands
-- [x] Step 9: Add first-class diff equivalence verification
-- [x] Step 10: Add loop-health evaluator signals
-- [x] Step 11: Add evidence reference dereferencing
-- [x] Step 12: Final documentation and contract hardening
+- [ ] Step 1: Add shared agent-loop contract primitives
+- [ ] Step 2: Add ranked focus work queues and file classifications
+- [ ] Step 3: Add compact replay indexes and query surfaces
+- [ ] Step 4: Wire reviewability output and harden documentation
 
 ## Status
 
-- Current phase: `Step 12` completed
-- Next step: `complete`
-- Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
+- Current phase: `Step 0` completed
+- Next step: `Step 1`
+- Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference if available, current status, and next step.
 
 ## Update Log
 
-- 2026-06-21 — Initialized progress tracking for coding-agent reviewer-loop implementation.  
-  - Created `PROGRESS.md` from `PLAN.md` with all planned steps.
-  - Confirmed `CHANGELOG.md` has `# Changelog` and `## [Unreleased]`.
-  - Marked Step 0 as complete and set Step 1 as next.
-  - Validation: `test -f PROGRESS.md`; `grep -q "Step 1: Add the compact focus report model" PROGRESS.md`; `test -f CHANGELOG.md`; `grep -q "^## \\[Unreleased\\]" CHANGELOG.md` (pass).
-  - Commit: `5744cb7`
+- 2026-06-21 — Initialized plan-specific progress tracking for the AI agent command improvements work.
+  - Reframed progress tracking around `PLAN.md` and the agent-loop contract changes.
+  - Marked Step 0 complete and set Step 1 as next.
+  - Validation: pending initial step setup.
+  - Commit: pending
 
-- 2026-06-21 — Completed Step 1 for compact focus report model.
-  - Added `FocusReport` builder and related models in `internal/replay` and covered pass/review/block/unverifiable behavior plus deterministic output in unit tests.
-  - Validation:
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `make test-race`
-    - `make security`
-    - `make coverage`
-    - `make build`
-    - `make smoke`
-    - `make verify`
-  - Commit: `f05ecfb`
-
-- 2026-06-21 — Completed Step 2 for adding the session focus command.
-  - Added `agentreceipt focus --json` command supporting `--session <id>` and `--replay <path>`.
-  - Added command-discovery tests and behavior tests for source selection, missing JSON behavior, and replay-source parity with session source.
-  - Updated README and evaluator contract docs to cover the new command and its replay relationship.
-  - Validation:
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `make test-race`
-    - `make security`
-    - `make coverage`
-    - `make build`
-    - `make smoke`
-    - `make verify`
-  - Commit: `8805e41`
-
-- 2026-06-21 — Completed Step 3 for ranked structured review tasks.
-  - Added task priorities (`P0`/`P1`/`P2`/`P3`) and stable task kinds in focus task generation.
-  - Added evidence-aware task ranking and deterministic deduplication keyed by kind/priority/question.
-  - Added helper mapping for policy checks, changed symbols/paths, command-file associations, and comparator-based ordering.
-  - Added tests for ranked output order, deterministic task IDs, evidence coverage, and failed-command path/symbol extraction.
-  - Updated `docs/replay-evaluator-contract.md` and `README.md` to describe structured ranking fields.
-  - Validation:
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `make test-race`
-    - `make security`
-    - `make coverage`
-    - `make build`
-    - `make smoke`
-    - `make verify`
-  - Commit: `db21000`
-
-- 2026-06-21 — Completed Step 4 for per-file evidence dossiers.
-  - Expanded focus dossier entries in `internal/replay` to include dependency/symbol signals, read and related-context status, command/test associations, review reasons, and merged evidence references.
-  - Added conservative command-to-file association logic, explicit file-level reason synthesis, and targeted dossier tests covering production/docs/dependency/sensitive paths plus conservative test inference.
-  - Updated `docs/replay-evaluator-contract.md` to document the new `changed_files` dossier field surface and status enums.
-  - Validation:
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `make test-race`
-    - `make security`
-    - `make coverage`
-    - `make build`
-  - `make smoke`
-  - `make verify` (fails reproducibly in this run: `TestSessionCapturesFilesystemChanges` in `internal/session` reports `decode session state: unexpected end of JSON input`)
-  - Commit: `23f7f6f`
-
-- 2026-06-21 — Completed Step 5 for capturing AGENTS.md/CLAUDE.md evidence at session start.
-  - Added `internal/capture/instructions` package with capture helpers, event typing, and warning reporting for unreadable/non-regular instruction files.
-  - Wired `Session.Manager.Start()` to append instruction metadata events alongside git snapshots and persist capture warnings into session state/manifest.
-  - Extended replay schema and focus output with `instruction_files` and added tests covering metadata capture, warning mapping, and focus propagation.
-  - Updated docs for evidence sources and behavior notes for missing instruction files.
-  - Updated session tests to assert start capture behavior and warning persistence for invalid instruction paths.
-  - Validation:
-    - `gofmt -w internal/capture/instructions/instructions.go internal/replay/replay.go internal/replay/focus.go internal/replay/focus_test.go internal/replay/replay_test.go internal/session/session.go internal/session/session_test.go docs/replay-evaluator-contract.md README.md CHANGELOG.md`
-  - `go test ./internal/session ./internal/replay ./internal/capture/instructions`
-  - `go test ./...`
-  - Commit: not committed
-
-- 2026-06-21 — Completed Step 6 for workspace change separation.
-  - Added replay-side workspace change classification from git snapshots and final patch evidence:
-    - `pre_existing_dirty_files`
-    - `agent_touched_pre_existing_files`
-    - `agent_created_changes`
-    - `agent_modified_clean_files`
-    - `final_diff_matches_workspace`
-    - `final_diff_matches_branch`
-  - Added focus propagation of workspace context and blocker tasks when final patch mismatch with current workspace is detected.
-  - Added replay and focus unit tests for clean-start, pre-existing dirty, touched pre-existing, untracked-start, and final diff mismatch scenarios.
-  - Updated evaluator contract and README to document start-state vs agent-introduced change distinctions.
-  - Validation:
-    - `gofmt -w internal/replay/replay.go internal/replay/focus.go internal/replay/replay_test.go internal/replay/focus_test.go docs/replay-evaluator-contract.md README.md PROGRESS.md`
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `go test -race ./...`
-    - `make security` (fails on pre-existing/high-confidence findings in `internal/replay/replay.go` and `internal/capture/instructions/instructions.go`)
-    - `make coverage`
-    - `make build`
-    - `make smoke`
-    - `go test ./internal/replay`
-    - `make verify` (fails in this run during `test-race`/`security` phase)
-  - Commit: `148ff9e`
-
-- 2026-06-21 — Completed Step 7 for stable JSON schema output.
-  - Added embedded `replay.schema.json` and `focus.schema.json` assets in `cmd/schemas/` and mirrored references in `docs/schemas/`.
-  - Added `agentreceipt schema replay` and `agentreceipt schema focus` subcommands under a new `schema` command for deterministic machine-schema output.
-  - Added root command tests for schema command discovery and JSON schema assertions for both `kind` and required fields.
-  - Updated README and evaluator contract docs with schema command examples.
-  - Validation:
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `make test-race`
-    - `make security` (fails on existing high-confidence findings in `internal/replay/replay.go` and `internal/capture/instructions/instructions.go`)
-    - `make coverage`
-    - `make build`
-    - `make smoke`
-    - `make verify` (fails on existing high-confidence `make security` findings)
-  - Commit: `148ff9e`
-
-- 2026-06-21 — Completed Step 8 for machine-oriented focus exit codes.
-  - Added deterministic process exit codes to `agentreceipt focus --json` for loop automation:
-    - `0` pass
-    - `10` review_required
-    - `20` blocker evidence
-    - `30` integrity failure
-    - `40` unverifiable authenticity
-    - `50` patch/workspace mismatch
-    - `60` invalid CLI input
-  - Added `main.go` exit-code plumbing (`cmd.ExitCodeFromError`) so typed errors are surfaced as structured process exits.
-  - Added invalid-input wrapping and report-to-code mapping in `cmd/root.go`.
-  - Added focused tests for focus exit-code mapping and JSON output on non-zero review states.
-  - Updated `README.md`, `CHANGELOG.md`, and `docs/replay-evaluator-contract.md` with machine-facing exit semantics.
-  - Validation:
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `make test-race`
-    - `make security` (fails on existing high-confidence findings in `internal/replay/replay.go` and `internal/capture/instructions/instructions.go`)
-    - `make coverage`
-    - `make build`
-    - `make smoke`
-    - `make verify` (fails on existing high-confidence `make security` findings)
-  - Commit: `48447a5`
-
-- 2026-06-21 — Completed Step 9 for first-class diff equivalence verification.
-  - Added `verify diff` with session and bundle verification modes and candidate targets (`HEAD`, `merge-base`, `patch:<path>`, `pr.patch`).
-  - Added deterministic patch-equivalence reports (`equivalent`, `reason`, `against`, `final_patch_hash`, `candidate_patch_hash`, `evidence_refs`) and exit-code semantics (`0`, `50`, `30`, `60`) for local workflow automation.
-  - Implemented safe Git revision validation and diff normalization before comparing final and candidate patches.
-  - Added command-tree coverage and command-level tests for:
-    - matching diff input
-    - mismatch diff input
-    - invalid bundle integrity
-    - missing patch file
-    - unsupported `--against` modes
-  - Updated README quick command reference and documentation (`docs/replay-evaluator-contract.md`, `docs/GITHUB_PR_WORKFLOW_DESIGN.md`) for `verify diff` usage.
-  - Hardened instruction-file reads and replay git-diff subprocess annotations so the repository-wide security gate passes cleanly.
-  - Validation:
-    - `gofmt -w cmd/root.go cmd/root_test.go`
-    - `go test ./cmd`
-    - `make fmt-check`
-    - `make lint`
-    - `make test`
-    - `make test-race`
-    - `make security`
-    - `make coverage`
-    - `make build`
-    - `make smoke`
-    - `make verify`
-  - Commit: `ca63a42`
-
-- 2026-06-21 — Completed Step 10 for loop-health evaluator signals.
-  - Extended replay evaluator signals with factual loop-health fields:
-    - `total_tokens`
-    - `failed_command_streak`
-    - `same_file_edit_count`
-    - `read_to_edit_ratio`
-    - `validation_after_last_edit`
-    - `last_edit_time`
-    - `last_validation_time`
-  - Forwarded evaluator signals into focus output for reviewer-loop consumption.
-  - Added focus review tasks for failed-command streaks and missing validation after the last edit.
-  - Added tests for token extraction, failed-command streaks, no-command evidence, repeated file edits, validation after last edit, and loop-health task generation.
-  - Updated README and evaluator contract docs with loop-health semantics.
-  - Validation:
-    - `go test ./internal/replay`
-    - `make verify`
-  - Commit: `97cb074`
-
-- 2026-06-21 — Completed Step 11 for evidence reference dereferencing.
-  - Added replay `evidence_index` entries for event refs, command refs, changed-file refs, bundled artifacts, and `diffs/final.patch`.
-  - Forwarded the evidence index into focus reports and schemas so reviewer loops can dereference compact evidence refs consistently.
-  - Added stable-order, deduplication, redaction, focus pass-through, and bundle-output coverage.
-  - Validation:
-    - `go test ./internal/replay ./cmd`
-    - `make verify`
-  - Commit: `b6db531`
-
-- 2026-06-21 — Completed Step 12 for final documentation and contract hardening.
-  - Added a README coding-agent reviewer-loop workflow covering replay, focus, schema, and diff-equivalence commands.
-  - Updated PRD, TECH_SPEC, and evaluator contract docs to describe implemented focus reports, review tasks, file dossiers, instruction evidence, workspace separation, exit codes, diff verification, loop-health signals, and evidence indexes.
-  - Expanded smoke coverage for focus JSON, replay/focus schemas, and verify-diff happy paths.
-  - Tightened schema command help wording and finalized the Unreleased changelog entry for contract hardening.
-  - Validation:
-    - `bash -n scripts/smoke.sh`
-    - `go test ./cmd`
-    - `./scripts/smoke.sh`
-    - `go test ./internal/replay -run TestBuildProducesVerifiedReplayWithPairedCommandAndChangedFiles -count=1 -coverprofile=/tmp/agentreceipt-replay-cover.out`
-    - `make verify`
-  - Commit: `9161525`
