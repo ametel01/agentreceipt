@@ -100,4 +100,4 @@ Source documents:
     - `make build`
     - `make smoke`
     - `make verify` (fails reproducibly in this run: `TestSessionCapturesFilesystemChanges` in `internal/session` reports `decode session state: unexpected end of JSON input`)
-  - Commit: `184cdb2`
+  - Commit: `23f7f6f`
