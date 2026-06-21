@@ -11,7 +11,7 @@ Source documents:
 
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Add the compact focus report model
-- [ ] Step 2: Add `agentreceipt focus --json`
+- [x] Step 2: Add `agentreceipt focus --json`
 - [ ] Step 3: Add ranked structured review tasks
 - [ ] Step 4: Add per-file evidence dossiers
 - [ ] Step 5: Capture coding-agent instruction files at session start
@@ -25,8 +25,8 @@ Source documents:
 
 ## Status
 
-- Current phase: `Step 1` completed
-- Next step: `Step 2`
+- Current phase: `Step 2` completed
+- Next step: `Step 3`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -50,4 +50,20 @@ Source documents:
     - `make build`
     - `make smoke`
     - `make verify`
-  - Commit: (this commit)
+  - Commit: `f05ecfb`
+
+- 2026-06-21 — Completed Step 2 for adding the session focus command.
+  - Added `agentreceipt focus --json` command supporting `--session <id>` and `--replay <path>`.
+  - Added command-discovery tests and behavior tests for source selection, missing JSON behavior, and replay-source parity with session source.
+  - Updated README and evaluator contract docs to cover the new command and its replay relationship.
+  - Validation:
+    - `make fmt-check`
+    - `make lint`
+    - `make test`
+    - `make test-race`
+    - `make security`
+    - `make coverage`
+    - `make build`
+    - `make smoke`
+    - `make verify`
+  - Commit: `8805e41`

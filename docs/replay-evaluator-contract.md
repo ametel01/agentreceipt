@@ -3,6 +3,11 @@
 `agentreceipt replay` builds a factual, machine-readable view of one finalized session from stored
 artifacts. It does not rerun commands, reapply patches, call models, or apply policy scoring.
 
+The new `agentreceipt focus --json` command consumes the same `replay.json` payload to emit a compact
+`agentreceipt.session_focus` report for reviewer-agent loops. This focused payload is a projection of
+replay evidence (not a replacement for `replay`), with deterministic `verdict`, `top_reasons`,
+`review_tasks`, `changed_files`, `failed_gates`, and `evidence_refs`.
+
 ## Report Shape
 
 The top-level `replay.json` payload is additive and keeps the existing verifier fields while adding

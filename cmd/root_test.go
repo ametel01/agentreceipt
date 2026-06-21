@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/ametel01/agentreceipt/internal/eventlog"
 	"github.com/ametel01/agentreceipt/internal/model"
 	"github.com/ametel01/agentreceipt/internal/provider/codex"
+	"github.com/ametel01/agentreceipt/internal/replay"
 	"github.com/ametel01/agentreceipt/internal/session"
 	"github.com/ametel01/agentreceipt/internal/storage"
 	"github.com/spf13/cobra"
@@ -38,6 +40,7 @@ func TestRootHelpListsCommandSurface(t *testing.T) {
 		"sessions",
 		"events",
 		"stop",
+		"focus",
 		"review",
 		"replay",
 		"verify",
@@ -97,6 +100,7 @@ func TestCommandTreeContainsRequiredCommands(t *testing.T) {
 		{"events"},
 		{"live"},
 		{"stop"},
+		{"focus"},
 		{"review"},
 		{"replay"},
 		{"verify"},
@@ -173,6 +177,142 @@ func TestReplayModeFlags(t *testing.T) {
 	}
 	if replayCmd.Flags().Lookup("trusted-signer-key-id") == nil {
 		t.Fatal("replay flag \"trusted-signer-key-id\" is not registered")
+	}
+}
+
+func TestFocusModeFlags(t *testing.T) {
+	root := NewRootCommand("test")
+	focusCmd, _, err := root.Find([]string{"focus"})
+	if err != nil {
+		t.Fatalf("find focus command: %v", err)
+	}
+	for _, name := range []string{"session", "replay", "json", "trusted-signer-key-id"} {
+		if focusCmd.Flags().Lookup(name) == nil {
+			t.Fatalf("focus flag %q is not registered", name)
+		}
+	}
+}
+
+func TestFocusCommandRequiresSessionOrReplay(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	if _, _, err := executeCommand(t, "--repo", repo, "focus"); err == nil {
+		t.Fatal("focus without source flag returned nil error")
+	}
+}
+
+func TestFocusCommandRejectsSessionAndReplayTogether(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	if _, _, err := executeCommand(
+		t,
+		"--repo", repo,
+		"focus",
+		"--session", "ar_ses_focus",
+		"--replay", filepath.Join(t.TempDir(), "replay.json"),
+		"--json",
+	); err == nil || !strings.Contains(err.Error(), "provide exactly one of --session or --replay") {
+		t.Fatalf("expected source-conflict error, got %v", err)
+	}
+}
+
+func TestFocusCommandRequiresJSON(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+	if _, _, err := executeCommand(t, "--repo", repo, "focus", "--session", sessionID); err == nil || !strings.Contains(err.Error(), "focus command requires --json") {
+		t.Fatalf("expected JSON requirement error, got %v", err)
+	}
+}
+
+func TestFocusCommandOutputsSessionFocus(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+	reportOutput, _, err := executeCommand(t, "--repo", repo, "focus", "--session", sessionID, "--json")
+	if err != nil {
+		t.Fatalf("focus returned error: %v", err)
+	}
+	var payload replay.FocusReport
+	if err := json.Unmarshal([]byte(reportOutput), &payload); err != nil {
+		t.Fatalf("focus json decode failed: %v", err)
+	}
+	if payload.Kind != "agentreceipt.session_focus" {
+		t.Fatalf("focus kind mismatch: %q", payload.Kind)
+	}
+	if payload.SessionID != sessionID {
+		t.Fatalf("focus session mismatch: %q", payload.SessionID)
+	}
+	if strings.Contains(reportOutput, "\"raw_prompt\"") || strings.Contains(reportOutput, "\"raw_prompt_hash\"") || strings.Contains(reportOutput, "\"risk_signals\"") {
+		t.Fatalf("focus output should exclude raw prompts and risk signals: %s", reportOutput)
+	}
+}
+
+func TestFocusCommandOutputsConsistentReportFromReplayFile(t *testing.T) {
+	repo := newCommandGitRepo(t)
+	t.Setenv("AGENTRECEIPT_KEY_DIR", filepath.Join(t.TempDir(), "keys"))
+	startOutput, _, err := executeCommand(t, "--repo", repo, "start")
+	if err != nil {
+		t.Fatalf("start returned error: %v", err)
+	}
+	parts := strings.Fields(startOutput)
+	if len(parts) == 0 {
+		t.Fatalf("start output did not include session id: %q", startOutput)
+	}
+	sessionID := parts[len(parts)-1]
+	if _, _, err := executeCommand(t, "--repo", repo, "stop"); err != nil {
+		t.Fatalf("stop returned error: %v", err)
+	}
+
+	replayOutput, _, err := executeCommand(t, "--repo", repo, "replay", "--session", sessionID, "--json")
+	if err != nil {
+		t.Fatalf("replay returned error: %v", err)
+	}
+	replayPath := filepath.Join(t.TempDir(), "replay.json")
+	if err := os.WriteFile(replayPath, []byte(replayOutput), 0o600); err != nil {
+		t.Fatalf("write replay file: %v", err)
+	}
+
+	sessionFocusOutput, _, err := executeCommand(t, "--repo", repo, "focus", "--session", sessionID, "--json")
+	if err != nil {
+		t.Fatalf("focus --session returned error: %v", err)
+	}
+	replayFocusOutput, _, err := executeCommand(t, "focus", "--replay", replayPath, "--json")
+	if err != nil {
+		t.Fatalf("focus --replay returned error: %v", err)
+	}
+	var sessionFocus replay.FocusReport
+	var replayFocus replay.FocusReport
+	if err := json.Unmarshal([]byte(sessionFocusOutput), &sessionFocus); err != nil {
+		t.Fatalf("focus session json decode failed: %v", err)
+	}
+	if err := json.Unmarshal([]byte(replayFocusOutput), &replayFocus); err != nil {
+		t.Fatalf("focus replay json decode failed: %v", err)
+	}
+	sessionFocus.GeneratedAt = time.Time{}
+	replayFocus.GeneratedAt = time.Time{}
+	if !reflect.DeepEqual(sessionFocus, replayFocus) {
+		t.Fatal("focus payload mismatch between --session and --replay")
 	}
 }
 

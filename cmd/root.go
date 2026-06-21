@@ -85,6 +85,7 @@ func NewRootCommand(version string) *cobra.Command {
 		newStopCommand(),
 		newReviewCommand(),
 		newReplayCommand(),
+		newFocusCommand(),
 		newVerifyCommand(),
 		newExportCommand(),
 		newImportCommand(),
@@ -156,6 +157,7 @@ Core commands:
   events
   stop
   review
+  focus
   replay
   verify
   export
@@ -1049,6 +1051,53 @@ func newReplayCommand() *cobra.Command {
 	return replayCmd
 }
 
+func newFocusCommand() *cobra.Command {
+	focusCmd := &cobra.Command{
+		Use:   "focus",
+		Short: "Build a compact reviewer-agent focus report",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options, err := focusOptionsFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			asJSON, err := cmd.Flags().GetBool("json")
+			if err != nil {
+				return err
+			}
+			if !asJSON {
+				return fmt.Errorf("focus command requires --json")
+			}
+
+			var report replay.Report
+			switch {
+			case options.ReplayPath != "":
+				report, err = readReplayJSON(options.ReplayPath)
+			default:
+				replayOptions := replay.Options{
+					RepoPath:            options.RepoPath,
+					SessionID:           options.SessionID,
+					TrustedSignerKeyIDs: options.TrustedSignerKeyIDs,
+				}
+				report, err = replay.Build(cmd.Context(), replayOptions)
+			}
+			if err != nil {
+				return err
+			}
+
+			focusReport := replay.BuildFocusReport(report)
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(focusReport)
+		},
+	}
+	focusCmd.Flags().String("session", "", "Build focus from a specific finalized session ID")
+	focusCmd.Flags().String("replay", "", "Build focus from a replay.json file")
+	focusCmd.Flags().Bool("json", false, "Render focus output as JSON")
+	focusCmd.Flags().StringArray("trusted-signer-key-id", nil, "Trusted signer key ID to apply when evaluating replay authenticity")
+
+	return focusCmd
+}
+
 func newVerifyCommand() *cobra.Command {
 	verify := &cobra.Command{
 		Use:   "verify",
@@ -1586,6 +1635,74 @@ func replayOptionsFromCommand(cmd *cobra.Command) (replay.Options, error) {
 	}
 
 	return replay.Options{RepoPath: repoPath, SessionID: sessionID, BundleDir: bundleDir, TrustedSignerKeyIDs: normalizedTrustedSignerKeyIDs}, nil
+}
+
+type focusOptions struct {
+	RepoPath            string
+	SessionID           string
+	ReplayPath          string
+	TrustedSignerKeyIDs []string
+}
+
+func focusOptionsFromCommand(cmd *cobra.Command) (focusOptions, error) {
+	cfg, err := configFromCommand(cmd)
+	if err != nil {
+		return focusOptions{}, err
+	}
+	sessionID, err := cmd.Flags().GetString("session")
+	if err != nil {
+		return focusOptions{}, err
+	}
+	replayPath, err := cmd.Flags().GetString("replay")
+	if err != nil {
+		return focusOptions{}, err
+	}
+	if (sessionID == "" && replayPath == "") || (sessionID != "" && replayPath != "") {
+		return focusOptions{}, fmt.Errorf("provide exactly one of --session or --replay")
+	}
+	var repoPath string
+	if sessionID != "" {
+		repoPath, err = repoRootFromCommand(cmd)
+		if err != nil {
+			return focusOptions{}, err
+		}
+		if err := storage.ValidateSessionID(sessionID); err != nil {
+			return focusOptions{}, err
+		}
+	}
+	trustedSignerKeyIDs, err := cmd.Flags().GetStringArray("trusted-signer-key-id")
+	if err != nil {
+		return focusOptions{}, err
+	}
+	mergedTrustedSignerKeyIDs := trustedSignerKeyIDs
+	if len(cfg.Trust.TrustedSignerKeyIDs) > 0 {
+		mergedTrustedSignerKeyIDs = append(cfg.Trust.TrustedSignerKeyIDs, mergedTrustedSignerKeyIDs...)
+	}
+	normalizedTrustedSignerKeyIDs, err := trust.NormalizeTrustedSignerKeyIDs(mergedTrustedSignerKeyIDs)
+	if err != nil {
+		return focusOptions{}, err
+	}
+
+	return focusOptions{
+		RepoPath:            repoPath,
+		SessionID:           sessionID,
+		ReplayPath:          replayPath,
+		TrustedSignerKeyIDs: normalizedTrustedSignerKeyIDs,
+	}, nil
+}
+
+func readReplayJSON(path string) (replay.Report, error) {
+	// #nosec G304 -- path is intentionally provided by CLI users for replay analysis.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return replay.Report{}, fmt.Errorf("read replay file: %w", err)
+	}
+	var report replay.Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		return replay.Report{}, fmt.Errorf("decode replay JSON: %w", err)
+	}
+
+	return report, nil
 }
 
 func repoRootFromCommand(cmd *cobra.Command) (string, error) {

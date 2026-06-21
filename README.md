@@ -135,7 +135,7 @@ When multiple Codex sessions exist, AgentReceipt prefers logs whose Codex `cwd` 
 agentreceipt sessions
 ```
 
-`sessions` lists AgentReceipt sessions for the current repository, newest first. Use it when you need a session ID for `review --session`, `verify --session`, `replay --session`, or `export --session`.
+`sessions` lists AgentReceipt sessions for the current repository, newest first. Use it when you need a session ID for `review --session`, `verify --session`, `replay --session`, `focus --session`, or `export --session`.
 
 ```text
 SESSION                                  STATE      ACTIVE  UPDATED              EVENTS  WARNINGS
@@ -173,6 +173,8 @@ Receipts embed the signer public key and key ID, so verification works from shar
 agentreceipt replay --session <id>
 agentreceipt replay --session <id> --json
 agentreceipt replay --session <id> --bundle ./replay-bundle
+agentreceipt focus --session <id> --json
+agentreceipt focus --replay ./replay.json --json
 ```
 
 `replay` builds a verifier-facing JSON report from stored session artifacts.
@@ -190,6 +192,8 @@ agentreceipt replay --session <id> --bundle ./replay-bundle
 - Replay is artifact-only: no command reruns, no patch application, no model calls, no workspace mutation.
 - Raw prompts, raw tool output, and raw provider logs are not included by default.
 - Evaluator conclusions should be inferred from command/output evidence and integrity status in `replay.json`, not by any built-in policy rule in this command.
+- `focus --session <id> --json` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
+- `focus --replay ./replay.json --json` emits the same compact focus result directly from a replay report.
 - Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
 Replay JSON now includes explicit contract fields for verification, quality gates, patch summary,
@@ -337,6 +341,7 @@ The visible CLI surface is:
 | `agentreceipt events` | Show recent session events as a readable timeline. |
 | `agentreceipt stop` | Finalize the active capture session. |
 | `agentreceipt review` | Build a reviewer-focused receipt summary. |
+| `agentreceipt focus` | Build a compact reviewer-agent JSON focus report from a session or existing `replay.json`. |
 | `agentreceipt verify` | Verify receipt integrity and signatures. |
 | `agentreceipt verify bundle <path>` | Verify a local AgentReceipt artifact bundle. |
 | `agentreceipt replay` | Build a machine-readable verifier replay report from a specific session and optionally write a portable replay bundle. Replay reports evidence facts only; no session scoring or policy decisions are made. |
@@ -376,6 +381,8 @@ agentreceipt review --codex-jsonl ./codex-run.jsonl
 agentreceipt review --json
 agentreceipt review --md
 agentreceipt review --pr
+agentreceipt focus --session <id> --json
+agentreceipt focus --replay ./replay.json --json
 agentreceipt verify
 agentreceipt verify --session <id>
 agentreceipt verify bundle ./agentreceipt
