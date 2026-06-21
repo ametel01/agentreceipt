@@ -27,6 +27,7 @@ and this project follows semantic versioning.
 - Added replay acceptance coverage in `internal/replay` for tampered `events.jsonl`, `manifest.json`, `receipt.json`, and `final.patch` to keep replay verification invalidation behavior explicit.
 - Added component-level replay verification fields in verifier output (`event_chain_valid`, `final_patch_hash_valid`, `manifest_hash_valid`, `receipt_hash_valid`) plus stable signature failure context (`signature_error_code`) for actionable replay review.
 - Added factual replay contract and smoke assertions clarifying that `agentreceipt replay` reports evidence facts only; no policy recommendations or scoring.
+- Split replay verification output into explicit integrity/authenticity and outcome verdict signals (`integrity_valid`, `authenticity_valid`, `authenticity_status`, `overall_verdict`, `component_results`) to support evaluator-safe consumption without overloading `valid`.
 
 ## [0.6.0] - 2026-06-18
 

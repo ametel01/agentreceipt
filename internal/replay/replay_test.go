@@ -592,8 +592,41 @@ func TestBuildVerificationProvidesComponentFlagsAndSignatureErrorCodes(t *testin
 	if !report.Verification.Valid {
 		t.Fatalf("expected valid verification for baseline session: %+v", report.Verification)
 	}
+	if !report.Verification.IntegrityValid {
+		t.Fatalf("expected integrity_valid=true for baseline session: %+v", report.Verification)
+	}
+	if !report.Verification.AuthenticityValid {
+		t.Fatalf("expected authenticity_valid=true for baseline session: %+v", report.Verification)
+	}
+	if report.Verification.AuthenticityStatus != authenticityStatusAuthentic {
+		t.Fatalf("unexpected authenticity_status: %q", report.Verification.AuthenticityStatus)
+	}
+	if report.Verification.TrustStatus != trustStatusNotConfigured {
+		t.Fatalf("expected not-configured trust_status for baseline session: %q", report.Verification.TrustStatus)
+	}
+	if report.Verification.SignerTrusted {
+		t.Fatalf("expected signer_trusted=false when trust policy is not configured: %+v", report.Verification)
+	}
+	if !report.Verification.PolicyValid {
+		t.Fatalf("expected policy_valid=true when trust policy is not configured: %+v", report.Verification)
+	}
+	if report.Verification.OverallVerdict != verificationVerdictPassed {
+		t.Fatalf("expected overall_verdict=%q, got %q", verificationVerdictPassed, report.Verification.OverallVerdict)
+	}
+	if report.Verification.OverallReason == "" {
+		t.Fatalf("overall_reason should be populated for valid session: %q", report.Verification.OverallReason)
+	}
 	if !report.Verification.EventChainValid || !report.Verification.FinalPatchHashValid || !report.Verification.ManifestHashValid || !report.Verification.ReceiptHashValid || !report.Verification.SignatureValid {
 		t.Fatalf("expected all verification components to be valid: %+v", report.Verification)
+	}
+	for _, name := range []string{"event_chain", "final_patch_hash", "manifest_hash", "receipt_hash", "signature"} {
+		check, ok := verificationComponent(report.Verification.ComponentResults, name)
+		if !ok {
+			t.Fatalf("missing component result for %s", name)
+		}
+		if !check.Valid || check.Reason != "" {
+			t.Fatalf("expected component result %s to be valid with empty reason, got: %#v", name, check)
+		}
 	}
 	if report.Verification.SignatureError != "" {
 		t.Fatalf("signature error should be empty for valid verification: %+v", report.Verification.SignatureError)
@@ -616,6 +649,18 @@ func readReceiptForReplayTest(path string) (model.Receipt, error) {
 	return decoded, nil
 }
 
+func recomputeReceiptHashForTest(t *testing.T, receiptData model.Receipt) string {
+	t.Helper()
+	receiptData.Verification.ReceiptHash = ""
+	receiptData.Verification.Signature = ""
+	serialized, err := model.MarshalCanonical(receiptData)
+	if err != nil {
+		t.Fatalf("marshal canonical receipt: %v", err)
+	}
+	sum := sha256.Sum256(serialized)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func TestBuildVerificationReportsLegacyEmbeddedSignerError(t *testing.T) {
 	t.Parallel()
 
@@ -626,6 +671,7 @@ func TestBuildVerificationReportsLegacyEmbeddedSignerError(t *testing.T) {
 	}
 	decoded.Verification.SignerPublicKey = ""
 	decoded.Verification.SignerKeyID = ""
+	decoded.Verification.ReceiptHash = recomputeReceiptHashForTest(t, decoded)
 	data, err := json.MarshalIndent(decoded, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal receipt: %v", err)
@@ -650,8 +696,65 @@ func TestBuildVerificationReportsLegacyEmbeddedSignerError(t *testing.T) {
 	if report.Verification.SignatureErrorCode != "legacy_missing_embedded_signer" {
 		t.Fatalf("expected legacy_missing_embedded_signer code, got %q: %+v", report.Verification.SignatureErrorCode, report.Verification)
 	}
+	if !report.Verification.IntegrityValid {
+		t.Fatalf("expected integrity_valid=true for missing embedded signer: %+v", report.Verification)
+	}
+	if report.Verification.AuthenticityStatus != authenticityStatusUnverifiable {
+		t.Fatalf("expected authenticity_status=unverifiable for missing embedded signer, got %q", report.Verification.AuthenticityStatus)
+	}
+	if report.Verification.OverallVerdict != verificationVerdictIntegrityOnly {
+		t.Fatalf("expected overall_verdict=%q for legacy signer: %q", verificationVerdictIntegrityOnly, report.Verification.OverallVerdict)
+	}
+	if check, ok := verificationComponent(report.Verification.ComponentResults, "signature"); !ok || check.Valid || check.Reason == "" {
+		t.Fatalf("expected invalid signature component result with reason: %#v", check)
+	}
 	if !containsGap(report.Gaps, "Signature verification failed") {
 		t.Fatalf("missing signature-gap warning: %+v", report.Gaps)
+	}
+}
+
+func TestBuildVerificationReportsSignatureMismatchWithIntactHashes(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, layout := finalizedReplaySession(t, nil, nil)
+	decoded, err := readReceiptForReplayTest(layout.ReceiptJSON)
+	if err != nil {
+		t.Fatalf("read receipt: %v", err)
+	}
+	decoded.Verification.Signature = "bad_signature_mismatch"
+	decoded.Verification.ReceiptHash = recomputeReceiptHashForTest(t, decoded)
+	mutatedJSON, err := json.MarshalIndent(decoded, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal receipt: %v", err)
+	}
+	if err := os.WriteFile(layout.ReceiptJSON, append(mutatedJSON, '\n'), 0o600); err != nil {
+		t.Fatalf("write tampered receipt: %v", err)
+	}
+	if err := os.WriteFile(layout.ReceiptSignature, []byte(decoded.Verification.Signature), 0o600); err != nil {
+		t.Fatalf("tamper receipt signature file: %v", err)
+	}
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !report.Verification.IntegrityValid {
+		t.Fatalf("expected integrity_valid=true for signature-only mismatch: %+v", report.Verification)
+	}
+	if report.Verification.SignatureValid {
+		t.Fatalf("signature should be invalid when receipt.sig is tampered: %+v", report.Verification)
+	}
+	if report.Verification.OverallVerdict != verificationVerdictUntrusted {
+		t.Fatalf("expected overall_verdict=%q for signature mismatch, got %q", verificationVerdictUntrusted, report.Verification.OverallVerdict)
+	}
+	if report.Verification.SignatureErrorCode != "signature_verification_error" {
+		t.Fatalf("expected signature_verification_error, got %q: %+v", report.Verification.SignatureErrorCode, report.Verification)
+	}
+	if check, ok := verificationComponent(report.Verification.ComponentResults, "signature"); !ok || check.Valid || check.Reason == "" {
+		t.Fatalf("expected invalid signature component result with reason: %#v", check)
 	}
 }
 
@@ -1032,6 +1135,16 @@ func containsEvidenceRef(values []string, needle string) bool {
 	}
 
 	return false
+}
+
+func verificationComponent(checks []VerificationCheck, name string) (VerificationCheck, bool) {
+	for _, check := range checks {
+		if check.Name == name {
+			return check, true
+		}
+	}
+
+	return VerificationCheck{}, false
 }
 
 func containsEvidencePrefix(values []string, needle string) bool {

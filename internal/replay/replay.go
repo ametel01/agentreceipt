@@ -87,7 +87,43 @@ type Verification struct {
 	SignatureError      string `json:"signature_error,omitempty"`
 	SignatureErrorCode  string `json:"signature_error_code,omitempty"`
 	SignedBy            string `json:"signed_by"`
+
+	IntegrityValid     bool                `json:"integrity_valid"`
+	AuthenticityValid  bool                `json:"authenticity_valid"`
+	AuthenticityStatus string              `json:"authenticity_status"`
+	TrustStatus        string              `json:"trust_status"`
+	SignerTrusted      bool                `json:"signer_trusted"`
+	PolicyValid        bool                `json:"policy_valid"`
+	OverallVerdict     string              `json:"overall_verdict"`
+	OverallReason      string              `json:"overall_reason"`
+	ComponentResults   []VerificationCheck `json:"component_results"`
 }
+
+type VerificationCheck struct {
+	Name   string `json:"name"`
+	Valid  bool   `json:"valid"`
+	Reason string `json:"reason,omitempty"`
+}
+
+const (
+	receiptErrLegacySignerMissing = "legacy_missing_embedded_signer"
+
+	verificationVerdictIntegrityOnly = "integrity_only"
+	verificationVerdictIntegrityFail = "integrity_failed"
+	verificationVerdictAuthenticity  = "authentic"
+	verificationVerdictUntrusted     = "untrusted_signer"
+	verificationVerdictPolicyFailure = "policy_failed"
+	verificationVerdictPolicyUnknown = "policy_unknown"
+	verificationVerdictPassed        = "passed"
+
+	authenticityStatusAuthentic    = "authenticated"
+	authenticityStatusUnverifiable = "unverifiable"
+	authenticityStatusFailed       = "failed"
+	trustStatusTrusted             = "trusted"
+	trustStatusNotTrusted          = "not_trusted"
+	trustStatusNotConfigured       = "not_configured"
+	trustStatusUnknown             = "unknown"
+)
 
 type Summary struct {
 	Provider          string          `json:"provider"`
@@ -718,21 +754,27 @@ func timelineConfidence(event model.Event, confidence model.CaptureConfidence) m
 func buildVerification(layout storage.Layout, _ bool) (Verification, []string) {
 	verification := Verification{}
 	verificationWarnings := make([]string, 0)
+	verification.TrustStatus = trustStatusNotConfigured
+	verification.PolicyValid = true
+	verification.SignerTrusted = false
 
 	if chainHash, err := eventHash(layout.EventsJSONL); err == nil {
 		verification.EventChainHash = chainHash
 	} else {
 		verificationWarnings = append(verificationWarnings, "Event chain verification failed")
+		verificationWarnings = append(verificationWarnings, err.Error())
 	}
 	if diffHash, err := fileHash(layout.FinalPatch); err == nil {
 		verification.DiffHash = diffHash
 	} else {
 		verificationWarnings = append(verificationWarnings, "Final patch hash verification failed")
+		verificationWarnings = append(verificationWarnings, err.Error())
 	}
 	if manifestHash, err := fileHash(layout.ManifestJSON); err == nil {
 		verification.ManifestHash = manifestHash
 	} else {
 		verificationWarnings = append(verificationWarnings, "Manifest hash verification failed")
+		verificationWarnings = append(verificationWarnings, err.Error())
 	}
 	if receiptHash, err := fileHash(layout.ReceiptJSON); err == nil {
 		if rec, err := receipt.Read(layout); err == nil && rec.Verification.ReceiptHash != "" {
@@ -740,55 +782,145 @@ func buildVerification(layout storage.Layout, _ bool) (Verification, []string) {
 			if receiptHash == "" {
 				verification.ReceiptHash = ""
 			}
-		} else {
+		} else if err != nil {
 			verification.ReceiptHash = receiptHash
-			if err != nil {
-				verificationWarnings = append(verificationWarnings, "Receipt hash read failed")
-			}
+			verificationWarnings = append(verificationWarnings, "Receipt hash read failed")
+			verificationWarnings = append(verificationWarnings, err.Error())
 		}
 	} else {
 		verificationWarnings = append(verificationWarnings, "Receipt hash verification failed")
+		verificationWarnings = append(verificationWarnings, err.Error())
 	}
 
-	result, err := receipt.VerifyBundle(layout.Session)
+	verificationResult, err := receipt.VerifyBundle(layout.Session)
 	if err != nil {
 		verificationWarnings = append(verificationWarnings, err.Error())
-		verification.Valid = false
-		return verification, verificationWarnings
 	}
 
-	verification.Valid = result.Valid
-	verification.EventChainValid = result.EventChain
-	verification.FinalPatchHashValid = result.FinalDiffHash
-	verification.ManifestHashValid = result.ManifestHash
-	verification.ReceiptHashValid = result.ReceiptHash
-	verification.SignatureValid = result.Signature
-	verification.SignatureError = result.SignatureError
-	verification.SignatureErrorCode = result.SignatureErrorCode
-	verification.SignedBy = result.SignedBy
-	if !result.EventChain {
-		verificationWarnings = append(verificationWarnings, "Event chain verification failed")
+	verification.Valid = verificationResult.Valid
+	verification.EventChainValid = verificationResult.EventChain
+	verification.FinalPatchHashValid = verificationResult.FinalDiffHash
+	verification.ManifestHashValid = verificationResult.ManifestHash
+	verification.ReceiptHashValid = verificationResult.ReceiptHash
+	verification.SignatureValid = verificationResult.Signature
+	verification.SignatureError = verificationResult.SignatureError
+	verification.SignatureErrorCode = verificationResult.SignatureErrorCode
+	verification.SignedBy = verificationResult.SignedBy
+	verification.IntegrityValid = verification.EventChainValid && verification.FinalPatchHashValid && verification.ManifestHashValid && verification.ReceiptHashValid
+	verification.AuthenticityValid = verification.SignatureValid
+	if verification.SignatureErrorCode == receiptErrLegacySignerMissing {
+		verification.AuthenticityStatus = authenticityStatusUnverifiable
+	} else if verificationResult.Signature {
+		verification.AuthenticityStatus = authenticityStatusAuthentic
+	} else {
+		verification.AuthenticityStatus = authenticityStatusFailed
 	}
-	if !result.FinalDiffHash {
-		verificationWarnings = append(verificationWarnings, "Final patch hash verification failed")
+	if verification.SignatureErrorCode == receiptErrLegacySignerMissing {
+		if verification.IntegrityValid {
+			verification.OverallVerdict = verificationVerdictIntegrityOnly
+			verification.OverallReason = "signature unverifiable due to missing embedded signer key material"
+		} else {
+			verification.OverallVerdict = verificationVerdictIntegrityFail
+			verification.OverallReason = "integrity checks failed while signature key material is missing"
+		}
+	} else if !verification.EventChainValid || !verification.FinalPatchHashValid || !verification.ManifestHashValid || !verification.ReceiptHashValid {
+		verification.OverallVerdict = verificationVerdictIntegrityFail
+		verification.OverallReason = "integrity check failure"
+	} else if !verification.SignatureValid {
+		verification.OverallVerdict = verificationVerdictUntrusted
+		verification.OverallReason = "signature verification failed"
+	} else {
+		verification.OverallVerdict = verificationVerdictAuthenticity
+		verification.OverallReason = "integrity and signature verified"
 	}
-	if !result.ManifestHash {
-		verificationWarnings = append(verificationWarnings, "Manifest hash verification failed")
-	}
-	if !result.ReceiptHash {
-		verificationWarnings = append(verificationWarnings, "Receipt hash verification failed")
-	}
-	if !result.Signature {
-		verificationWarnings = append(verificationWarnings, "Signature verification failed")
+	if verificationResult.Signature {
+		verification.OverallVerdict = verificationVerdictPassed
+		verification.OverallReason = "integrity checks and signature verification passed"
 	}
 
-	if verificationWarnings := uniqueSorted(verificationWarnings); len(verificationWarnings) > 0 {
-		if !verification.Valid {
-			return verification, verificationWarnings
+	if verification.IntegrityValid && verification.SignatureValid {
+		verification.Valid = true
+	}
+
+	for _, check := range []VerificationCheck{
+		{Name: "event_chain", Valid: verification.EventChainValid, Reason: verificationResult.EventChainError},
+		{Name: "final_patch_hash", Valid: verification.FinalPatchHashValid, Reason: verificationResult.FinalDiffHashError},
+		{Name: "manifest_hash", Valid: verification.ManifestHashValid, Reason: verificationResult.ManifestHashError},
+		{Name: "receipt_hash", Valid: verification.ReceiptHashValid, Reason: verificationResult.ReceiptHashError},
+		{Name: "signature", Valid: verification.SignatureValid, Reason: verification.SignatureError},
+	} {
+		if !check.Valid && check.Reason == "" {
+			switch check.Name {
+			case "event_chain":
+				check.Reason = "event chain mismatch"
+			case "final_patch_hash":
+				check.Reason = "final patch hash mismatch"
+			case "manifest_hash":
+				check.Reason = "manifest hash mismatch"
+			case "receipt_hash":
+				check.Reason = "receipt hash mismatch"
+			case "signature":
+				check.Reason = "signature verification failed"
+			}
+		}
+		if check.Valid {
+			check.Reason = ""
+		}
+		verification.ComponentResults = append(verification.ComponentResults, check)
+		if !check.Valid {
+			switch check.Name {
+			case "event_chain":
+				verificationWarnings = append(verificationWarnings, "Event chain verification failed")
+			case "final_patch_hash":
+				verificationWarnings = append(verificationWarnings, "Final patch hash verification failed")
+			case "manifest_hash":
+				verificationWarnings = append(verificationWarnings, "Manifest hash verification failed")
+			case "receipt_hash":
+				verificationWarnings = append(verificationWarnings, "Receipt hash verification failed")
+			case "signature":
+				verificationWarnings = append(verificationWarnings, "Signature verification failed")
+			}
 		}
 	}
 
+	verification.ComponentResults = uniqueComponentResults(verification.ComponentResults)
+
+	if verificationWarnings := uniqueSorted(verificationWarnings); len(verificationWarnings) > 0 {
+		return verification, verificationWarnings
+	}
+
 	return verification, uniqueSorted(verificationWarnings)
+}
+
+func uniqueComponentResults(checks []VerificationCheck) []VerificationCheck {
+	seen := map[string]VerificationCheck{}
+	for _, check := range checks {
+		if check.Name == "" {
+			continue
+		}
+		if prev, ok := seen[check.Name]; ok {
+			if !check.Valid {
+				seen[check.Name] = check
+			}
+			if check.Reason != "" {
+				prev.Reason = check.Reason
+				seen[check.Name] = prev
+			}
+			continue
+		}
+		seen[check.Name] = check
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	out := make([]VerificationCheck, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, seen[key])
+	}
+	return out
 }
 
 func buildArtifacts(layout storage.Layout) []Artifact {

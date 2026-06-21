@@ -4,18 +4,18 @@ Plan source: [`PLAN.md`](./PLAN.md)
 
 ## Status
 
-- Current status: Step 0 complete
-- Next step: Step 1
-- Last updated: 2026-06-21T08:20:00Z
+- Current status: Step 1 complete
+- Next step: Step 2
+- Last updated: 2026-06-21T08:33:00Z
 - Validation results:
-  - `test -f PROGRESS.md`
-  - `test -f CHANGELOG.md`
-  - `make fmt-check`
+  - `make fmt`
+  - `go test ./internal/replay ./cmd` (pass)
+  - `make verify` (fails at coverage gate: total coverage below 80.0%)
 
 ## Step Checklist
 
 - [x] Step 0: Progress and Changelog Tracking Setup
-- [ ] Step 1: Define Explicit Replay Verification Verdicts
+- [x] Step 1: Define Explicit Replay Verification Verdicts
 - [ ] Step 2: Add Local Trust Policy Evaluation
 - [ ] Step 3: Harden Signer Material and Legacy Migration Semantics
 - [ ] Step 4: Add Evaluator Scoring Signals
@@ -30,3 +30,11 @@ Plan source: [`PLAN.md`](./PLAN.md)
 - Keep additive replay report fields for compatibility with existing consumers.
 - Preserve existing `Valid`/`SignatureValid` semantics in replay JSON for compatibility while introducing new verdict fields.
 - Keep replay as an evidence-only report and run only local, deterministic analyses.
+
+## Completed Step Notes
+
+- Step 1 completed:
+  - Extended `internal/replay/replay.go` verification model with additive integrity/authenticity/trust/policy/vs verdict fields and component checks.
+  - Added helper-backed characterizations for intact verification, legacy missing signer behavior, and signature mismatch with intact hashes.
+  - Updated replay tests to assert `integrity_valid`, `authenticity_status`, `overall_verdict`, and per-component verification reasons/results.
+  - Commit: `Split replay verification verdicts`.
