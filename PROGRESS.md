@@ -84,4 +84,4 @@ Source documents:
     - `make build`
     - `make smoke`
     - `make verify`
-  - Commit: `ed82226`
+  - Commit: `db21000`
