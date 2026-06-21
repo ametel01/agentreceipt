@@ -87,6 +87,29 @@ func TestBuildFocusReportIncludesEvaluatorSignals(t *testing.T) {
 	}
 }
 
+func TestBuildFocusReportIncludesEvidenceIndex(t *testing.T) {
+	t.Parallel()
+
+	replay := focusBaseReplayReport()
+	replay.EvidenceIndex = []EvidenceEntry{
+		{
+			Ref:        "commands/0001",
+			Type:       "command",
+			Confidence: model.ConfidenceHigh,
+		},
+		{
+			Ref:        "files/main.go",
+			Type:       "file",
+			Confidence: model.ConfidenceMedium,
+		},
+	}
+
+	focus := BuildFocusReport(replay)
+	if !reflect.DeepEqual(focus.EvidenceIndex, replay.EvidenceIndex) {
+		t.Fatalf("evidence_index = %#v, want %#v", focus.EvidenceIndex, replay.EvidenceIndex)
+	}
+}
+
 func TestBuildFocusReportAddsLoopHealthReviewTasks(t *testing.T) {
 	t.Parallel()
 

@@ -1180,6 +1180,124 @@ func TestBuildEvaluatorSignalsCountsFailedCommandStreak(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesEvidenceIndexCoverageAndStableOrder(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_success",
+						"command": "go test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_success",
+					"command":   "go test ./...",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_secret",
+						"command": "echo sk-secret-abc123",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_secret",
+					"command":   "echo sk-secret-abc123",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "main.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+		},
+		nil,
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	entries := report.EvidenceIndex
+	if len(entries) == 0 {
+		t.Fatalf("evidence_index is empty")
+	}
+
+	entryByRef := map[string]EvidenceEntry{}
+	for _, entry := range entries {
+		entryByRef[entry.Ref] = entry
+	}
+
+	for index := 1; index < len(entries); index++ {
+		if entries[index-1].Ref > entries[index].Ref {
+			t.Fatalf("evidence_index not sorted: %#v", entries)
+		}
+	}
+
+	if len(entryByRef) != len(entries) {
+		t.Fatalf("evidence_index has duplicate refs: len=%d unique=%d", len(entries), len(entryByRef))
+	}
+
+	if got := entryByRef["events.jsonl#seq=1"]; got.Ref == "" {
+		t.Fatalf("missing events.jsonl#seq=1 event artifact entry: %#v", got)
+	}
+	if got := entryByRef["commands/0001"]; got.Ref == "" || got.Type != "command" {
+		t.Fatalf("missing commands/0001 entry: %#v", got)
+	}
+	if got := entryByRef["files/main.go"]; got.Ref == "" || got.Type != "file" {
+		t.Fatalf("missing files/main.go entry: %#v", got)
+	}
+	if got := entryByRef["commands/0002"]; got.Ref == "" || !got.Redacted {
+		t.Fatalf("missing redacted command entry for secret command: %#v", got)
+	}
+	eventsJSONLArtifact := false
+	for _, entry := range entries {
+		if filepath.Base(entry.Ref) == storage.EventsFile {
+			if entry.Type != "artifact" {
+				t.Fatalf("events.jsonl artifact entry should be type artifact: %#v", entry)
+			}
+			eventsJSONLArtifact = true
+			break
+		}
+	}
+	if !eventsJSONLArtifact {
+		t.Fatalf("missing events.jsonl artifact entry in evidence_index")
+	}
+	if got := entryByRef["diffs/final.patch"]; got.Ref == "" || got.Type != "artifact" {
+		t.Fatalf("missing diffs/final.patch artifact entry: %#v", got)
+	}
+}
+
 func TestBuildIncludesQualityGatesForVerifyCommand(t *testing.T) {
 	t.Parallel()
 
@@ -2357,6 +2475,9 @@ func TestWriteBundleCopiesArtifactsAndHashes(t *testing.T) {
 	}
 	if len(bundledReport.Artifacts) == 0 {
 		t.Fatalf("bundled report has no artifacts")
+	}
+	if len(bundledReport.EvidenceIndex) == 0 {
+		t.Fatalf("bundled report has no evidence_index")
 	}
 	for _, artifact := range bundledReport.Artifacts {
 		if artifact.Path == "replay.json" {

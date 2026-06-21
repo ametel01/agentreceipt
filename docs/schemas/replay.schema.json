@@ -33,6 +33,10 @@
     "verification": { "type": "object" },
     "summary": { "type": "object" },
     "evaluator_signals": { "type": "object" },
+    "evidence_index": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
     "quality_gates": { "type": "object" },
     "patch_summary": { "type": "object" },
     "policy_checks": {

@@ -79,6 +79,7 @@ evaluator-facing sections:
 
 - `verification`
 - `evaluator_signals`
+- `evidence_index`
 - `instruction_files`
 - `quality_gates`
 - `patch_summary`
@@ -102,6 +103,8 @@ integrity and do not form a score:
 - `read_to_edit_ratio` compares observed read commands with edit/write commands.
 - `validation_after_last_edit` reports whether a validation command appeared after the last edit/write command.
 - `last_edit_time` and `last_validation_time` carry the relevant command timestamps when known.
+
+`evidence_index` is a deduplicated list of all known evidence references (`events`, `commands`, `files`, and `artifacts`), with redaction and confidence annotations so downstream reviewers can dereference entries deterministically.
 
 `instruction_files` includes metadata captured from `AGENTS.md` and `CLAUDE.md` at session start:
 

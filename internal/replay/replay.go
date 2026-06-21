@@ -75,6 +75,7 @@ type Report struct {
 	Commands             []Command              `json:"commands"`
 	InstructionFiles     []InstructionFile      `json:"instruction_files"`
 	Files                []File                 `json:"files"`
+	EvidenceIndex        []EvidenceEntry        `json:"evidence_index,omitempty"`
 	WorkspaceChange      WorkspaceChangeSummary `json:"workspace_change_summary"`
 	Risks                []Risk                 `json:"risks"`
 	FailedCommandDetails []FailedCommandDetail  `json:"failed_command_details,omitempty"`
@@ -185,6 +186,19 @@ type EvaluatorSignals struct {
 	ValidationAfterLastEdit    bool    `json:"validation_after_last_edit"`
 	LastEditTime               string  `json:"last_edit_time"`
 	LastValidationTime         string  `json:"last_validation_time"`
+}
+
+type EvidenceEntry struct {
+	Ref        string           `json:"ref"`
+	Type       string           `json:"type"`
+	Summary    string           `json:"summary,omitempty"`
+	Time       string           `json:"time,omitempty"`
+	Command    string           `json:"command,omitempty"`
+	ExitCode   *int             `json:"exit_code,omitempty"`
+	Path       string           `json:"path,omitempty"`
+	Artifact   string           `json:"artifact,omitempty"`
+	Confidence model.Confidence `json:"confidence,omitempty"`
+	Redacted   bool             `json:"redacted,omitempty"`
 }
 
 type TimelineItem struct {
@@ -389,6 +403,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	}
 
 	artifacts := buildArtifacts(layout)
+	evidenceIndex := buildEvidenceIndex(events, evidenceConfidence, commands, files, artifacts)
 	qualityGates := buildQualityGates(commands)
 	policyChecks := buildPolicyChecks(commands, files, patchSummary, qualityGates)
 	reviewFocus := buildReviewFocus(gaps, qualityGates, patchSummary, policyChecks, commands, files)
@@ -426,6 +441,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		Timeline:             timeline,
 		Commands:             commands,
 		Files:                files,
+		EvidenceIndex:        evidenceIndex,
 		Risks:                nil,
 		Gaps:                 uniqueSorted(gaps),
 		VerifierTasks:        uniqueSorted(gaps),
@@ -729,6 +745,255 @@ func buildEvaluatorSignals(commands []Command, files []File, events []model.Even
 	}
 
 	return evaluatorSignals
+}
+
+func buildEvidenceIndex(events []model.Event, confidence model.CaptureConfidence, commands []Command, files []File, artifacts []Artifact) []EvidenceEntry {
+	evidenceByRef := map[string]EvidenceEntry{}
+
+	addEvidence := func(entry EvidenceEntry) {
+		entry.Ref = strings.TrimSpace(entry.Ref)
+		if entry.Ref == "" {
+			return
+		}
+		existing, hasExisting := evidenceByRef[entry.Ref]
+		if !hasExisting {
+			evidenceByRef[entry.Ref] = entry
+			return
+		}
+		evidenceByRef[entry.Ref] = mergeEvidenceEntry(existing, entry)
+	}
+
+	for _, event := range events {
+		entry := evidenceEntryFromEvent(event, confidence)
+		addEvidence(entry)
+	}
+
+	for index, command := range commands {
+		entry := commandEvidenceEntry(command)
+		entry.Ref = commandRef(index)
+		addEvidence(entry)
+
+		for _, ref := range command.EvidenceRefs {
+			if ref == "" {
+				continue
+			}
+			entry.Ref = ref
+			addEvidence(entry)
+		}
+	}
+
+	for _, file := range files {
+		path := filepath.ToSlash(strings.TrimSpace(file.Path))
+		if path == "" {
+			continue
+		}
+		summary := path
+		if file.Action != "" {
+			summary = file.Action + " " + path
+		}
+
+		addEvidence(EvidenceEntry{
+			Ref:     fileRef(path),
+			Type:    "file",
+			Path:    path,
+			Summary: summary,
+		})
+
+		for _, ref := range file.EvidenceRefs {
+			if _, ok := evidenceByRef[ref]; ok {
+				continue
+			}
+			addEvidence(missingEvidenceEntry(ref, "file"))
+		}
+	}
+
+	for _, artifact := range artifacts {
+		path := filepath.ToSlash(strings.TrimSpace(artifact.Path))
+		if path == "" {
+			continue
+		}
+		summary := path
+		if artifact.Name != "" {
+			summary = artifact.Name + " (" + path + ")"
+		}
+		entry := EvidenceEntry{
+			Ref:      path,
+			Type:     "artifact",
+			Artifact: path,
+			Summary:  summary,
+		}
+		if artifact.Exists {
+			entry.Confidence = model.ConfidenceMedium
+		}
+		addEvidence(entry)
+	}
+
+	if _, ok := evidenceByRef[finalPatchEvidenceRef]; !ok {
+		addEvidence(EvidenceEntry{
+			Ref:        finalPatchEvidenceRef,
+			Type:       "artifact",
+			Artifact:   finalPatchEvidenceRef,
+			Summary:    "final patch",
+			Confidence: model.ConfidenceNone,
+		})
+	}
+
+	for _, command := range commands {
+		for _, ref := range command.EvidenceRefs {
+			if _, ok := evidenceByRef[ref]; ok {
+				continue
+			}
+			addEvidence(missingEvidenceEntry(ref, "command"))
+		}
+	}
+
+	entries := make([]EvidenceEntry, 0, len(evidenceByRef))
+	for _, entry := range evidenceByRef {
+		entries = append(entries, entry)
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Ref == entries[j].Ref {
+			return entries[i].Type < entries[j].Type
+		}
+		return entries[i].Ref < entries[j].Ref
+	})
+
+	return entries
+}
+
+func commandRef(index int) string {
+	return fmt.Sprintf("commands/%04d", index+1)
+}
+
+func fileRef(path string) string {
+	return "files/" + filepath.ToSlash(strings.TrimSpace(path))
+}
+
+func evidenceEntryFromEvent(event model.Event, confidence model.CaptureConfidence) EvidenceEntry {
+	entry := EvidenceEntry{
+		Ref:        evidenceRef(event.Seq),
+		Type:       "event",
+		Time:       event.Timestamp.Format(time.RFC3339),
+		Confidence: timelineConfidence(event, confidence),
+	}
+
+	if attempt, ok := providerevidence.CommandAttemptFromEvent(event); ok {
+		entry.Type = "command"
+		entry.Command = redact(evidence.CommandSummary(attempt.Command))
+		entry.Summary = entry.Command
+		entry.Redacted = strings.Contains(entry.Command, "[REDACTED]")
+		return entry
+	}
+
+	if result := commandResultFromEvent(event); result.command != "" || result.status != "" {
+		entry.Type = "command"
+		entry.Command = redact(result.commandSummary)
+		entry.Summary = entry.Command
+		entry.ExitCode = cloneInt(result.exitCode)
+		entry.Redacted = strings.Contains(entry.Command, "[REDACTED]")
+		return entry
+	}
+
+	if event.Source == "fs_watcher" && event.Type == "fs.change" {
+		entry.Type = "file"
+		entry.Path = filepath.ToSlash(strings.TrimSpace(stringFromEventPayload(event.Payload, "path")))
+		action := strings.TrimSpace(stringFromEventPayload(event.Payload, "action"))
+		if entry.Path != "" && action != "" {
+			entry.Summary = action + " " + entry.Path
+		} else if entry.Path != "" {
+			entry.Summary = entry.Path
+		} else {
+			entry.Summary = event.Type
+		}
+		return entry
+	}
+
+	entry.Summary = strings.TrimSpace(event.Type)
+	if event.Source != "" {
+		entry.Summary = event.Source + ": " + entry.Summary
+	}
+
+	return entry
+}
+
+func commandEvidenceEntry(command Command) EvidenceEntry {
+	return EvidenceEntry{
+		Type:       "command",
+		Time:       command.Time,
+		Command:    command.Command,
+		Summary:    command.Command,
+		ExitCode:   cloneInt(command.ExitCode),
+		Confidence: command.Confidence,
+		Redacted:   strings.Contains(command.Command, "[REDACTED]"),
+	}
+}
+
+func missingEvidenceEntry(ref string, evidenceType string) EvidenceEntry {
+	if ref == "" {
+		return EvidenceEntry{}
+	}
+
+	entry := EvidenceEntry{
+		Ref:        strings.TrimSpace(ref),
+		Type:       "missing",
+		Summary:    "missing evidence: " + strings.TrimSpace(evidenceType),
+		Confidence: model.ConfidenceNone,
+	}
+
+	if evidenceType == "command" {
+		entry.Command = "missing command evidence"
+	}
+
+	return entry
+}
+
+func mergeEvidenceEntry(current EvidenceEntry, next EvidenceEntry) EvidenceEntry {
+	if current.Ref == "" {
+		current.Ref = next.Ref
+	}
+	if next.Type != "" {
+		current.Type = next.Type
+	}
+	if current.Time == "" || (next.Time != "" && next.Time < current.Time) {
+		current.Time = next.Time
+	}
+	if current.Path == "" {
+		current.Path = next.Path
+	}
+	if current.Artifact == "" {
+		current.Artifact = next.Artifact
+	}
+	if current.Command == "" {
+		current.Command = next.Command
+	}
+	if current.Summary == "" {
+		current.Summary = next.Summary
+	}
+	if current.ExitCode == nil {
+		current.ExitCode = cloneInt(next.ExitCode)
+	}
+	current.Redacted = current.Redacted || next.Redacted
+	if confidenceRank(next.Confidence) > confidenceRank(current.Confidence) {
+		current.Confidence = next.Confidence
+	}
+
+	return current
+}
+
+func confidenceRank(confidence model.Confidence) int {
+	switch confidence {
+	case model.ConfidenceHigh:
+		return 5
+	case model.ConfidenceMedium:
+		return 4
+	case model.ConfidenceLowMedium:
+		return 3
+	case model.ConfidenceLow:
+		return 2
+	default:
+		return 1
+	}
 }
 
 func maxConsecutiveFailedCommands(commands []Command) int {

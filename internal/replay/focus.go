@@ -52,6 +52,7 @@ type FocusReport struct {
 	FailedGates      []FailedGate           `json:"failed_gates,omitempty"`
 	WorkspaceChanges WorkspaceChangeSummary `json:"workspace_change_summary"`
 	InstructionFiles []InstructionFile      `json:"instruction_files,omitempty"`
+	EvidenceIndex    []EvidenceEntry        `json:"evidence_index,omitempty"`
 	EvaluatorSignals EvaluatorSignals       `json:"evaluator_signals,omitempty"`
 	EvidenceRefs     []string               `json:"evidence_refs,omitempty"`
 }
@@ -112,6 +113,7 @@ func BuildFocusReport(replay Report) FocusReport {
 	focus.WorkspaceChanges = replay.WorkspaceChange
 
 	reasons, tasks := collectFocusReasonsAndTasks(replay, focus.FailedGates)
+	focus.EvidenceIndex = append([]EvidenceEntry(nil), replay.EvidenceIndex...)
 	focus.EvaluatorSignals = replay.EvaluatorSignals
 	focus.Verdict = determineFocusVerdict(replay, reasons)
 	focus.TopReasons = capSortedStrings(focusReasonsToStrings(reasons), focusTopReasonLimit)

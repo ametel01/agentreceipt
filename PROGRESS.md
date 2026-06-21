@@ -20,13 +20,13 @@ Source documents:
 - [x] Step 8: Add machine-oriented exit codes for loop-facing commands
 - [x] Step 9: Add first-class diff equivalence verification
 - [x] Step 10: Add loop-health evaluator signals
-- [ ] Step 11: Add evidence reference dereferencing
+- [x] Step 11: Add evidence reference dereferencing
 - [ ] Step 12: Final documentation and contract hardening
 
 ## Status
 
-- Current phase: `Step 10` completed
-- Next step: `Step 11`
+- Current phase: `Step 11` completed
+- Next step: `Step 12`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference, and next step.
 
 ## Update Log
@@ -222,5 +222,14 @@ Source documents:
   - Updated README and evaluator contract docs with loop-health semantics.
   - Validation:
     - `go test ./internal/replay`
+    - `make verify`
+  - Commit: `97cb074`
+
+- 2026-06-21 — Completed Step 11 for evidence reference dereferencing.
+  - Added replay `evidence_index` entries for event refs, command refs, changed-file refs, bundled artifacts, and `diffs/final.patch`.
+  - Forwarded the evidence index into focus reports and schemas so reviewer loops can dereference compact evidence refs consistently.
+  - Added stable-order, deduplication, redaction, focus pass-through, and bundle-output coverage.
+  - Validation:
+    - `go test ./internal/replay ./cmd`
     - `make verify`
   - Commit: this step

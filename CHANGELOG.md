@@ -32,6 +32,7 @@ and this project follows semantic versioning.
   - `50` patch mismatch
   - `60` invalid input
 - Added loop-health evaluator signals in replay and focus output, including token totals, failed-command streaks, repeated file edit counts, read-to-edit ratio, validation-after-last-edit state, and related review tasks.
+- Added dereferenceable replay/focus evidence index entries for events, commands, files, artifacts, and final patch references.
 
 ## [0.7.0] - 2026-06-21
 
