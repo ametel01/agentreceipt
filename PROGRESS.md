@@ -11,13 +11,13 @@ Source documents:
 - [x] Step 0: Progress and Changelog Tracking Setup
 - [x] Step 1: Add shared agent-loop contract primitives
 - [x] Step 2: Add ranked focus work queues and file classifications
-- [ ] Step 3: Add compact replay indexes and query surfaces
+- [x] Step 3: Add compact replay indexes and query surfaces
 - [ ] Step 4: Wire reviewability output and harden documentation
 
 ## Status
 
-- Current phase: `Step 2` completed
-- Next step: `Step 3`
+- Current phase: `Step 3` completed
+- Next step: `Step 4`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference if available, current status, and next step.
 
 ## Update Log
@@ -45,8 +45,19 @@ Source documents:
   - Commit: `ae904ee`
 
 - 2026-06-21 — Step 3 is next.
-  - Replay index and query-surface work remains to be implemented from `PLAN.md`.
+  - Replay index and query-surface work remained to be implemented from `PLAN.md`.
   - Current tracker state is ready for the next feature commit.
+
+- 2026-06-21 — Completed Step 3 for compact replay indexes and query surfaces.
+  - Added compact replay output with `indexes`, `query`, and optional `selected_events` / `selected_files` / `selected_evidence` slices, plus `--full` timeline output.
+  - Added replay index projection tests, CLI query/full-mode coverage, schema updates, smoke coverage, and replay contract documentation for the new compact default.
+  - Validation:
+    - `go test ./internal/replay`
+    - `go test ./cmd`
+    - `go test ./...`
+    - `./scripts/smoke.sh`
+    - `make verify`
+  - Commit: `f573a36`
 
 - 2026-06-21 — Completed Step 2 for ranked focus work queues and file classifications.
   - Added `agent_tasks`, `recommended_next_commands`, `reviewable_files`, and `suppressed_changes` to focus output.

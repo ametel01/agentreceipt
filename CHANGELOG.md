@@ -12,6 +12,7 @@ and this project follows semantic versioning.
 - Added plan-specific progress and changelog tracking for the AI agent command improvements work.
 - Added shared loop contract primitives for replay/focus, including structured `reason_code` fields, `process_contract`, and `reviewability` metadata.
 - Added ranked focus work queues with `agent_tasks`, `recommended_next_commands`, file classification buckets, and suppressed-change tracking for agent-friendly review loops.
+- Added compact replay indexes and query surfaces, including `indexes`, `query`, `selected_events`, `selected_files`, `selected_evidence`, and full-timeline `--full` output.
 
 ## [0.8.0] - 2026-06-21
 
