@@ -12,12 +12,12 @@ Source documents:
 - [x] Step 1: Add shared agent-loop contract primitives
 - [x] Step 2: Add ranked focus work queues and file classifications
 - [x] Step 3: Add compact replay indexes and query surfaces
-- [ ] Step 4: Wire reviewability output and harden documentation
+- [x] Step 4: Wire reviewability output and harden documentation
 
 ## Status
 
-- Current phase: `Step 3` completed
-- Next step: `Step 4`
+- Current phase: `Step 4` completed
+- Next step: `complete`
 - Rule: `PROGRESS.md` is updated after each completed step, including validation results, commit reference if available, current status, and next step.
 
 ## Update Log
@@ -68,3 +68,9 @@ Source documents:
     - `go test ./internal/replay ./cmd`
     - `make verify`
   - Commit: `d15035f`
+
+- 2026-06-21 — Completed Step 4 for reviewability output and documentation hardening.
+  - Added explicit `reviewability` references to the replay/focus docs, updated the focus docs schema to match the live contract, and aligned the product/technical specs with the implemented replay and focus behavior.
+  - Validation:
+    - `make verify`
+  - Commit: `pending`

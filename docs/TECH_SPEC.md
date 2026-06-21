@@ -367,7 +367,7 @@ Replay and focus reports carry dereferenceable `evidence_index` entries for even
 
 - `agentreceipt focus --session <id>` builds replay from the named session and projects it into `agentreceipt.session_focus`.
 - `agentreceipt focus --replay <path>` reads an existing replay report and produces the same focus projection without session storage.
-- Focus output contains verdict, top reasons, ranked review tasks, per-file dossiers, failed gates, workspace-change summary, instruction-file evidence, evaluator signals, evidence index, and evidence refs.
+- Focus output contains verdict, shared `process_contract` and `reviewability` metadata, top reasons, ranked review tasks, per-file dossiers, failed gates, workspace-change summary, instruction-file evidence, evaluator signals, evidence index, and evidence refs.
 - `agentreceipt schema replay` and `agentreceipt schema focus` print embedded JSON Schema documents for contract consumers.
 - `agentreceipt verify diff` compares normalized finalized and candidate patches and returns machine-oriented exit codes for pass, integrity failure, mismatch, and invalid input.
 - These loop-facing surfaces are local and deterministic; they do not rank agents, score models, enforce policy, or orchestrate execution.

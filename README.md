@@ -205,6 +205,7 @@ agentreceipt schema focus
 - Replay/focus report `top_reasons` and tasks include workspace-diff checks including whether final patch still matches the current workspace.
 - `focus --session <id>` emits compact JSON with `kind: "agentreceipt.session_focus"` for agent loop callers.
 - `focus --replay ./replay.json` emits the same compact focus result directly from a replay report.
+- `focus` and `replay` both carry the shared `process_contract` and `reviewability` metadata so downstream loops can decide whether to continue, rerun validation, or escalate without re-deriving that state.
 - `focus` review tasks are ranked (`P0` → `P3`) and include `id`, `kind`, `question`, `paths`, `symbols`, `evidence_refs`, `confidence`, and `source` so loop automation can prioritize work.
 - Replay and focus reports also include instruction-file evidence captured at session start (`AGENTS.md`, `CLAUDE.md`) under `instruction_files`.
 - `schema replay` and `schema focus` print machine-consumable JSON Schema definitions for contract consumers and loop validators.
@@ -218,7 +219,7 @@ agentreceipt schema focus
   - `60` invalid CLI input
 - Rebuild the CLI (`go build -o agentreceipt .`) before checking replay output for behavior changes to ensure you are reading the latest source code.
 
-Replay JSON now includes explicit contract fields for verification, quality gates, patch summary,
+Replay JSON now includes explicit contract fields for verification, reviewability, quality gates, patch summary,
 policy checks, review focus, privacy, claims, and final outcome. The detailed contract is documented
 in [docs/replay-evaluator-contract.md](docs/replay-evaluator-contract.md).
 
