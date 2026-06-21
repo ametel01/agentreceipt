@@ -68,7 +68,7 @@ print_step() {
 }
 
 has_tty() {
-	[ -t 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]
+	{ : </dev/tty; } 2>/dev/null && { : >/dev/tty; } 2>/dev/null
 }
 
 prompt_bool() {

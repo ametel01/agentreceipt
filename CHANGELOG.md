@@ -26,6 +26,7 @@ and this project follows semantic versioning.
 
 - Fixed local `scripts/install.sh` skill installation against older release archives by extracting the binary independently and falling back to the checked-in `skills/agentreceipt/SKILL.md` when the archive does not yet include `agentreceipt-skill/SKILL.md`.
 - Fixed release-script archive assertions to avoid GNU tar `stdout: write error` failures under `pipefail` on Ubuntu CI.
+- Fixed `curl | sh` installs so the optional skill prompt uses `/dev/tty` even though installer stdin is a pipe.
 
 ## [0.9.0] - 2026-06-21
 
