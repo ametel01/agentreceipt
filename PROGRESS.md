@@ -87,4 +87,4 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Added top-level `claims` capturing verification verdict, signer authenticity, signer trust, quality gates, policy checks, privacy redaction, and final outcome with confidence and evidence refs.
   - Added top-level `outcome` classification with completed, completed_with_gaps, failed, abandoned, committed, and needs_human_review states derived from replay evidence.
   - Added replay coverage for privacy redaction reporting, raw provider log exposure, completed and completed_with_gaps outcomes, and failed versus abandoned outcome inference.
-  - Commit: pending
+  - Commit: `42ffe9b` (`Add replay evaluator outcome reporting`)
