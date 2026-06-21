@@ -64,6 +64,8 @@ type Report struct {
 	EvaluatorSignals     EvaluatorSignals      `json:"evaluator_signals"`
 	QualityGates         QualityGates          `json:"quality_gates"`
 	PatchSummary         PatchSummary          `json:"patch_summary"`
+	PolicyChecks         []PolicyCheck         `json:"policy_checks"`
+	ReviewFocus          []ReviewFocusItem     `json:"review_focus"`
 	Timeline             []TimelineItem        `json:"timeline"`
 	Commands             []Command             `json:"commands"`
 	Files                []File                `json:"files"`
@@ -133,6 +135,12 @@ const (
 	qualityGateStatusFailed  = "failed"
 	qualityGateStatusNotRun  = "not_run"
 	qualityGateStatusUnknown = "unknown"
+
+	policyCheckStatusPass          = "pass"
+	policyCheckStatusFail          = "fail"
+	policyCheckStatusWarn          = "warn"
+	policyCheckStatusNotApplicable = "not_applicable"
+	policyCheckStatusUnknown       = "unknown"
 )
 
 type Summary struct {
@@ -231,6 +239,20 @@ type FailedCommandDetail struct {
 	OutputTruncated      bool             `json:"output_truncated"`
 	EvidenceRefs         []string         `json:"evidence_refs"`
 	Confidence           model.Confidence `json:"confidence"`
+}
+
+type PolicyCheck struct {
+	Name         string           `json:"name"`
+	Status       string           `json:"status"`
+	Message      string           `json:"message"`
+	Confidence   model.Confidence `json:"confidence"`
+	EvidenceRefs []string         `json:"evidence_refs,omitempty"`
+}
+
+type ReviewFocusItem struct {
+	Message      string           `json:"message"`
+	Confidence   model.Confidence `json:"confidence"`
+	EvidenceRefs []string         `json:"evidence_refs,omitempty"`
 }
 
 type Risk struct {
@@ -332,6 +354,9 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	}
 
 	artifacts := buildArtifacts(layout)
+	qualityGates := buildQualityGates(commands)
+	policyChecks := buildPolicyChecks(commands, files, patchSummary, qualityGates)
+	reviewFocus := buildReviewFocus(gaps, qualityGates, patchSummary, policyChecks, commands, files)
 
 	report := Report{
 		SchemaVersion: model.SchemaVersion,
@@ -355,8 +380,10 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			FinalRisk:         model.RiskInfo,
 		},
 		EvaluatorSignals:     buildEvaluatorSignals(commands, files),
-		QualityGates:         buildQualityGates(commands),
+		QualityGates:         qualityGates,
 		PatchSummary:         patchSummary,
+		PolicyChecks:         policyChecks,
+		ReviewFocus:          reviewFocus,
 		FailedCommandDetails: failedCommandDetails,
 		Timeline:             timeline,
 		Commands:             commands,

@@ -718,6 +718,315 @@ func TestBuildMarksMissingQualityGateSignals(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesPolicyChecksAndReviewFocus(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_read",
+						"command": "cat main.go",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_read",
+					"command":   "cat main.go",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_edit",
+						"command": "apply_patch",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_edit",
+					"command":   "apply_patch",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_net",
+						"command": "curl https://example.com",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_net",
+					"command":   "curl https://example.com",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_rm",
+						"command": "rm -rf /tmp/cache",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_rm",
+					"command":   "rm -rf /tmp/cache",
+					"status":    "failed",
+					"exit_code": 1,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_test",
+						"command": "go test ./...",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_test",
+					"command":   "go test ./...",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommand,
+				Payload: map[string]any{
+					"tool_call": map[string]any{
+						"call_id": "call_commit",
+						"command": "git commit -m \"update\"",
+					},
+				},
+			},
+			{
+				Source: providerevidence.SourceCodex,
+				Type:   providerevidence.TypeCommandResult,
+				Payload: map[string]any{
+					"call_id":   "call_commit",
+					"command":   "git commit -m \"update\"",
+					"status":    "success",
+					"exit_code": 0,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "main.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "go.mod",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": true,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       ".github/workflows/ci.yml",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       ".env.local",
+					"action":     "modify",
+					"sensitive":  true,
+					"dependency": false,
+				},
+			},
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "generated/widget.gen.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+		},
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Changed() {}\n"), 0o600); err != nil {
+				t.Fatalf("write main.go: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repoRoot, "go.mod"), []byte("module example.com/project\n"), 0o600); err != nil {
+				t.Fatalf("write go.mod: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Join(repoRoot, ".github", "workflows"), 0o750); err != nil {
+				t.Fatalf("mkdir workflows: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"), []byte("name: CI\n"), 0o600); err != nil {
+				t.Fatalf("write ci.yml: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repoRoot, ".env.local"), []byte("TOKEN=secret\n"), 0o600); err != nil {
+				t.Fatalf("write env: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Join(repoRoot, "generated"), 0o750); err != nil {
+				t.Fatalf("mkdir generated: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repoRoot, "generated", "widget.gen.go"), []byte("package generated\n"), 0o600); err != nil {
+				t.Fatalf("write generated file: %v", err)
+			}
+		},
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if got := findPolicyCheck(report.PolicyChecks, "target_file_read_before_edit"); got == nil || got.Status != policyCheckStatusPass {
+		t.Fatalf("target_file_read_before_edit = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "related_context_read_before_edit"); got == nil || got.Status != policyCheckStatusPass {
+		t.Fatalf("related_context_read_before_edit = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "tests_run_after_code_changes"); got == nil || got.Status != policyCheckStatusPass {
+		t.Fatalf("tests_run_after_code_changes = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "lint_run_after_code_changes"); got == nil || got.Status != policyCheckStatusFail {
+		t.Fatalf("lint_run_after_code_changes = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "typecheck_run_when_applicable"); got == nil || got.Status != policyCheckStatusNotApplicable {
+		t.Fatalf("typecheck_run_when_applicable = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "destructive_command_used"); got == nil || got.Status != policyCheckStatusFail {
+		t.Fatalf("destructive_command_used = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "network_command_used"); got == nil || got.Status != policyCheckStatusFail {
+		t.Fatalf("network_command_used = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "dependency_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+		t.Fatalf("dependency_file_changed = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "sensitive_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+		t.Fatalf("sensitive_file_changed = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "ci_or_security_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+		t.Fatalf("ci_or_security_file_changed = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "generated_file_changed"); got == nil || got.Status != policyCheckStatusWarn {
+		t.Fatalf("generated_file_changed = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "commit_created"); got == nil || got.Status != policyCheckStatusPass {
+		t.Fatalf("commit_created = %+v", got)
+	}
+	if len(report.ReviewFocus) == 0 {
+		t.Fatal("review_focus is empty")
+	}
+	if !containsReviewFocus(report.ReviewFocus, "Production code changed without test file changes.") {
+		t.Fatalf("review_focus = %+v", report.ReviewFocus)
+	}
+	if !containsReviewFocus(report.ReviewFocus, "Failed command: rm -rf /tmp/cache") {
+		t.Fatalf("review_focus = %+v", report.ReviewFocus)
+	}
+	if !containsReviewFocus(report.ReviewFocus, "Lint commands were not observed after code changes.") {
+		t.Fatalf("review_focus = %+v", report.ReviewFocus)
+	}
+	if !containsPolicyEvidenceRefs(report.PolicyChecks) {
+		t.Fatalf("policy checks missing evidence refs: %+v", report.PolicyChecks)
+	}
+}
+
+func TestBuildDistinguishesUnknownPolicyChecksFromFailures(t *testing.T) {
+	t.Parallel()
+
+	repo, sessionID, _ := finalizedReplaySession(
+		t,
+		[]model.Event{
+			{
+				Source: "fs_watcher",
+				Type:   "fs.change",
+				Payload: map[string]any{
+					"path":       "main.go",
+					"action":     "modify",
+					"sensitive":  false,
+					"dependency": false,
+				},
+			},
+		},
+		func(repoRoot string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package main\n\nfunc Changed() {}\n"), 0o600); err != nil {
+				t.Fatalf("write main.go: %v", err)
+			}
+		},
+	)
+
+	report, err := Build(context.Background(), Options{
+		RepoPath:  repo,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if got := findPolicyCheck(report.PolicyChecks, "tests_run_after_code_changes"); got == nil || got.Status != policyCheckStatusUnknown {
+		t.Fatalf("tests_run_after_code_changes = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "network_command_used"); got == nil || got.Status != policyCheckStatusUnknown {
+		t.Fatalf("network_command_used = %+v", got)
+	}
+	if got := findPolicyCheck(report.PolicyChecks, "commit_created"); got == nil || got.Status != policyCheckStatusUnknown {
+		t.Fatalf("commit_created = %+v", got)
+	}
+	if !containsReviewFocus(report.ReviewFocus, "No provider tool events were observed.") {
+		t.Fatalf("review_focus = %+v", report.ReviewFocus)
+	}
+}
+
 func TestBuildCapturesMissingEvidenceGaps(t *testing.T) {
 	t.Parallel()
 
@@ -1662,4 +1971,34 @@ func findFile(files []File, path string) *File {
 	}
 
 	return nil
+}
+
+func findPolicyCheck(checks []PolicyCheck, name string) *PolicyCheck {
+	for index := range checks {
+		if checks[index].Name == name {
+			return &checks[index]
+		}
+	}
+
+	return nil
+}
+
+func containsReviewFocus(items []ReviewFocusItem, needle string) bool {
+	for _, item := range items {
+		if strings.Contains(item.Message, needle) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func containsPolicyEvidenceRefs(checks []PolicyCheck) bool {
+	for _, check := range checks {
+		if len(check.EvidenceRefs) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
