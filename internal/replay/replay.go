@@ -54,21 +54,24 @@ type Options struct {
 
 // Report is the verifier-facing replay payload.
 type Report struct {
-	SchemaVersion    int              `json:"schema_version"`
-	Kind             string           `json:"kind"`
-	SessionID        string           `json:"session_id"`
-	GeneratedAt      time.Time        `json:"generated_at"`
-	Source           Source           `json:"source"`
-	Verification     Verification     `json:"verification"`
-	Summary          Summary          `json:"summary"`
-	EvaluatorSignals EvaluatorSignals `json:"evaluator_signals"`
-	Timeline         []TimelineItem   `json:"timeline"`
-	Commands         []Command        `json:"commands"`
-	Files            []File           `json:"files"`
-	Risks            []Risk           `json:"risks"`
-	Gaps             []string         `json:"gaps"`
-	VerifierTasks    []string         `json:"verifier_tasks"`
-	Artifacts        []Artifact       `json:"artifacts"`
+	SchemaVersion        int                   `json:"schema_version"`
+	Kind                 string                `json:"kind"`
+	SessionID            string                `json:"session_id"`
+	GeneratedAt          time.Time             `json:"generated_at"`
+	Source               Source                `json:"source"`
+	Verification         Verification          `json:"verification"`
+	Summary              Summary               `json:"summary"`
+	EvaluatorSignals     EvaluatorSignals      `json:"evaluator_signals"`
+	QualityGates         QualityGates          `json:"quality_gates"`
+	PatchSummary         PatchSummary          `json:"patch_summary"`
+	Timeline             []TimelineItem        `json:"timeline"`
+	Commands             []Command             `json:"commands"`
+	Files                []File                `json:"files"`
+	Risks                []Risk                `json:"risks"`
+	FailedCommandDetails []FailedCommandDetail `json:"failed_command_details,omitempty"`
+	Gaps                 []string              `json:"gaps"`
+	VerifierTasks        []string              `json:"verifier_tasks"`
+	Artifacts            []Artifact            `json:"artifacts"`
 }
 
 type Source struct {
@@ -125,6 +128,11 @@ const (
 	trustStatusNotTrusted          = "not_trusted"
 	trustStatusNotConfigured       = "not_configured"
 	trustStatusPolicyInvalid       = "policy_invalid"
+
+	qualityGateStatusPassed  = "passed"
+	qualityGateStatusFailed  = "failed"
+	qualityGateStatusNotRun  = "not_run"
+	qualityGateStatusUnknown = "unknown"
 )
 
 type Summary struct {
@@ -174,7 +182,13 @@ type Command struct {
 	OutputSummary   string           `json:"output_summary"`
 	StdoutTruncated bool             `json:"stdout_truncated"`
 	Confidence      model.Confidence `json:"confidence"`
+	Cwd             string           `json:"cwd,omitempty"`
+	Time            string           `json:"time,omitempty"`
 	EvidenceRefs    []string         `json:"evidence_refs"`
+
+	failedReason         string
+	stderrOrErrorForFail string
+	stdoutForFail        string
 }
 
 type File struct {
@@ -184,6 +198,39 @@ type File struct {
 	Dependency   bool     `json:"dependency"`
 	InFinalPatch bool     `json:"in_final_patch"`
 	EvidenceRefs []string `json:"evidence_refs"`
+}
+
+type QualityGate struct {
+	Status       string           `json:"status"`
+	Commands     []string         `json:"commands"`
+	EvidenceRefs []string         `json:"evidence_refs"`
+	LastExitCode *int             `json:"last_exit_code,omitempty"`
+	Confidence   model.Confidence `json:"confidence"`
+}
+
+type QualityGates struct {
+	Format    QualityGate `json:"format"`
+	Lint      QualityGate `json:"lint"`
+	Tests     QualityGate `json:"tests"`
+	RaceTests QualityGate `json:"race_tests"`
+	Typecheck QualityGate `json:"typecheck"`
+	Security  QualityGate `json:"security"`
+	Coverage  QualityGate `json:"coverage"`
+	Build     QualityGate `json:"build"`
+	Smoke     QualityGate `json:"smoke"`
+	Verify    QualityGate `json:"verify"`
+}
+
+type FailedCommandDetail struct {
+	Cwd                  string           `json:"cwd"`
+	Time                 string           `json:"time"`
+	ExitCode             *int             `json:"exit_code,omitempty"`
+	FailedReason         string           `json:"failed_reason"`
+	StderrOrErrorSummary string           `json:"stderr_or_error_summary"`
+	StdoutSummary        string           `json:"stdout_summary"`
+	OutputTruncated      bool             `json:"output_truncated"`
+	EvidenceRefs         []string         `json:"evidence_refs"`
+	Confidence           model.Confidence `json:"confidence"`
 }
 
 type Risk struct {
@@ -207,6 +254,8 @@ type commandAttempt struct {
 	status  string
 	callID  string
 	seq     int64
+	cwd     string
+	time    string
 }
 
 type commandResultMeta struct {
@@ -220,6 +269,8 @@ type commandResultMeta struct {
 	failedReason    string
 	stderrOrError   string
 	seq             int64
+	cwd             string
+	time            string
 }
 
 // Build constructs a replay report for one session.
@@ -263,10 +314,14 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		gaps = append(gaps, "Unable to read final patch: "+finalPatchErr.Error())
 	}
 
-	commands, commandGaps := buildCommands(events, cfg)
+	classifier := fswatcher.NewClassifier(cfg)
+	patchSummary, patchGaps := buildPatchSummary(finalPatch, classifier)
+	gaps = append(gaps, patchGaps...)
+
+	commands, failedCommandDetails, commandGaps := buildCommands(events, cfg)
 	gaps = append(gaps, commandGaps...)
 
-	files := buildFiles(cfg, evidenceSummary.ChangedFiles, finalPatch, events)
+	files := buildFiles(classifier, evidenceSummary.ChangedFiles, finalPatch, events)
 	timeline := buildTimeline(events, evidenceConfidence)
 
 	verification, verifyWarnings := buildVerification(layout, eventsErr == nil, options)
@@ -299,14 +354,17 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			TypecheckDetected: evidenceSummary.TypecheckDetected,
 			FinalRisk:         model.RiskInfo,
 		},
-		EvaluatorSignals: buildEvaluatorSignals(commands, files),
-		Timeline:         timeline,
-		Commands:         commands,
-		Files:            files,
-		Risks:            nil,
-		Gaps:             uniqueSorted(gaps),
-		VerifierTasks:    uniqueSorted(gaps),
-		Artifacts:        artifacts,
+		EvaluatorSignals:     buildEvaluatorSignals(commands, files),
+		QualityGates:         buildQualityGates(commands),
+		PatchSummary:         patchSummary,
+		FailedCommandDetails: failedCommandDetails,
+		Timeline:             timeline,
+		Commands:             commands,
+		Files:                files,
+		Risks:                nil,
+		Gaps:                 uniqueSorted(gaps),
+		VerifierTasks:        uniqueSorted(gaps),
+		Artifacts:            artifacts,
 	}
 
 	return report, nil
@@ -393,7 +451,7 @@ func WriteBundle(ctx context.Context, options Options) (Report, error) {
 	return replayReport, nil
 }
 
-func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string) {
+func buildCommands(events []model.Event, cfg config.Config) ([]Command, []FailedCommandDetail, []string) {
 	attempts := make([]commandAttempt, 0)
 	results := make([]commandResultMeta, 0)
 	for _, event := range events {
@@ -404,6 +462,8 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 				status:  "unknown",
 				callID:  attempt.CallID,
 				seq:     event.Seq,
+				cwd:     event.CWD,
+				time:    event.Timestamp.Format(time.RFC3339),
 			})
 			continue
 		}
@@ -411,11 +471,14 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 			if result.status == "" {
 				continue
 			}
+			result.cwd = event.CWD
+			result.time = event.Timestamp.Format(time.RFC3339)
 			results = append(results, result)
 		}
 	}
 
 	commands := make([]Command, 0, len(attempts)+len(results))
+	failedCommandDetails := make([]FailedCommandDetail, 0)
 	commandGaps := make([]string, 0)
 	usedResult := map[int64]bool{}
 
@@ -440,11 +503,22 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 			command.ExitCode = cloneInt(result.exitCode)
 			command.StdoutTruncated = result.stdoutTruncated
 			command.OutputSummary = commandOutputSummary(result)
+			command.failedReason = result.failedReason
+			command.stderrOrErrorForFail = result.stderrOrError
+			command.stdoutForFail = result.stdout
 			command.EvidenceRefs = append(command.EvidenceRefs, evidenceRef(result.seq))
+			command.Cwd = coalesceString(attempt.cwd, result.cwd)
+			command.Time = coalesceString(attempt.time, result.time)
+		} else {
+			command.Cwd = attempt.cwd
+			command.Time = attempt.time
 		}
 		command.EvidenceRefs = uniqueSorted(command.EvidenceRefs)
 		if command.Kind == "" {
 			command.Kind = "command"
+		}
+		if isCommandFailed(command) {
+			failedCommandDetails = append(failedCommandDetails, buildFailedCommandDetail(command))
 		}
 		commands = append(commands, command)
 	}
@@ -459,14 +533,22 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 			}
 		}
 		command := Command{
-			Command:         redact(result.commandSummary),
-			Kind:            evidence.CommandKind(result.command, cfg),
-			Status:          normalizeStatus(result.status),
-			ExitCode:        cloneInt(result.exitCode),
-			OutputSummary:   commandOutputSummary(result),
-			StdoutTruncated: result.stdoutTruncated,
-			Confidence:      model.ConfidenceMedium,
-			EvidenceRefs:    uniqueSorted([]string{evidenceRef(result.seq)}),
+			Command:              redact(result.commandSummary),
+			Kind:                 evidence.CommandKind(result.command, cfg),
+			Status:               normalizeStatus(result.status),
+			ExitCode:             cloneInt(result.exitCode),
+			OutputSummary:        commandOutputSummary(result),
+			StdoutTruncated:      result.stdoutTruncated,
+			Confidence:           model.ConfidenceMedium,
+			EvidenceRefs:         uniqueSorted([]string{evidenceRef(result.seq)}),
+			failedReason:         result.failedReason,
+			stderrOrErrorForFail: result.stderrOrError,
+			stdoutForFail:        result.stdout,
+			Cwd:                  result.cwd,
+			Time:                 result.time,
+		}
+		if isCommandFailed(command) {
+			failedCommandDetails = append(failedCommandDetails, buildFailedCommandDetail(command))
 		}
 		if command.Kind == "" {
 			command.Kind = "command"
@@ -484,7 +566,31 @@ func buildCommands(events []model.Event, cfg config.Config) ([]Command, []string
 		return left < right
 	})
 
-	return commands, commandGaps
+	return commands, failedCommandDetails, uniqueSorted(commandGaps)
+}
+
+func coalesceString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func buildFailedCommandDetail(command Command) FailedCommandDetail {
+	return FailedCommandDetail{
+		Cwd:                  command.Cwd,
+		Time:                 command.Time,
+		ExitCode:             cloneInt(command.ExitCode),
+		FailedReason:         redact(command.failedReason),
+		StderrOrErrorSummary: redact(truncate(command.stderrOrErrorForFail, maxOutputSummaryRunes)),
+		StdoutSummary:        redact(truncate(command.stdoutForFail, maxOutputSummaryRunes)),
+		OutputTruncated:      command.StdoutTruncated,
+		EvidenceRefs:         append([]string(nil), command.EvidenceRefs...),
+		Confidence:           command.Confidence,
+	}
 }
 
 func buildEvaluatorSignals(commands []Command, files []File) EvaluatorSignals {
@@ -543,6 +649,283 @@ func buildEvaluatorSignals(commands []Command, files []File) EvaluatorSignals {
 	}
 
 	return evaluatorSignals
+}
+
+func buildQualityGates(commands []Command) QualityGates {
+	qualityGates := QualityGates{
+		Format:    QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Lint:      QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Tests:     QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		RaceTests: QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Typecheck: QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Security:  QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Coverage:  QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Build:     QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Smoke:     QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+		Verify:    QualityGate{Status: qualityGateStatusNotRun, Confidence: model.ConfidenceLow},
+	}
+
+	for _, command := range commands {
+		commandText := command.Command
+		for _, gate := range qualityGatesForCommand(commandText, command.Kind) {
+			qualityGate := qualityGateRef(&qualityGates, gate)
+			if qualityGate == nil {
+				continue
+			}
+			qualityGate.Commands = append(qualityGate.Commands, commandText)
+			qualityGate.EvidenceRefs = append(qualityGate.EvidenceRefs, command.EvidenceRefs...)
+			qualityGate.Status = combineGateStatus(qualityGate.Status, gateStatusFromCommand(command))
+			qualityGate.LastExitCode = gateLastExitCode(qualityGate.LastExitCode, command.ExitCode)
+			qualityGate.Confidence = confidenceFromGateStatus(qualityGate.Status)
+		}
+	}
+
+	qualityGates = qualityGateFinalize(qualityGates)
+
+	return qualityGates
+}
+
+func qualityGateRef(gates *QualityGates, name string) *QualityGate {
+	switch name {
+	case "format":
+		return &gates.Format
+	case "lint":
+		return &gates.Lint
+	case "tests":
+		return &gates.Tests
+	case "race_tests":
+		return &gates.RaceTests
+	case "typecheck":
+		return &gates.Typecheck
+	case "security":
+		return &gates.Security
+	case "coverage":
+		return &gates.Coverage
+	case "build":
+		return &gates.Build
+	case "smoke":
+		return &gates.Smoke
+	case "verify":
+		return &gates.Verify
+	default:
+		return nil
+	}
+}
+
+func qualityGateFinalize(gates QualityGates) QualityGates {
+	return QualityGates{
+		Format:    finalizeGate(gates.Format),
+		Lint:      finalizeGate(gates.Lint),
+		Tests:     finalizeGate(gates.Tests),
+		RaceTests: finalizeGate(gates.RaceTests),
+		Typecheck: finalizeGate(gates.Typecheck),
+		Security:  finalizeGate(gates.Security),
+		Coverage:  finalizeGate(gates.Coverage),
+		Build:     finalizeGate(gates.Build),
+		Smoke:     finalizeGate(gates.Smoke),
+		Verify:    finalizeGate(gates.Verify),
+	}
+}
+
+func finalizeGate(gate QualityGate) QualityGate {
+	gate.Commands = uniqueSorted(gate.Commands)
+	gate.EvidenceRefs = uniqueSorted(gate.EvidenceRefs)
+	gate.Confidence = confidenceFromGateStatus(gate.Status)
+
+	return gate
+}
+
+func gateStatusFromCommand(command Command) string {
+	if isCommandFailed(command) {
+		return qualityGateStatusFailed
+	}
+	if command.Status == "success" {
+		return qualityGateStatusPassed
+	}
+
+	if command.Status == "unknown" || command.ExitCode == nil {
+		return qualityGateStatusUnknown
+	}
+
+	if *command.ExitCode == 0 {
+		return qualityGateStatusPassed
+	}
+
+	return qualityGateStatusFailed
+}
+
+func combineGateStatus(current, next string) string {
+	if next == qualityGateStatusFailed {
+		return qualityGateStatusFailed
+	}
+	if current == qualityGateStatusNotRun {
+		return next
+	}
+	if current == qualityGateStatusFailed {
+		return qualityGateStatusFailed
+	}
+	if current == qualityGateStatusUnknown || next == qualityGateStatusUnknown {
+		return qualityGateStatusUnknown
+	}
+
+	if next == qualityGateStatusPassed && current == qualityGateStatusNotRun {
+		return qualityGateStatusPassed
+	}
+
+	return current
+}
+
+func confidenceFromGateStatus(status string) model.Confidence {
+	switch status {
+	case qualityGateStatusPassed:
+		return model.ConfidenceMedium
+	case qualityGateStatusFailed:
+		return model.ConfidenceHigh
+	case qualityGateStatusUnknown:
+		return model.ConfidenceLowMedium
+	case qualityGateStatusNotRun:
+		return model.ConfidenceLow
+	default:
+		return model.ConfidenceLow
+	}
+}
+
+func gateLastExitCode(current, candidate *int) *int {
+	if candidate == nil {
+		return current
+	}
+
+	return cloneInt(candidate)
+}
+
+func qualityGatesForCommand(command string, kind string) []string {
+	command = strings.ToLower(strings.TrimSpace(redact(command)))
+	gates := make([]string, 0)
+	seen := map[string]bool{}
+	appendGate := func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		gates = append(gates, name)
+	}
+
+	if isFormatCommand(command) {
+		appendGate("format")
+	}
+	if isSecurityCommand(command) {
+		appendGate("security")
+	}
+	if isCoverageCommand(command) {
+		appendGate("coverage")
+	}
+	if isBuildCommand(command) {
+		appendGate("build")
+	}
+	if isSmokeCommand(command) {
+		appendGate("smoke")
+	}
+	if isVerifyCommand(command) {
+		appendGate("verify")
+	}
+
+	switch kind {
+	case "lint":
+		appendGate("lint")
+	case "typecheck":
+		appendGate("typecheck")
+	case "test":
+		appendGate("tests")
+		if isRaceTestCommand(command) {
+			appendGate("race_tests")
+		}
+		if isCoverageCommand(command) {
+			appendGate("coverage")
+		}
+		if isVerifyCommand(command) {
+			appendGate("verify")
+		}
+	default:
+		if command == "make test" || command == "make verify" {
+			appendGate("tests")
+		}
+	}
+
+	return gates
+}
+
+func isFormatCommand(command string) bool {
+	switch {
+	case strings.Contains(command, "gofmt "), strings.Contains(command, " gofmt"):
+		return true
+	case strings.HasPrefix(command, "go fmt") || strings.Contains(command, " go fmt "):
+		return true
+	case strings.Contains(command, "prettier"):
+		return true
+	case strings.Contains(command, "rustfmt"):
+		return true
+	case strings.Contains(command, "gofumpt"):
+		return true
+	case strings.Contains(command, "black ") || strings.HasPrefix(command, "black"):
+		return true
+	case strings.Contains(command, "clang-format"):
+		return true
+	}
+
+	return false
+}
+
+func isRaceTestCommand(command string) bool {
+	return strings.Contains(command, " test -race") || strings.Contains(command, "-race")
+}
+
+func isCoverageCommand(command string) bool {
+	switch {
+	case strings.Contains(command, " -cover"):
+		return true
+	case strings.Contains(command, "coverage"):
+		return true
+	case strings.Contains(command, "coverprofile"):
+		return true
+	}
+
+	return false
+}
+
+func isSecurityCommand(command string) bool {
+	securityPatterns := []string{
+		"gosec",
+		"npm audit",
+		"pnpm audit",
+		"yarn audit",
+		"snyk",
+		"safety",
+	}
+
+	for _, pattern := range securityPatterns {
+		if strings.Contains(command, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isBuildCommand(command string) bool {
+	return strings.Contains(command, "go build") ||
+		strings.Contains(command, "make build") ||
+		strings.Contains(command, "npm run build") ||
+		strings.Contains(command, "pnpm build") ||
+		strings.Contains(command, "yarn build") ||
+		strings.Contains(command, "cargo build")
+}
+
+func isSmokeCommand(command string) bool {
+	return strings.Contains(command, "smoke")
+}
+
+func isVerifyCommand(command string) bool {
+	return strings.HasPrefix(command, "make verify") || strings.HasPrefix(command, "agentreceipt verify")
 }
 
 func commandSignalsHas(signals []commandrisk.Classification, names ...string) bool {
@@ -743,7 +1126,7 @@ type patchFile struct {
 	Action string
 }
 
-func buildFiles(cfg config.Config, changed []model.ChangedFile, finalPatch string, events []model.Event) []File {
+func buildFiles(classifier fswatcher.Classifier, changed []model.ChangedFile, finalPatch string, events []model.Event) []File {
 	fileRefs := map[string][]string{}
 	for _, event := range events {
 		if event.Type != "fs.change" {
@@ -757,7 +1140,6 @@ func buildFiles(cfg config.Config, changed []model.ChangedFile, finalPatch strin
 		fileRefs[path] = append(fileRefs[path], evidenceRef(event.Seq))
 	}
 
-	classifier := fswatcher.NewClassifier(cfg)
 	patchRefs := parseFinalPatchRefs(finalPatch)
 	fileSummary := map[string]File{}
 	for _, changedFile := range changed {

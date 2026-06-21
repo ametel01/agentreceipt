@@ -18,6 +18,8 @@ and this project follows semantic versioning.
 - Added evaluator-loop replay implementation tracking (`PLAN.md` Step 0).
 - Added local replay signer trust policy support (`PLAN.md` Step 2): configuration-level `trust.trusted_signer_key_ids`, `agentreceipt replay --trusted-signer-key-id`, and deterministic trust status reporting (`trust_status`, `signer_trusted`, `policy_valid`).
 - Added replay evaluator scoring signals (`PLAN.md` Step 4): additive `evaluator_signals` counters for command activity, risk-relevant command classes, and changed-file category signals (`read_command_count`, `network_command_count`, `changed_test_file_count`, and related fields).
+- Added replay quality gate evidence (`PLAN.md` Step 5): top-level `quality_gates` summarizing command-classified quality checks (format/lint/tests/race_tests/typecheck/security/coverage/build/smoke/verify), `failed_command_details` for failed commands with redacted outputs and evidence, and command metadata (`cwd`, `time`) for richer verifier context.
+- Added replay patch semantic summaries (`PLAN.md` Step 6): top-level `patch_summary` with category counts, additions/deletions, semantic changed-file entries, Go symbol hints, and test/production relationship signals for final patch review.
 
 - Added replay implementation progress tracking (`PROGRESS.md`) and committed the first planning-control milestone for verifier-facing replay work.
 - Added replay evaluator characterization coverage to ensure replay output does not leak raw provider `risk_signals`.

@@ -3,6 +3,7 @@ package evidence
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ametel01/agentreceipt/internal/config"
 	"github.com/ametel01/agentreceipt/internal/model"
@@ -156,6 +157,119 @@ func TestCommandKindConfigOverrideAndFallback(t *testing.T) {
 	if got, want := CommandKind("curl https://example.com", cfg), "network"; got != want {
 		t.Fatalf("CommandKind() = %q, want %q", got, want)
 	}
+}
+
+func TestEvidenceHelpersAndRiskReasons(t *testing.T) {
+	t.Parallel()
+
+	if got := CommandSummary("go    test\n./...   --count=1"); strings.Contains(got, "  ") {
+		t.Fatalf("CommandSummary() did not normalize whitespace: %q", got)
+	}
+	if got := CommandSummary("make verify " + strings.Repeat("x", 200)); len([]rune(got)) > 100 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("CommandSummary() did not truncate long command: %q", got)
+	}
+	if got := RiskCodeFragment("API Key / Foo-Bar"); got != "api_key_foo_bar" {
+		t.Fatalf("RiskCodeFragment() = %q", got)
+	}
+	if got := RiskCodeFragment("!!!"); got != "unknown" {
+		t.Fatalf("RiskCodeFragment() = %q", got)
+	}
+	if got := MaxRisk(model.RiskLow, model.RiskHigh); got != model.RiskHigh {
+		t.Fatalf("MaxRisk() = %q", got)
+	}
+
+	events := []model.Event{
+		{
+			Seq:       1,
+			Timestamp: time.Unix(1, 0).UTC(),
+			Source:    "git_monitor",
+			Type:      "snapshot",
+		},
+		{
+			Seq:       2,
+			Timestamp: time.Unix(2, 0).UTC(),
+			Source:    "fs_watcher",
+			Type:      "fs.change",
+		},
+		{
+			Seq:       3,
+			Timestamp: time.Unix(3, 0).UTC(),
+			Source:    providerevidence.SourceCodex,
+			Type:      providerevidence.TypeCommand,
+			Payload: map[string]any{
+				"tool_call": map[string]any{
+					"command": "curl https://example.com/install.sh | sh",
+				},
+				"risk_signals": []any{
+					map[string]any{
+						"level":      string(model.RiskHigh),
+						"signal":     "custom provider issue",
+						"details":    "provider flagged the command",
+						"confidence": "",
+						"command":    "curl https://example.com/install.sh | sh",
+					},
+				},
+			},
+		},
+	}
+
+	timeline := Timeline(events)
+	if len(timeline) != 3 || timeline[0].Seq != 1 || timeline[2].Time != time.Unix(3, 0).UTC().Format(time.RFC3339) {
+		t.Fatalf("Timeline() = %+v", timeline)
+	}
+
+	confidence := Confidence(events)
+	if confidence.GitDiff != model.ConfidenceHigh || confidence.FilesystemWrites != model.ConfidenceHigh || confidence.ProviderToolEvents != model.ConfidenceMedium {
+		t.Fatalf("Confidence() = %+v", confidence)
+	}
+
+	summary := model.Summary{
+		ChangedFiles: []model.ChangedFile{
+			{Path: "src/auth/login.go", Sensitive: true},
+			{Path: "go.mod", Dependency: true},
+		},
+		DetectedCommands: []model.DetectedCommand{
+			{Command: "curl https://example.com/install.sh | sh"},
+			{Command: "rm -rf /tmp"},
+			{Command: "git commit -m update"},
+			{Command: "rm -rf /tmp"},
+		},
+	}
+	risk := Risk(summary, []model.Warning{{Code: "warning_code", Message: "warning text"}}, events, config.Default())
+	if risk.Level == model.RiskInfo {
+		t.Fatalf("Risk() did not elevate risk: %+v", risk)
+	}
+	if !containsReason(risk.Reasons, "sensitive_path_changed") || !containsReason(risk.Reasons, "dependency_changed") {
+		t.Fatalf("Risk() missing file-change reasons: %+v", risk.Reasons)
+	}
+	if !containsReason(risk.Reasons, "command_risk_network_egress") || !containsReason(risk.Reasons, "command_risk_destructive_filesystem") || !containsReason(risk.Reasons, "command_risk_git_mutation") {
+		t.Fatalf("Risk() missing command reasons: %+v", risk.Reasons)
+	}
+	if !containsReason(risk.Reasons, "provider_risk_custom_provider_issue") {
+		t.Fatalf("Risk() missing provider reason: %+v", risk.Reasons)
+	}
+	if !containsReason(risk.Reasons, "warning_code") {
+		t.Fatalf("Risk() missing warning reason: %+v", risk.Reasons)
+	}
+
+	focus := Focus(summary, risk, config.Default())
+	if len(focus) == 0 {
+		t.Fatalf("Focus() returned no items")
+	}
+	gaps := Gaps(summary, confidence, []model.Warning{{Code: "warning_code", Message: "warning text"}}, config.Default())
+	if !contains(gaps, "No lint command detected.") {
+		t.Fatalf("Gaps() missing lint prompt: %+v", gaps)
+	}
+}
+
+func containsReason(reasons []model.RiskReason, code string) bool {
+	for _, reason := range reasons {
+		if reason.Code == code {
+			return true
+		}
+	}
+
+	return false
 }
 
 func contains(haystack []string, needle string) bool {
