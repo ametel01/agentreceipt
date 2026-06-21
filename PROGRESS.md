@@ -4,13 +4,12 @@ Plan source: [`PLAN.md`](./PLAN.md)
 
 ## Status
 
-- Current status: Step 5 complete
-- Current status: Step 6 complete
-- Next step: Step 7
-- Last updated: 2026-06-21T00:46:51Z
+- Current status: Step 7 complete
+- Next step: Step 8
+- Last updated: 2026-06-21T00:55:00Z
 - Validation results:
   - `make fmt` (pass)
-  - `go test ./internal/evidence ./internal/replay` (pass)
+  - `go test ./internal/replay` (pass)
   - `make verify` (pass)
 
 ## Step Checklist
@@ -75,3 +74,10 @@ Plan source: [`PLAN.md`](./PLAN.md)
   - Added replay coverage for Go code changes, test/docs/dependency/config buckets, binary and rename diffs, malformed final patches, and JSON redaction of patch body content.
   - Added evidence helper coverage to lift repo-wide verification above the coverage gate without changing runtime behavior.
   - Commit: `7d16758` (`Add replay patch summary`)
+
+- Step 7 completed:
+  - Added top-level `policy_checks` with deterministic pass/fail/warn/not_applicable/unknown signals for read-before-edit, related context reads, tests, lint, typecheck, destructive/network commands, dependency/sensitive/CI/generated file changes, and commit creation.
+  - Added top-level `review_focus` with bounded session-specific prompts derived from verification gaps, quality gates, patch summary, policy checks, and failed commands.
+  - Added replay tests covering pass/warn/fail/unknown policy states and review-focus generation, including evidence refs on policy checks where available.
+  - Kept replay factual while preserving existing fields and evidence-only behavior.
+  - Commit: `6646b8e` (`Add replay policy checks`)
