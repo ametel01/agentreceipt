@@ -232,4 +232,4 @@ Source documents:
   - Validation:
     - `go test ./internal/replay ./cmd`
     - `make verify`
-  - Commit: this step
+  - Commit: `b6db531`
