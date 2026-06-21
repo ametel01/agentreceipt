@@ -7,6 +7,8 @@ and this project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-21
+
 ### Added
 
 - Added plan-specific progress and changelog tracking for the AI agent command improvements work.
