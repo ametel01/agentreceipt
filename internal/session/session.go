@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ametel01/agentreceipt/internal/capture/fswatcher"
@@ -908,16 +909,30 @@ func stopFilesystemWatcher(ctx context.Context, state State, layout storage.Layo
 	}
 	process, err := findFilesystemWatcherProcess(state.FilesystemWatcherPID)
 	if err != nil {
+		if filesystemWatcherProcessGone(err) {
+			return nil
+		}
 		return fmt.Errorf("find filesystem watcher process: %w", err)
 	}
-	_ = process.Signal(os.Interrupt)
+	if err := process.Signal(os.Interrupt); err != nil {
+		if filesystemWatcherProcessGone(err) {
+			return nil
+		}
+		return fmt.Errorf("signal filesystem watcher process: %w", err)
+	}
 	time.Sleep(filesystemWatcherFallbackDelay)
 	if _, err := os.Stat(layout.FilesystemWatcherDonePath); err == nil {
 		return nil
 	}
-	_ = process.Kill()
+	if err := process.Kill(); err != nil && filesystemWatcherProcessGone(err) {
+		return nil
+	}
 
 	return errors.New("filesystem watcher did not stop cleanly")
+}
+
+func filesystemWatcherProcessGone(err error) bool {
+	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
 }
 
 func appendFilesystemEvent(layout storage.Layout, event model.Event) error {

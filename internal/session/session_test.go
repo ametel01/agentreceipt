@@ -601,6 +601,49 @@ func TestStopFilesystemWatcherRequiresIdentityBeforeSignal(t *testing.T) {
 	}
 }
 
+func TestStopFilesystemWatcherAcceptsVerifiedStaleProcess(t *testing.T) {
+	repo := newSessionGitRepo(t)
+	sessionID := "ar_ses_stop_stale_process"
+	layout, err := storage.NewLayout(repo, sessionID)
+	if err != nil {
+		t.Fatalf("NewLayout() error = %v", err)
+	}
+	if err := storage.EnsureSessionLayout(layout); err != nil {
+		t.Fatalf("EnsureSessionLayout() error = %v", err)
+	}
+	state := State{
+		SessionID:              sessionID,
+		RepoRoot:               repo,
+		FilesystemWatcherPID:   12345,
+		FilesystemWatcherNonce: testWatcherNonce(),
+		CaptureSources:         CaptureSources{Filesystem: "active"},
+	}
+	if err := writeFilesystemWatcherIdentity(layout, filesystemWatcherIdentity{
+		SessionID: sessionID,
+		Nonce:     state.FilesystemWatcherNonce,
+		PID:       state.FilesystemWatcherPID,
+	}); err != nil {
+		t.Fatalf("write identity: %v", err)
+	}
+	process := &fakeFilesystemWatcherProcess{signalErr: os.ErrProcessDone}
+	withFilesystemWatcherStopTestSeams(t, func(pid int) (filesystemWatcherProcess, error) {
+		if pid != state.FilesystemWatcherPID {
+			t.Fatalf("pid = %d, want %d", pid, state.FilesystemWatcherPID)
+		}
+		return process, nil
+	})
+
+	if err := stopFilesystemWatcher(context.Background(), state, layout); err != nil {
+		t.Fatalf("stopFilesystemWatcher() error = %v", err)
+	}
+	if process.signals != 1 || process.kills != 0 {
+		t.Fatalf("fallback signals=%d kills=%d, want 1/0", process.signals, process.kills)
+	}
+	if _, err := os.Stat(layout.FilesystemWatcherStopPath); err != nil {
+		t.Fatalf("stop marker was not written: %v", err)
+	}
+}
+
 func TestStopFilesystemWatcherSignalsVerifiedIdentityOnFallback(t *testing.T) {
 	repo := newSessionGitRepo(t)
 	sessionID := "ar_ses_stop_verified_identity"
@@ -918,20 +961,22 @@ func newSessionGitRepo(t *testing.T) string {
 }
 
 type fakeFilesystemWatcherProcess struct {
-	signals int
-	kills   int
+	signals   int
+	kills     int
+	signalErr error
+	killErr   error
 }
 
 func (p *fakeFilesystemWatcherProcess) Signal(os.Signal) error {
 	p.signals++
 
-	return nil
+	return p.signalErr
 }
 
 func (p *fakeFilesystemWatcherProcess) Kill() error {
 	p.kills++
 
-	return nil
+	return p.killErr
 }
 
 func testWatcherNonce() string {
