@@ -8,6 +8,13 @@ sh -n "$script_dir/install.sh"
 sh -n "$script_dir/extract-release-notes.sh"
 bash -n "$script_dir/build-release-artifacts.sh"
 
+skill_source="$repo_root/skills/agentreceipt/SKILL.md"
+test -s "$skill_source"
+test "$(head -n 1 "$skill_source")" = "---"
+grep -q "^name: agentreceipt$" "$skill_source"
+grep -q "^description: " "$skill_source"
+grep -q "agentreceipt replay --session" "$skill_source"
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
