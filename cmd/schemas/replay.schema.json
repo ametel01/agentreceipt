@@ -9,6 +9,8 @@
     "generated_at",
     "source",
     "verification",
+    "process_contract",
+    "reviewability",
     "summary",
     "evaluator_signals",
     "quality_gates",
@@ -31,6 +33,31 @@
     "generated_at": { "type": "string", "format": "date-time" },
     "source": { "type": "object" },
     "verification": { "type": "object" },
+    "process_contract": {
+      "type": "object",
+      "properties": {
+        "exit_code": { "type": "integer" },
+        "meaning": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "reviewability": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ready", "partial", "blocked", "unverifiable"]
+        },
+        "blocking_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "can_evaluate_integrity": { "type": "boolean" },
+        "can_evaluate_code_quality": { "type": "boolean" },
+        "requires_rerun_validation": { "type": "boolean" },
+        "primary_blocker": { "type": "string" }
+      }
+    },
     "summary": { "type": "object" },
     "evaluator_signals": { "type": "object" },
     "evidence_index": {
@@ -45,7 +72,18 @@
     },
     "review_focus": {
       "type": "array",
-      "items": { "type": "object" }
+      "items": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" },
+          "reason_code": { "type": "string" },
+          "confidence": { "type": "string" },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
     },
     "privacy": { "type": "object" },
     "claims": {

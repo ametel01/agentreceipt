@@ -8,6 +8,8 @@
     "session_id",
     "generated_at",
     "verdict",
+    "process_contract",
+    "reviewability",
     "top_reasons",
     "review_tasks",
     "changed_files",
@@ -28,6 +30,31 @@
         "unverifiable"
       ]
     },
+    "process_contract": {
+      "type": "object",
+      "properties": {
+        "exit_code": { "type": "integer" },
+        "meaning": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "reviewability": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ready", "partial", "blocked", "unverifiable"]
+        },
+        "blocking_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "can_evaluate_integrity": { "type": "boolean" },
+        "can_evaluate_code_quality": { "type": "boolean" },
+        "requires_rerun_validation": { "type": "boolean" },
+        "primary_blocker": { "type": "string" }
+      }
+    },
     "top_reasons": {
       "type": "array",
       "items": { "type": "string" }
@@ -43,6 +70,7 @@
             "enum": ["P0", "P1", "P2", "P3"]
           },
           "kind": { "type": "string" },
+          "reason_code": { "type": "string" },
           "question": { "type": "string" },
           "paths": {
             "type": "array",

@@ -68,9 +68,9 @@ if "$tmpdir/agentreceipt" --repo "$repo" replay; then
 fi
 
 set +e
-focus_output="$("$tmpdir/agentreceipt" --repo "$repo" focus --session "$session_id" --json 2>"$tmpdir/focus-session.err")"
+focus_output="$("$tmpdir/agentreceipt" --repo "$repo" focus --session "$session_id" 2>"$tmpdir/focus-session.err")"
 focus_status=$?
-focus_replay_output="$("$tmpdir/agentreceipt" focus --replay "$replay_bundle_dir/replay.json" --json 2>"$tmpdir/focus-replay.err")"
+focus_replay_output="$("$tmpdir/agentreceipt" focus --replay "$replay_bundle_dir/replay.json" 2>"$tmpdir/focus-replay.err")"
 focus_replay_status=$?
 set -e
 

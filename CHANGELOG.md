@@ -10,6 +10,7 @@ and this project follows semantic versioning.
 ### Added
 
 - Added plan-specific progress and changelog tracking for the AI agent command improvements work.
+- Added shared loop contract primitives for replay/focus, including structured `reason_code` fields, `process_contract`, and `reviewability` metadata.
 
 ## [0.8.0] - 2026-06-21
 

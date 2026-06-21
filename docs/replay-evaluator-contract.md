@@ -6,7 +6,8 @@ artifacts. It does not rerun commands, reapply patches, call models, or apply po
 The `agentreceipt focus` command consumes the same `replay.json` payload to emit a compact
 `agentreceipt.session_focus` report for reviewer-agent loops. This focused payload is a projection of
 replay evidence (not a replacement for `replay`), with deterministic `verdict`, `top_reasons`,
-`review_tasks`, `changed_files`, `failed_gates`, and `evidence_refs`.
+`review_tasks`, `changed_files`, `failed_gates`, `process_contract`, `reviewability`, and
+`evidence_refs`.
 
 `agentreceipt schema replay` and `agentreceipt schema focus` print stable JSON Schema documents for each contract so loop validators can pin parsing behavior to versioned fields.
 
@@ -39,12 +40,28 @@ start-up policy files without re-parsing events.
 - `id`
 - `priority` (`P0`, `P1`, `P2`, `P3`)
 - `kind`
+- `reason_code`
 - `question`
 - `paths`
 - `symbols`
 - `evidence_refs`
 - `confidence`
 - `source`
+
+`process_contract` is a compact execution contract for loop automation:
+
+- `exit_code`
+- `meaning`
+- `retryable`
+
+`reviewability` summarizes whether the report is ready for automated consumption:
+
+- `status` (`ready`, `partial`, `blocked`, or `unverifiable`)
+- `blocking_gaps`
+- `can_evaluate_integrity`
+- `can_evaluate_code_quality`
+- `requires_rerun_validation`
+- `primary_blocker`
 
 Task kind examples include:
 
@@ -78,6 +95,8 @@ The top-level `replay.json` payload is additive and keeps the existing verifier 
 evaluator-facing sections:
 
 - `verification`
+- `process_contract`
+- `reviewability`
 - `evaluator_signals`
 - `evidence_index`
 - `instruction_files`
@@ -236,6 +255,9 @@ Statuses are `pass`, `fail`, `warn`, `not_applicable`, or `unknown`.
 
 `review_focus` turns the same evidence into bounded prompts for human or automated review. It stays
 factual and is not a scoring system.
+
+`review_focus` entries mirror the structured `reason_code` values that drive focus reasoning so
+downstream loops can deduplicate by machine-stable cause instead of prose alone.
 
 ## Privacy And Claims
 

@@ -53,6 +53,7 @@ func buildReviewFocus(gaps []string, gates QualityGates, patchSummary PatchSumma
 		seen[message] = true
 		items = append(items, ReviewFocusItem{
 			Message:      message,
+			ReasonCode:   reviewabilityCodeFromString(message),
 			Confidence:   confidence,
 			EvidenceRefs: uniqueSorted(refs),
 		})

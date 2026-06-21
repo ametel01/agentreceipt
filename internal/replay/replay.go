@@ -62,6 +62,8 @@ type Report struct {
 	GeneratedAt          time.Time              `json:"generated_at"`
 	Source               Source                 `json:"source"`
 	Verification         Verification           `json:"verification"`
+	ProcessContract      ProcessContract        `json:"process_contract"`
+	Reviewability        Reviewability          `json:"reviewability"`
 	Summary              Summary                `json:"summary"`
 	EvaluatorSignals     EvaluatorSignals       `json:"evaluator_signals"`
 	QualityGates         QualityGates           `json:"quality_gates"`
@@ -296,6 +298,7 @@ type PolicyCheck struct {
 
 type ReviewFocusItem struct {
 	Message      string           `json:"message"`
+	ReasonCode   string           `json:"reason_code,omitempty"`
 	Confidence   model.Confidence `json:"confidence"`
 	EvidenceRefs []string         `json:"evidence_refs,omitempty"`
 }
@@ -408,6 +411,18 @@ func Build(ctx context.Context, options Options) (Report, error) {
 	policyChecks := buildPolicyChecks(commands, files, patchSummary, qualityGates)
 	reviewFocus := buildReviewFocus(gaps, qualityGates, patchSummary, policyChecks, commands, files)
 	privacyReport := buildPrivacyReport(commands, failedCommandDetails, files)
+	reviewability := buildReviewability(Report{
+		Verification:    verification,
+		Source:          Source{SessionState: state.State},
+		QualityGates:    qualityGates,
+		PatchSummary:    patchSummary,
+		PolicyChecks:    policyChecks,
+		ReviewFocus:     reviewFocus,
+		Commands:        commands,
+		Files:           files,
+		Gaps:            uniqueSorted(gaps),
+		WorkspaceChange: workspaceSummary,
+	})
 
 	report := Report{
 		SchemaVersion: model.SchemaVersion,
@@ -419,7 +434,8 @@ func Build(ctx context.Context, options Options) (Report, error) {
 			RepoRoot:            layout.RepoRoot,
 			SessionState:        state.State,
 		},
-		Verification: verification,
+		Verification:  verification,
+		Reviewability: reviewability,
 		Summary: Summary{
 			Provider:          providerevidence.ProviderLabel(events),
 			DurationSeconds:   sessionDuration(state.StartedAt, events),
@@ -448,6 +464,7 @@ func Build(ctx context.Context, options Options) (Report, error) {
 		Artifacts:            artifacts,
 		InstructionFiles:     instructionFiles,
 	}
+	report.ProcessContract = buildProcessContractForReplay(report)
 	report.Outcome = buildOutcome(report)
 	report.Claims = buildClaims(report)
 

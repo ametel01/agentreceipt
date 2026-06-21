@@ -46,6 +46,8 @@ type FocusReport struct {
 	SessionID        string                 `json:"session_id"`
 	GeneratedAt      time.Time              `json:"generated_at"`
 	Verdict          FocusVerdict           `json:"verdict"`
+	ProcessContract  ProcessContract        `json:"process_contract"`
+	Reviewability    Reviewability          `json:"reviewability"`
 	TopReasons       []string               `json:"top_reasons,omitempty"`
 	ReviewTasks      []ReviewTask           `json:"review_tasks,omitempty"`
 	ChangedFiles     []FocusChangedFile     `json:"changed_files,omitempty"`
@@ -80,6 +82,7 @@ type FailedGate struct {
 
 type FocusReason struct {
 	Message     string
+	ReasonCode  string
 	Refs        []string
 	Confidence  model.Confidence
 	Kind        string
@@ -90,6 +93,7 @@ type ReviewTask struct {
 	ID           string           `json:"id,omitempty"`
 	Priority     string           `json:"priority"`
 	Kind         string           `json:"kind"`
+	ReasonCode   string           `json:"reason_code,omitempty"`
 	Question     string           `json:"question"`
 	Paths        []string         `json:"paths,omitempty"`
 	Symbols      []string         `json:"symbols,omitempty"`
@@ -116,6 +120,7 @@ func BuildFocusReport(replay Report) FocusReport {
 	focus.EvidenceIndex = append([]EvidenceEntry(nil), replay.EvidenceIndex...)
 	focus.EvaluatorSignals = replay.EvaluatorSignals
 	focus.Verdict = determineFocusVerdict(replay, reasons)
+	focus.Reviewability = buildReviewability(replay)
 	focus.TopReasons = capSortedStrings(focusReasonsToStrings(reasons), focusTopReasonLimit)
 
 	for index := range tasks {
@@ -123,6 +128,7 @@ func BuildFocusReport(replay Report) FocusReport {
 	}
 	focus.ReviewTasks = capSortedReviewTasks(tasks, focusTaskLimit)
 	focus.EvidenceRefs = capSortedStrings(collectFocusEvidenceRefs(reasons, focus.ReviewTasks, focus.FailedGates), 200)
+	focus.ProcessContract = buildProcessContractForFocus(replay, focus)
 
 	return focus
 }
@@ -139,6 +145,7 @@ func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]Foc
 		}
 		reasons = append(reasons, FocusReason{
 			Message:     message,
+			ReasonCode:  reviewabilityCodeFromString(message),
 			Refs:        uniqueSorted(refs),
 			Kind:        kind,
 			FromMissing: fromMissing,
@@ -152,6 +159,7 @@ func collectFocusReasonsAndTasks(replay Report, failedGates []FailedGate) ([]Foc
 		tasks = append(tasks, ReviewTask{
 			Priority:     priority,
 			Kind:         kind,
+			ReasonCode:   reviewTaskReasonCode(kind, question, source),
 			Question:     question,
 			Paths:        uniqueSorted(paths),
 			Symbols:      uniqueSorted(symbols),

@@ -26,5 +26,20 @@ Source documents:
   - Reframed progress tracking around `PLAN.md` and the agent-loop contract changes.
   - Marked Step 0 complete and set Step 1 as next.
   - Validation: pending initial step setup.
-  - Commit: pending
+  - Commit: `5b5ec40`
 
+- 2026-06-21 — Completed Step 1 for shared agent-loop contract primitives.
+  - Added shared `ReasonCode`, `ProcessContract`, and `Reviewability` types in `internal/replay` and wired them into replay/focus JSON output.
+  - Added deterministic `reason_code` fields to replay `review_focus` items and focus review reasons/tasks.
+  - Added schema coverage, contract tests, and CLI smoke coverage for the new top-level contract fields.
+  - Validation:
+    - `go test ./internal/replay`
+    - `go test ./internal/replay ./cmd`
+    - `make fmt-check`
+    - `make tools`
+    - `make lint`
+    - `make test`
+    - `make build`
+    - `make smoke`
+    - `make verify`
+  - Commit: pending

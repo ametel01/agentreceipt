@@ -382,6 +382,12 @@ func TestSchemaReplayCommandOutputsSchema(t *testing.T) {
 	if !ok || kind["const"] != "agentreceipt.session_replay" {
 		t.Fatalf("schema replay kind hint missing or incorrect: %v", kind)
 	}
+	if _, ok := properties["process_contract"].(map[string]any); !ok {
+		t.Fatal("schema replay missing process_contract object")
+	}
+	if _, ok := properties["reviewability"].(map[string]any); !ok {
+		t.Fatal("schema replay missing reviewability object")
+	}
 	required := requiredStringList(schema["required"])
 	if !containsString(required, "kind") || !containsString(required, "session_id") {
 		t.Fatalf("schema replay missing required fields: %v", schema["required"])
@@ -409,6 +415,12 @@ func TestSchemaFocusCommandOutputsSchema(t *testing.T) {
 	kind, ok := properties["kind"].(map[string]any)
 	if !ok || kind["const"] != "agentreceipt.session_focus" {
 		t.Fatalf("schema focus kind hint missing or incorrect: %v", kind)
+	}
+	if _, ok := properties["process_contract"].(map[string]any); !ok {
+		t.Fatal("schema focus missing process_contract object")
+	}
+	if _, ok := properties["reviewability"].(map[string]any); !ok {
+		t.Fatal("schema focus missing reviewability object")
 	}
 	required := requiredStringList(schema["required"])
 	if !containsString(required, "top_reasons") || !containsString(required, "review_tasks") {
